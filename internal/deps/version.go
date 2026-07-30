@@ -12,12 +12,19 @@ import (
 // point of change for the version gate: nothing else in avar hard-codes a Lima
 // version.
 //
-// Lima 1.0.0 is the first release whose CLI surface avar depends on is covered
-// by a stability promise: `limactl start --tty=false`, `limactl list --json`,
-// `limactl shell --workdir`, and `limactl show-ssh --format config`. Driving
-// limactl as a subprocess makes that surface avar's API, so the floor sits at
-// the release that froze it.
-const MinLimaVersion = "1.0.0"
+// The floor is 2.0.0 because 2.x is the only surface avar has evidence for.
+// avar's generated configurations are checked with `limactl validate` inside
+// the test suite, and that evidence comes from Lima 2.x; the guest account
+// behaviour REQ-1.4 depends on is asserted the same way. Lima 1.x appears to
+// carry every field and flag avar uses, but "appears to, from reading its
+// source" is not the same standard, and a floor that admits a version nothing
+// is ever tested against is not a gate at all — it only defers the failure to a
+// user's machine.
+//
+// Templates emit this value as `minimumLimaVersion`, so raising the constant
+// also stops an older Lima from accepting a configuration written for a newer
+// one. Lowering it again is fine once 1.x is genuinely exercised.
+const MinLimaVersion = "2.0.0"
 
 // minLima is MinLimaVersion parsed once. A malformed constant is a programming
 // error caught by TestMinLimaVersion_Parses before it can ship.

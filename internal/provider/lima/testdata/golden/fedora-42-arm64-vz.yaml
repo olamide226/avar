@@ -3,7 +3,7 @@
 # avar owns this machine's configuration and rewrites it when the set of shared
 # project directories changes. Machines, mounts, SSH and images are avar's
 # problem, not yours: run `avr status` to see what exists.
-minimumLimaVersion: "1.0.0"
+minimumLimaVersion: "2.0.0"
 
 os: "Linux"
 arch: "aarch64"

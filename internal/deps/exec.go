@@ -16,6 +16,17 @@ import (
 // execRunner is the production Runner: os/exec with an argv, never a shell.
 type execRunner struct{}
 
+// NewRunner returns the production Runner, which executes a program with an
+// argv and never involves a shell.
+//
+// It exists because every caller that drives a backend needs the same runner
+// this package already uses for limactl, and the alternative — each package
+// writing its own os/exec wrapper — would duplicate the parts that are easy to
+// get wrong: folding stderr into the error, killing the child when the context
+// is cancelled, and bounding how long a finished child's pipes may keep avar
+// waiting.
+func NewRunner() Runner { return execRunner{} }
+
 // childWaitDelay bounds how long a finished child's output copying may keep
 // avar waiting, so a subprocess that hands its pipes to a grandchild cannot
 // wedge the invocation.
