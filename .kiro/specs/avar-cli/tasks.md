@@ -29,7 +29,7 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: 11.2 (schema), 17.5_
   - _writes: internal/state/store.go, internal/state/lock.go, internal/state/project.go, internal/state/session.go, + tests (records live in internal/types, so no state/types.go)_
 
-- [ ] 4. Implement Resolver
+- [x] 4. Implement Resolver  _(PR #8)_
   - Precedence: flags > project record > config.toml > defaults; deterministic machine naming (`avr-<distro>-<ver>-<arch>`, `avr-prj-<hash10>`); supported distro/arch matrix with pinned versions; unsupported values error listing options
   - Unit tests for Property 2 (determinism, no name collisions across selectors)
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 1.5_
@@ -83,7 +83,7 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: 7.1, 7.2, 7.3_
   - _writes: e2e/ports_test.go_
 
-- [ ] 13. Crash-consistency reconciler
+- [x] 13. Crash-consistency reconciler  _(PR #9)_
   - On startup: adopt healthy orphan `avr-` instances, delete broken ones with notice, drop dangling records; decision-table unit tests (Property 7); Ctrl-C during provisioning cleans up and exits 130
   - _Requirements: 1.6, 17.5_
   - _writes: internal/state/reconcile.go, internal/state/reconcile_test.go_
@@ -219,3 +219,4 @@ established in tasks 27 and 28: none of them may add a Windows branch to `cmd/`.
 - E2E tests (tasks 8, 9, 11, 12, 15–17) require a macOS machine with virtualization; they run via `make e2e`, not in default CI.
 - Backlog explicitly deferred beyond Phase 4 (out of MVP charter, Req 17.6): cloud/remote environments, collaboration, team policies, Kubernetes, marketplace, desktop GUI, Linux hosts.
 - Distro image versions and the minimum Lima version are pinned in one file (`internal/resolve/matrix.go` / `internal/deps/lima.go`) so upgrades are single-point changes.
+- Development targets **Lima 2.x** (2.2.0 verified locally). The pinned minimum in `internal/deps` is still `1.0.0` and is under review in task 7: accepting 1.x while only testing against 2.x is a gate that does not gate.
