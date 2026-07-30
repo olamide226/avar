@@ -1,0 +1,132 @@
+# GoReleaser configuration for avar.
+#
+# avar ships as a single self-contained binary (REQ-17.2) for macOS only
+# (REQ-17.6), installable via Homebrew with Lima declared as a dependency so
+# that Homebrew users never reach avar's own install prompt (REQ-8.5).
+version: 2
+
+project_name: avar
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+    - go test ./...
+
+builds:
+  - id: avr
+    main: .
+    binary: avr
+    env:
+      - CGO_ENABLED=0
+    # macOS is the only supported host platform for the MVP (REQ-17.6).
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # Keep in sync with the Makefile: main.version is the single place the
+    # build stamps a version.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    # Reproducible builds: derive timestamps from the commit, not the clock.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+
+# A universal binary means `brew install` fetches one artifact that runs on
+# both Apple Silicon and Intel, which keeps the formula simple.
+universal_binaries:
+  - id: avr-universal
+    ids:
+      - avr
+    # Must be the binary name, not the project name: the cask links `avr`, and
+    # the default here is the project name (`avar`), which would ship an
+    # archive whose binary the cask cannot find.
+    name_template: avr
+    replace: true
+
+archives:
+  - id: avr
+    ids:
+      - avr-universal
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_darwin_all"
+    files:
+      - README.md
+      - LICENSE
+      - CLAUDE.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+\))?!?:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix(\(.+\))?!?:'
+      order: 1
+    - title: Other changes
+      order: 99
+  filters:
+    exclude:
+      - "^docs(\\(.+\\))?:"
+      - "^test(\\(.+\\))?:"
+      - "^chore(\\(.+\\))?:"
+      - "^ci(\\(.+\\))?:"
+      - Merge pull request
+      - Merge branch
+
+# Homebrew casks, not formulas: `brews` is deprecated, and a cask is the
+# correct shape for a distributed macOS binary anyway.
+homebrew_casks:
+  - name: avar
+    ids:
+      - avr
+    directory: Casks
+    repository:
+      owner: olamide226
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    binaries:
+      - avr
+    homepage: https://github.com/olamide226/avar
+    description: Run your current directory in Linux
+    # Lima is avar's virtualization backend. Declaring it here is what
+    # satisfies REQ-8.5: Homebrew users get Lima installed alongside avar and
+    # never reach the interactive install offer in REQ-8.2.
+    dependencies:
+      - formula: lima
+    commit_msg_template: "avar {{ .Tag }}"
+    # Released binaries are unsigned, so strip the quarantine attribute that
+    # would otherwise make Gatekeeper refuse the first run.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system "xattr", "-d", "-r", "com.apple.quarantine", "#{staged_path}/avr"
+          end
+
+release:
+  github:
+    owner: olamide226
+    name: avar
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Installation
+
+    ```bash
+    brew install olamide226/tap/avar
+    ```
+
+    Lima is installed automatically as a dependency.

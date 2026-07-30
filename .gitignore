@@ -7,6 +7,9 @@ avr
 coverage.out
 *.test
 
+# Local agent worktrees and machine-local Claude Code settings
+.claude/
+
 # Editor and OS noise
 .DS_Store
 .idea/
