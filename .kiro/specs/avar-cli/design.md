@@ -52,7 +52,7 @@ graph TD
 
 ### Primary data flow — `avr` (interactive) and `avr <cmd>` (one-shot)
 
-1. **Parse**: cobra parses avar flags up to the first non-flag token; everything after is the guest command (Req 2.5). `--` forces the boundary (Req 2.6).
+1. **Parse**: `internal/cli.Parse` splits argv — avar's selector flags up to the first non-flag token; everything after is the guest command (Req 2.5). `--` forces the boundary (Req 2.6).
 2. **Resolve**: `Resolver` computes the Environment_Selector: distro/arch from flags → project's remembered isolation/config → global defaults. Project_Identity = SHA-256 of `filepath.EvalSymlinks(abs(cwd))`.
 3. **Ensure deps**: Lima presence + minimum version (Req 8); offer `brew install lima` if absent.
 4. **Ensure machine**: Provider creates (first use, with progress UI — Req 1.2) or starts (Req 1.3) the target machine.
@@ -83,7 +83,7 @@ cmd/  ─────────────────┐
 
 **Purpose**: Map the user-facing grammar onto internal services. Owns all output formatting; nothing below it prints to the terminal (except streamed guest I/O).
 
-**Grammar** (cobra with `Flags().SetInterspersed(false)` on the root, mirroring `limactl shell`):
+**Grammar** — owned by `internal/cli.Parse`, a pure function over argv, **not** by cobra's flag parser:
 
 ```
 avr [selector flags] [--] [COMMAND [ARGS...]]     # no COMMAND → interactive shell
@@ -96,6 +96,17 @@ Forwarding flags (Phase 2): --env NAME[=V] (repeatable)  --env-file PATH  --ssh-
 ```
 
 Subcommand-vs-guest-command resolution (Req 2.5/2.6): after selector flags, if the next token is a known avr subcommand it wins; `--` always forces guest execution. This is deterministic and documented in `avr --help`.
+
+**Why not cobra** (amended after implementation): the root command sets `DisableFlagParsing: true` and delegates to `internal/cli.Parse`. Two reasons the original `SetInterspersed(false)` plan failed in practice:
+
+- pflag consumes the `--` token, so recovering the Req 2.6 boundary means threading `ArgsLenAtDash()` through the command layer — the one rule that must be unambiguous becomes a side effect of a framework's internals.
+- With cobra parsing on the root, an unimplemented subcommand's flag is rejected before its command exists: `avr stop --all` errors until task 10 lands.
+
+Parsing in a pure function makes the split deterministic and fuzzable (Property 9) and keeps it out of reach of framework behaviour. Cobra still renders help and routes avar's own subcommands; the selector flags are declared on the root purely so `avr --help` documents them.
+
+`internal/cli.Parse` returns an `Invocation` carrying the validated-but-not-defaulted `Selector`, the `Mode` (shell / guest command / subcommand), the subcommand and its unparsed args, the verbatim guest argv, and the help/version intents. Supplying defaults and resolving the distro/version matrix is the resolver's job (§3.2), not the grammar's.
+
+**Exit codes**: `2` for a command line avar cannot read (unknown flag, missing flag value, unsupported `--arch`/`--distro`), distinguishing "avar could not understand you" from `1`, "the operation failed". Req 4.4 requires only non-zero; this is the finer convention avar adopts.
 
 **Does not**: talk to `limactl`, read/write state files directly.
 
