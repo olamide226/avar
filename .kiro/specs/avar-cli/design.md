@@ -159,7 +159,9 @@ func Resolve(provider ProviderID, cwd string, flags Flags, st *state.Store) (Res
 **Environment naming** (deterministic within a provider; the avar prefix is also the ownership marker):
 
 - Shared: `avr-<distro>-<version>-<arch>` → `avr-ubuntu-24.04-arm64`
-- Isolated: `avr-prj-<first 10 hex of Project_Identity>`
+- Isolated: `avr-prj-<first 10 hex of Project_Identity>-<distro>-<version>-<arch>` → `avr-prj-3fa9c2b1d0-ubuntu-24.04-arm64`
+
+*(Amended during task 4.* The isolated name originally omitted the environment, which made a project's isolated machine identified by the project alone. An isolated environment is derived from a clean base image of **the selected** (distro, arch) — Req 11.1 — so the environment is part of what identifies it: without it, `avr --isolate --distro fedora` in a project already isolated on Ubuntu resolves to the existing Ubuntu machine and silently hands the user the wrong distribution (Req 4.2). It also keeps isolation consistent with Req 4.3, where each distinct (distro, arch) already gets its own machine. The project hash still guarantees the name is stable from any depth within the project. Longest name in the current matrix: 37 characters.)*
 
 **Precedence**: explicit flags > project record (remembered isolation, Req 11.2) > global State_Dir `config.toml` defaults > built-in defaults (ubuntu 24.04, host-native arch, shared). On WSL2Provider, a foreign architecture fails capability validation before any environment is created (Req 18.6).
 
