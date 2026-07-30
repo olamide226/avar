@@ -93,6 +93,28 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: 8.5, 17.2, 17.6_
   - _writes: .goreleaser.yaml, .github/workflows/release.yml_
 
+## Phase 1b — provider-neutral contracts (spec revision)
+
+The Requirement 18 / design revision makes the backend contract provider-neutral so a
+post-MVP WSL2Provider can satisfy it unchanged. These land **before task 9**, because
+task 9 is the first consumer of the new mount shape. They refactor merged code rather
+than adding behaviour, so they are one coherent change, not a per-package guess.
+
+- [ ] 27. Make the backend contract provider-neutral
+  - `internal/types`: add `ProviderID` and `MountSpec{ProjectID, HostPath, GuestPath, Writable}`; `MachineRecord.Mounts` becomes `[]MountSpec`, `VMType` becomes `Runtime`, plus a `Provider` field
+  - `internal/provider`: `Provider` gains `ID()` and `MapProjectPath(projectID, hostRoot, hostCwd) (MountSpec, guestCwd, error)`; `AppliedMounts`/`SetMounts` move to `[]MountSpec`; `SSHConfigProvider` becomes the transport-neutral `EditorTargetProvider` so WSL is not forced through SSH
+  - `internal/provider/fake` and `internal/provider/lima` follow; `internal/resolve.Resolve` takes a `ProviderID`
+  - `internal/state`: schema v2 — migrate `Mounts []string` to `MountSpec{HostPath: p, GuestPath: p}`, `VMType` to `Runtime`, and stamp `Provider: "lima"` on pre-existing records; migration is covered by a round-trip test from a committed v1 fixture
+  - LimaProvider's `MapProjectPath` is the identity mapping, which is exactly what makes the abstraction honest rather than speculative
+  - _Requirements: 17.3, 18.14, 6.1, 18.5_
+  - _writes: internal/types/*, internal/provider/provider.go, internal/provider/fake/*, internal/provider/lima/*, internal/resolve/*, internal/state/*_
+
+- [ ] 28. Route provider selection by host platform
+  - `darwin` selects LimaProvider; unsupported hosts fail before any dependency work with a clear message; no user-visible provider flag
+  - Keeps Windows-specific branching out of `cmd/` from the start (REQ-18.1, REQ-18.14)
+  - _Requirements: 18.1, 18.14, 17.6_
+  - _writes: internal/provider/select.go, internal/provider/select_test.go, cmd/root.go_
+
 ## Phase 2 — MVP completion: lifecycle, isolation, editor, forwarding
 
 - [ ] 15. Implement snapshots and restore
@@ -161,9 +183,39 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: (product backlog — no EARS requirement yet; spec before build)_
   - _writes: editors/vscode-extension/*_
 
+## Phase 4 — Windows host support via WSL 2 (Requirement 18, post-MVP)
+
+Gated on the MVP shipping. Every task below sits behind the Provider boundary
+established in tasks 27 and 28: none of them may add a Windows branch to `cmd/`.
+
+- [ ] 33. WSL capability detection and prerequisites
+  - Probe WSL presence, version, and WSL 1 vs 2; offer install/upgrade where safe; describe elevation or restart requirements before acting; never register a partial environment
+  - _Requirements: 18.2, 18.3, 18.4_
+  - _writes: internal/deps/wsl.go, internal/deps/wsl_test.go_
+
+- [ ] 34. WSL2Provider: distribution lifecycle
+  - Import avar-owned root filesystems with a reserved name prefix plus a registry record; never touch a user-managed distribution; reject unsupported architectures before provisioning
+  - _Requirements: 18.6, 18.7, 18.12_
+  - _writes: internal/provider/wsl2/*_
+
+- [ ] 35. WSL2Provider: path mapping and execution
+  - `MapProjectPath` to `/mnt/avr/projects/<Project_Identity>` via DrvFS with automatic drive mounting disabled; `wsl.exe --distribution … --cd … --exec …` preserving streams, PTY, resize, signals and exit codes
+  - _Requirements: 18.5, 18.8_
+  - _writes: internal/provider/wsl2/path.go, internal/provider/wsl2/shell.go, + tests_
+
+- [ ] 36. Windows state, ports, and editor integration
+  - Per-user non-roaming state dir; case-insensitive `PathKey` so drive-letter and separator spellings cannot duplicate a project; localhost forwarding diagnostics; `avr code` through the `wsl+<distro>` remote authority with no SSH config
+  - _Requirements: 18.9, 18.10, 18.13_
+  - _writes: internal/state/path_windows.go, internal/provider/wsl2/portdiag.go, internal/editor/wsl.go, + tests_
+
+- [ ] 37. Windows packaging and cross-filesystem guidance
+  - Self-contained `avr.exe` for supported Windows architectures; once-per-project dismissible recommendation for Linux-native workspace mode when a workload would suffer from cross-filesystem I/O
+  - _Requirements: 18.11, 18.14_
+  - _writes: .goreleaser.yaml, .github/workflows/release.yml, internal/workspace/advise.go_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.
 - E2E tests (tasks 8, 9, 11, 12, 15–17) require a macOS machine with virtualization; they run via `make e2e`, not in default CI.
-- Backlog explicitly deferred beyond Phase 3 (out of MVP charter, Req 17.6): cloud/remote environments, collaboration, team policies, Kubernetes, marketplace, desktop GUI, Windows/Linux hosts.
+- Backlog explicitly deferred beyond Phase 4 (out of MVP charter, Req 17.6): cloud/remote environments, collaboration, team policies, Kubernetes, marketplace, desktop GUI, Linux hosts.
 - Distro image versions and the minimum Lima version are pinned in one file (`internal/resolve/matrix.go` / `internal/deps/lima.go`) so upgrades are single-point changes.
