@@ -704,7 +704,7 @@ func TestReconcile_ConcurrentReconciliationsConverge_REQ_17_5(t *testing.T) {
 		dropped int
 		deleted int
 	)
-	for i := 0; i < workers; i++ {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

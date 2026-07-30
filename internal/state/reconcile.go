@@ -408,6 +408,13 @@ func classify(state types.MachineState) health {
 //     project would mount the wrong directory into it. So an isolated orphan is
 //     structurally unadoptable and is left alone (ActionLeft) rather than
 //     adopted on a guess or destroyed while healthy.
+//
+// The set of unrecoverable fields is not fixed — a record gains a field
+// whenever avar learns to record something new, and a listing has no more way
+// to report it than it has to report a project identity. The rule this function
+// encodes is what keeps each of those from becoming a special case: adopt only
+// what the listing actually describes, and where it does not describe enough,
+// leave the machine to the invocation that knows.
 func recordFor(m types.MachineStatus) (types.MachineRecord, string) {
 	switch m.Kind {
 	case types.KindShared, types.KindBase:
