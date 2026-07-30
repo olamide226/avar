@@ -37,11 +37,15 @@ vet:
 
 .PHONY: fmt
 fmt:
-	gofmt -s -w .
+	gofmt -s -w $(GOFILES)
+
+# gofmt, unlike the go tool, walks into dot-directories. Prune them explicitly
+# so build output and any nested checkouts are not linted as project source.
+GOFILES = $(shell find . -type d \( -name '.*' -o -name dist -o -name bin \) -prune -o -type f -name '*.go' -print)
 
 .PHONY: fmt-check
 fmt-check:
-	@unformatted=$$(gofmt -s -l . ); \
+	@unformatted=$$(gofmt -s -l $(GOFILES)); \
 	if [ -n "$$unformatted" ]; then \
 		echo "gofmt -s needed:"; echo "$$unformatted"; exit 1; \
 	fi
