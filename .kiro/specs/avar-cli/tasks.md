@@ -46,12 +46,12 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: 17.3_
   - _writes: internal/provider/provider.go, internal/provider/fake/fake.go_
 
-- [ ] 7. Implement LimaProvider: machine provisioning and lifecycle
-  - [ ] 7.1 Lima config generation per (distro, arch)
+- [x] 7. Implement LimaProvider: machine provisioning and lifecycle  _(PR #11)_
+  - [x] 7.1 Lima config generation per (distro, arch)  _(PR #11)_
     - Embedded templates: pinned+checksummed images; vz+VirtioFS+Rosetta for native arch, qemu for foreign; resource defaults min(4, host/2) CPU, min(8GB, host/4) mem; unit tests golden-file the generated YAML
     - _Requirements: 1.2, 4.6, 17.4_
     - _writes: internal/provider/lima/template.go, internal/provider/lima/templates/*.yaml.tmpl, internal/provider/lima/template_test.go_
-  - [ ] 7.2 EnsureMachine / Stop / Delete / Status via limactl
+  - [x] 7.2 EnsureMachine / Stop / Delete / Status via limactl  _(PR #11)_
     - `limactl start --tty=false` create+start, JSON list parsing against fixtures, `avr-` prefix + machines.json ownership filter, progress events, create-failure cleanup (delete partial instance, no record written), provision logs to `~/.avr/logs/`
     - _Requirements: 1.2, 1.3, 1.6, 4.7, 5.4_
     - _writes: internal/provider/lima/lima.go, internal/provider/lima/status.go, internal/provider/lima/lima_test.go, internal/provider/lima/testdata/*_
@@ -219,4 +219,4 @@ established in tasks 27 and 28: none of them may add a Windows branch to `cmd/`.
 - E2E tests (tasks 8, 9, 11, 12, 15–17) require a macOS machine with virtualization; they run via `make e2e`, not in default CI.
 - Backlog explicitly deferred beyond Phase 4 (out of MVP charter, Req 17.6): cloud/remote environments, collaboration, team policies, Kubernetes, marketplace, desktop GUI, Linux hosts.
 - Distro image versions and the minimum Lima version are pinned in one file (`internal/resolve/matrix.go` / `internal/deps/lima.go`) so upgrades are single-point changes.
-- Development targets **Lima 2.x** (2.2.0 verified locally). The pinned minimum in `internal/deps` is still `1.0.0` and is under review in task 7: accepting 1.x while only testing against 2.x is a gate that does not gate.
+- Development targets **Lima 2.x**. The pinned minimum in `internal/deps` is `2.0.0` (PR #12), matching the version avar's generated configurations are actually validated against.
