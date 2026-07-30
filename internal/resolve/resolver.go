@@ -119,8 +119,8 @@ type ResolvedTarget struct {
 	Selector types.EnvironmentSelector
 
 	// MachineName is the machine this invocation targets, derived
-	// deterministically from Selector (shared) or from the project (isolated).
-	// It carries avar's ownership prefix and satisfies
+	// deterministically from Selector, and from the project as well when the
+	// selector is isolated. It carries avar's ownership prefix and satisfies
 	// types.ValidateMachineName.
 	MachineName string
 
@@ -425,17 +425,23 @@ func normalise(p Preference) Preference {
 func lower(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
 // machineName derives the name of the machine a target is served by. It is
-// deterministic — the same inputs always produce the same name — and injective
-// over environments, so no two distinct shared environments can be served by
-// one machine (REQ-4.3, PROP-2).
+// deterministic — the same inputs always produce the same name — and injective:
+// no two distinct targets can be served by one machine (REQ-4.3, PROP-2).
 //
-// A shared machine spells its environment out (`avr-ubuntu-24.04-arm64`): that
-// makes distinct (distro, version, arch) triples distinct names by
-// construction, and makes a machine listing readable to a user who never asked
-// for machines. An isolated machine is named after the project instead
-// (`avr-prj-3fa9c2b1d0`), because its identity *is* the project: a project has
-// one private machine, and the name has to stay the same however deep in the
-// project the user is standing.
+// Every name spells its environment out (`avr-ubuntu-24.04-arm64`). That makes
+// distinct (distro, version, arch) triples distinct names by construction, and
+// makes a machine listing readable to a user who never asked for machines.
+//
+// An isolated machine carries the project's identity as well
+// (`avr-prj-3fa9c2b1d0-ubuntu-24.04-arm64`), and needs both halves. The project
+// hash is what keeps the name stable however deep in the project the user is
+// standing. The environment is part of the identity because an isolated
+// environment is derived from a clean base image of *the selected* (distro,
+// arch) (REQ-11.1) — naming it after the project alone would mean `avr
+// --isolate --distro fedora` resolving to a machine already built from Ubuntu,
+// so avar would silently hand the user the wrong distribution (REQ-4.2). It
+// also keeps isolation consistent with REQ-4.3 rather than making it the one
+// place where each (distro, arch) does not get its own machine.
 //
 // The `avr-` prefix is also avar's ownership marker (REQ-5.4, PROP-6), so the
 // result is validated here: a name outside types.MachineNamePattern would make
@@ -443,14 +449,14 @@ func lower(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 // easier to understand at the point where the offending environment can be
 // named.
 func machineName(env types.EnvironmentSelector, projectID string) (string, error) {
-	var name string
+	environment := fmt.Sprintf("%s-%s-%s", env.Distro, env.Version, env.Arch)
+
+	name := types.MachineNamePrefix + environment
 	if env.Isolated {
 		if len(projectID) < projectIDPrefixLen {
 			return "", fmt.Errorf("name the machine for %s: project identity %q is too short to name a machine from", env.Label(), projectID)
 		}
-		name = types.MachineNamePrefix + isolatedNameToken + "-" + projectID[:projectIDPrefixLen]
-	} else {
-		name = fmt.Sprintf("%s%s-%s-%s", types.MachineNamePrefix, env.Distro, env.Version, env.Arch)
+		name = fmt.Sprintf("%s%s-%s-%s", types.MachineNamePrefix, isolatedNameToken, projectID[:projectIDPrefixLen], environment)
 	}
 
 	name = lower(name)

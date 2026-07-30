@@ -276,7 +276,7 @@ func TestResolve_IsolateTargetsAndRemembersProjectMachine_REQ_11_2(t *testing.T)
 	if err != nil {
 		t.Fatalf("Resolve --isolate: %v", err)
 	}
-	wantName := "avr-prj-" + fakeID(dir)[:projectIDPrefixLen]
+	wantName := "avr-prj-" + fakeID(dir)[:projectIDPrefixLen] + "-ubuntu-24.04-arm64"
 	if first.MachineName != wantName {
 		t.Errorf("machine name = %q, want %q", first.MachineName, wantName)
 	}
@@ -461,8 +461,12 @@ func TestResolve_NoMachineNameCollisions_PROP_2(t *testing.T) {
 		claim(t, got.MachineName, "shared "+env.Label())
 	}
 
-	// A project's isolated machine, for many distinct projects, and for every
-	// environment a project might ask for.
+	// Every (project, environment) pair an isolated machine can be asked for.
+	// Enumerating the matrix here rather than one environment per project is
+	// the point: an isolated environment is identified by its project *and* the
+	// environment it was derived from (REQ-11.1), so a project asking for two
+	// distributions must get two machines. A naming scheme that dropped the
+	// environment would fail this loop on its second iteration.
 	for i := 0; i < 500; i++ {
 		dir := fmt.Sprintf("/Users/dev/code/project-%d", i)
 		for _, env := range SupportedEnvironments() {
@@ -471,15 +475,81 @@ func TestResolve_NoMachineNameCollisions_PROP_2(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Resolve isolated %s: %v", dir, err)
 			}
-			// A project has one private machine whatever environment it asks
-			// for, so the first claim for this directory names it and the rest
-			// must agree rather than collide.
-			if prev, ok := owner[got.MachineName]; ok && prev == "isolated "+dir {
-				continue
-			}
-			claim(t, got.MachineName, "isolated "+dir)
+			claim(t, got.MachineName, fmt.Sprintf("isolated %s %s", dir, env.Label()))
 		}
 	}
+}
+
+func TestResolve_IsolatedEnvironmentsAreDistinctPerDistro_REQ_4_2_REQ_11_1(t *testing.T) {
+	// One project, two distributions, both isolated. REQ-11.1 derives an
+	// isolated environment from a clean base image of the *selected* (distro,
+	// arch), and REQ-4.2 says --distro targets a machine of that distribution —
+	// so these must be two machines. Were they one, the second invocation would
+	// find the first machine already running and hand the user Ubuntu when they
+	// asked for Fedora, with nothing in the output to say so.
+	const dir = "/Users/dev/code/app"
+	store := newFakeStore()
+
+	ubuntu, err := Resolve(dir, cli.Selector{Distro: types.DistroUbuntu, Isolate: true}, store, arm64Host())
+	if err != nil {
+		t.Fatalf("Resolve --isolate --distro ubuntu: %v", err)
+	}
+	fedora, err := Resolve(dir, cli.Selector{Distro: types.DistroFedora, Isolate: true}, store, arm64Host())
+	if err != nil {
+		t.Fatalf("Resolve --isolate --distro fedora: %v", err)
+	}
+
+	if ubuntu.MachineName == fedora.MachineName {
+		t.Fatalf("both isolated environments resolved to %q; --distro fedora would silently enter the Ubuntu machine", ubuntu.MachineName)
+	}
+	if ubuntu.Project.ID != fedora.Project.ID {
+		t.Errorf("the two environments belong to different projects (%s, %s); they are the same directory", ubuntu.Project.ID, fedora.Project.ID)
+	}
+
+	hash := fakeID(dir)[:projectIDPrefixLen]
+	if want := "avr-prj-" + hash + "-ubuntu-24.04-arm64"; ubuntu.MachineName != want {
+		t.Errorf("ubuntu machine = %q, want %q", ubuntu.MachineName, want)
+	}
+	if want := "avr-prj-" + hash + "-fedora-43-arm64"; fedora.MachineName != want {
+		t.Errorf("fedora machine = %q, want %q", fedora.MachineName, want)
+	}
+
+	// The architecture is part of the identity for the same reason.
+	amd64, err := Resolve(dir, cli.Selector{Distro: types.DistroUbuntu, Arch: types.ArchAMD64, Isolate: true}, store, arm64Host())
+	if err != nil {
+		t.Fatalf("Resolve --isolate --distro ubuntu --arch amd64: %v", err)
+	}
+	if amd64.MachineName == ubuntu.MachineName {
+		t.Errorf("both architectures resolved to %q", amd64.MachineName)
+	}
+}
+
+func TestResolve_LongestMachineNameIsUsable_PROP_2(t *testing.T) {
+	// The isolated form is the long end of the matrix: prefix, reserved token,
+	// ten hex characters, and the whole environment. Asserted rather than
+	// assumed, since a name avar's own pattern rejects would make every later
+	// operation refuse to touch the machine.
+	const hostnameLabelLimit = 63
+
+	longest := ""
+	for _, env := range SupportedEnvironments() {
+		env.Isolated = true
+		name, err := machineName(env, strings.Repeat("f", 64))
+		if err != nil {
+			t.Fatalf("machineName(%+v): %v", env, err)
+		}
+		if err := types.ValidateMachineName(name); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if len(name) > len(longest) {
+			longest = name
+		}
+	}
+
+	if len(longest) > hostnameLabelLimit {
+		t.Errorf("longest machine name %q is %d characters, over the %d-character hostname label limit", longest, len(longest), hostnameLabelLimit)
+	}
+	t.Logf("longest machine name in the supported matrix: %q (%d characters)", longest, len(longest))
 }
 
 func TestMatrix_PinnedVersionIsSupported(t *testing.T) {
@@ -624,7 +694,7 @@ func TestResolve_NestedDirectoryResolvesToItsProject_REQ_6_6(t *testing.T) {
 	}
 	// The subdirectory inherits the project's remembered isolation rather than
 	// silently becoming a separate, shared project.
-	if got.MachineName != "avr-prj-"+fakeID(root)[:projectIDPrefixLen] {
+	if got.MachineName != "avr-prj-"+fakeID(root)[:projectIDPrefixLen]+"-ubuntu-24.04-arm64" {
 		t.Errorf("machine name = %q, want the project's isolated machine", got.MachineName)
 	}
 	if len(store.projects) != 1 {
@@ -771,7 +841,7 @@ func TestResolve_AgainstRealStateStore_REQ_11_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve --isolate: %v", err)
 	}
-	wantName := "avr-prj-" + id[:projectIDPrefixLen]
+	wantName := "avr-prj-" + id[:projectIDPrefixLen] + "-ubuntu-24.04-arm64"
 	if isolated.MachineName != wantName {
 		t.Fatalf("machine name = %q, want %q", isolated.MachineName, wantName)
 	}

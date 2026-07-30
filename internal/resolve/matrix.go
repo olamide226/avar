@@ -96,8 +96,9 @@ var supported = []distroSupport{
 }
 
 // isolatedNameToken is the token that marks a per-project machine name, and is
-// therefore reserved: no distribution may be called this, or a project's
-// isolated machine could collide with a shared one (PROP-2).
+// therefore reserved: no distribution may be called this, or a shared machine's
+// name would start the same way a project's isolated machine does and the two
+// namespaces would no longer be told apart by inspection (PROP-2).
 const isolatedNameToken = "prj"
 
 // SupportedDistros returns the distributions avar can run, in the order they
