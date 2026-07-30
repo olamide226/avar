@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # macOS is avar's only supported host platform (REQ-17.6), so unit and
+  # integration tests run there. E2E tests are not in CI: they provision real
+  # virtual machines and run via `make e2e` on a developer machine.
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify formatting and vet
+        run: make lint
+
+      - name: Verify go.mod is tidy
+        run: make tidy-check
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
