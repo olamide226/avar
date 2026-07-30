@@ -8,26 +8,26 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
 
 ## Phase 1 — MVP core: shell loop + environment selection
 
-- [ ] 1. Scaffold project and CLI skeleton
-  - Go module, cobra root command with `SetInterspersed(false)`, `--version`, styled `avr --help` reflecting the full grammar
+- [x] 1. Scaffold project and CLI skeleton  _(PR #1)_
+  - Go module, cobra root command, `--version`, styled `avr --help` reflecting the full grammar (flag parsing moved to internal/cli in task 2 — see design.md §3.1)
   - CI: lint + unit tests on macOS runner; `make e2e` target stubbed
   - _Requirements: 17.2_
   - _writes: go.mod, main.go, cmd/root.go, Makefile, .github/workflows/ci.yml_
 
-- [ ] 2. Implement argv grammar resolution
-  - [ ] 2.1 Selector-flag parsing and subcommand vs guest-command split
+- [x] 2. Implement argv grammar resolution  _(PR #2)_
+  - [x] 2.1 Selector-flag parsing and subcommand vs guest-command split  _(PR #2)_
     - Table-driven tests: `avr`, `avr npm test`, `avr status`, `avr -- status`, `avr --arch amd64 npm test`, `avr --distro fedora code`
     - _Requirements: 2.5, 2.6, 4.5_
     - _writes: cmd/root.go, internal/cli/grammar.go, internal/cli/grammar_test.go_
-  - [ ] 2.2 Fuzz/property tests for the grammar (Property 9)
+  - [x] 2.2 Fuzz/property tests for the grammar (Property 9)  _(PR #2)_
     - _Requirements: 2.5, 2.6_
     - _writes: internal/cli/grammar_fuzz_test.go_
 
-- [ ] 3. Implement state store
+- [x] 3. Implement state store  _(PR #5)_
   - Types (`ProjectRecord`, `MachineRecord`, `SessionRecord`), atomic write (temp+rename), advisory file lock, Project_Identity hashing with symlink resolution
   - Unit tests incl. concurrent-writer lock test
   - _Requirements: 11.2 (schema), 17.5_
-  - _writes: internal/state/store.go, internal/state/types.go, internal/state/lock.go, internal/state/store_test.go_
+  - _writes: internal/state/store.go, internal/state/lock.go, internal/state/project.go, internal/state/session.go, + tests (records live in internal/types, so no state/types.go)_
 
 - [ ] 4. Implement Resolver
   - Precedence: flags > project record > config.toml > defaults; deterministic machine naming (`avr-<distro>-<ver>-<arch>`, `avr-prj-<hash10>`); supported distro/arch matrix with pinned versions; unsupported values error listing options
@@ -35,13 +35,13 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 1.5_
   - _writes: internal/resolve/resolver.go, internal/resolve/matrix.go, internal/resolve/resolver_test.go_
 
-- [ ] 5. Implement dependency manager (Lima)
+- [x] 5. Implement dependency manager (Lima)  _(PR #3)_
   - Detect `limactl`, parse version, compare to pinned minimum; interactive `brew install lima` offer; manual-instructions fallback; refuse unsupported versions
   - Unit tests with fake exec
   - _Requirements: 8.1, 8.2, 8.3, 8.4_
   - _writes: internal/deps/lima.go, internal/deps/lima_test.go_
 
-- [ ] 6. Define Provider interface + FakeProvider test double
+- [x] 6. Define Provider interface + FakeProvider test double  _(PR #4)_
   - `Provider`, `MachineSpec`, `ShellOpts`, `ProgressSink`; FakeProvider records call sequences for flow tests
   - _Requirements: 17.3_
   - _writes: internal/provider/provider.go, internal/provider/fake/fake.go_
@@ -88,7 +88,7 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: 1.6, 17.5_
   - _writes: internal/state/reconcile.go, internal/state/reconcile_test.go_
 
-- [ ] 14. Packaging and distribution
+- [x] 14. Packaging and distribution  _(PR #1)_
   - GoReleaser config (darwin arm64/amd64), Homebrew tap formula with `depends_on "lima"`, release workflow
   - _Requirements: 8.5, 17.2, 17.6_
   - _writes: .goreleaser.yaml, .github/workflows/release.yml_
