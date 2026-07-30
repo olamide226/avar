@@ -151,39 +151,76 @@ Layout:
 
 **Purpose**: Backend abstraction (Req 17.3). Command layer and Resolver depend only on this.
 
+The operations are **segregated by capability** rather than gathered into one interface. `Provider` is the core set every backend must implement; `Snapshotter`, `SSHConfigProvider` and `PortDiagnoser` describe abilities a backend either has or does not. Callers that need a capability type-assert for it and report plainly when the backend lacks it. This keeps Phase 1's `LimaProvider` free of Phase 2 stubs and keeps a future SSH-only backend from having to fake snapshots it cannot take.
+
 ```go
 type Provider interface {
-    // EnsureMachine creates the machine if absent and starts it if stopped.
-    // Progress events stream to the supplied sink (UI renders them).
-    EnsureMachine(ctx context.Context, spec MachineSpec, progress ProgressSink) error
+    // EnsureMachine creates the machine if absent, starts it if stopped, and is a
+    // silent no-op when it is already running (Req 1.2/1.3 — called every invocation).
+    // On failure nothing half-created survives (Req 1.6, Property 7).
+    // Emits Creating / Starting / Warning (emulation, Req 4.6) events.
+    EnsureMachine(ctx context.Context, spec MachineSpec, progress types.ProgressSink) error
 
-    // Shell attaches an interactive shell or runs argv; returns guest exit code.
-    // Streams stdio; allocates PTY iff opts.TTY. Forwards SIGINT/SIGTERM/SIGWINCH.
+    // Shell attaches an interactive shell (empty Argv) or runs argv on an
+    // already-running machine, and returns the guest exit code. A non-zero guest
+    // status is (code, nil) — never a Go error (Req 1.7/2.2, Property 3).
+    // Streams stdio; allocates PTY iff opts.TTY; forwards SIGINT/SIGTERM/SIGWINCH.
+    // Takes no ProgressSink: once attached, avar is silent.
     Shell(ctx context.Context, machine string, opts ShellOpts) (exitCode int, err error)
 
-    // Mounts
+    // Mounts. SetMounts takes the complete desired set and replaces what is applied,
+    // which is what makes mount confinement checkable (Property 5). Idempotent: an
+    // unchanged set means no restart (Req 17.1).
     AppliedMounts(ctx context.Context, machine string) ([]string, error)
-    SetMounts(ctx context.Context, machine string, dirs []string) error // may restart; reports via ProgressSink
+    SetMounts(ctx context.Context, machine string, dirs []string, progress types.ProgressSink) error
 
-    Stop(ctx context.Context, machine string) error
-    Delete(ctx context.Context, machine string) error
-    Status(ctx context.Context) ([]MachineStatus, error) // avar-owned machines only
+    Stop(ctx context.Context, machine string, progress types.ProgressSink) error // stopped → no-op; unknown → ErrMachineNotFound
+    Delete(ctx context.Context, machine string) error                            // fully idempotent (cleanup path, Property 7)
+    Status(ctx context.Context) ([]types.MachineStatus, error)                   // avar-owned machines only, sorted (Req 5.4, Property 6)
+}
 
-    // Phase 2
-    Snapshot(ctx context.Context, machine, name string) error
-    RestoreSnapshot(ctx context.Context, machine, name string) error
+// Phase 2 capabilities, implemented only by backends that actually have them.
+type Snapshotter interface {
+    Snapshot(ctx context.Context, machine, name string, progress types.ProgressSink) error
+    RestoreSnapshot(ctx context.Context, machine, name string, progress types.ProgressSink) error
     ListSnapshots(ctx context.Context, machine string) ([]SnapshotInfo, error)
+}
+
+type SSHConfigProvider interface {
     SSHConfig(ctx context.Context, machine string) (string, error) // for avr code
+}
+
+// PortDiagnoser explains forwarding state (Req 7.2). Forwarding itself is not an
+// operation — it happens without avar asking — so there is only something to report.
+type PortDiagnoser interface {
+    PortDiagnostics(ctx context.Context, machine string) ([]PortDiagnostic, error)
+}
+
+type MachineSpec struct {
+    Name       string                     // avr-…, from the resolver (ownership marker)
+    Selector   types.EnvironmentSelector
+    Kind       types.MachineKind          // shared | isolated | base
+    Mounts     []string                   // project roots to share at create time
+    CPUs       int                        // zero → backend's host-proportional default (Req 17.4)
+    MemoryGB   float64
+    DiskGB     float64
+    DeriveFrom string                     // optional pristine base to copy (Req 11.1); a hint, not a requirement
 }
 
 type ShellOpts struct {
     Workdir string
     Argv    []string          // empty → interactive login shell
-    Env     map[string]string // ONLY what policy explicitly allows (Req 9.1/12)
+    Env     map[string]string // ONLY what policy explicitly allows; never merged with the
+                              // host environment (Req 9.1/12, Property 4)
     TTY     bool
+    Stdin   io.Reader         // nil → the calling process's stream; redirection is invalid with TTY.
+    Stdout  io.Writer         // Used by avar's own guest probes (e.g. mount verification, Req 6.5)
+    Stderr  io.Writer         // so their output never reaches the user's terminal.
     ForwardSSHAgent bool      // Phase 2
 }
 ```
+
+Sentinel errors (`ErrNotOwned`, `ErrMachineNotFound`, `ErrMachineNotRunning`, `ErrSnapshotNotFound`) let the command layer react to a condition instead of matching message text; the error table in §6 maps them onto user-facing behavior.
 
 ### 3.5 LimaProvider (`internal/provider/lima`)
 
