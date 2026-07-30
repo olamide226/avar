@@ -2,7 +2,7 @@
 
 ## Introduction
 
-avar is a zero-configuration, directory-centric shell environment switcher for macOS. It lets a developer stand in any project directory and drop into a complete Linux environment — same working directory, real `sudo`, persistent packages, automatic port forwarding — as easily as opening another shell tab:
+avar is a zero-configuration, directory-centric shell environment switcher. The MVP targets macOS; post-MVP Windows support uses WSL 2 as a native provider rather than introducing another virtualization runtime. It lets a developer stand in any project directory and drop into a complete Linux environment — same project context, real `sudo`, persistent packages, automatic port forwarding — as easily as opening another shell tab:
 
 ```bash
 cd ~/code/my-project
@@ -12,27 +12,29 @@ avr --arch amd64     # same, but x86_64
 avr --distro fedora  # same, but Fedora
 ```
 
-avar is a thin product/UX layer over [Lima](https://lima-vm.io) (Apache 2.0, CNCF incubating). It deliberately hides Lima's machine-centric model: the user never names a VM, writes a mount stanza, edits YAML, or configures SSH. The **current directory plus the selected operating environment** is the entire mental model.
+On macOS, avar is a thin product/UX layer over [Lima](https://lima-vm.io) (Apache 2.0, CNCF incubating). On Windows, the post-MVP WSL2Provider supplies the same product contract over WSL 2. avar deliberately hides each backend's machine- or distribution-centric model: the user never needs to name a VM or WSL distribution, write a mount stanza, edit backend configuration, or configure SSH. The **current directory plus the selected operating environment** is the entire mental model.
 
 avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or a VM manager. It competes on the mental model, not on virtualization.
 
-**Scope phases** (traceability for tasks): Requirements 1–9 are **MVP Phase 1**, Requirements 10–13 are **MVP Phase 2**, Requirements 14–16 are **Post-MVP**. Requirement 17 (non-functional) applies to all phases.
+**Scope phases** (traceability for tasks): Requirements 1–9 are **MVP Phase 1**, Requirements 10–13 are **MVP Phase 2**, Requirements 14–16 and 18 are **Post-MVP**. Requirement 17 (non-functional) applies to all phases.
 
 ## Glossary
 
 - **avar**: The product name.
 - **avr**: The CLI binary name (`avr --help`).
-- **Host**: The user's macOS system.
+- **Host**: The user's supported macOS or Windows system. MVP host requirements remain macOS-only.
+- **Windows_Host**: A supported Windows system running WSL 2.
 - **Guest**: A Linux environment managed by avar.
 - **Machine**: A Lima VM instance managed by avar. avar names, creates, and selects machines internally; machine identity is never required in the default UX.
+- **WSL_Distribution**: A Linux distribution registered with WSL 2. The WSL2Provider manages only avar-owned distributions and hides their registered names in the default UX.
 - **Shared_Machine**: The default long-lived machine a given (distro, arch) pair maps to. All projects share it unless isolation is requested.
 - **Isolated_Environment**: A per-project machine derived from a clean base, selected via `--isolate` and remembered per project.
 - **Project**: The host directory `avr` is invoked from (the nearest enclosing directory the user is standing in; avar does not require a repository root marker).
 - **Project_Identity**: A stable identifier for a project, derived from the SHA-256 hash of the project's resolved absolute path (symlinks resolved).
-- **Live_Mount**: The default file-sharing mode — the host project directory is mounted writable inside the guest at the identical absolute path.
+- **Live_Mount**: The default file-sharing mode — the host project directory is mounted writable inside the guest at the identical absolute path on macOS, or exposed at its canonical WSL path on Windows.
 - **Environment_Selector**: The (distro, arch, isolation) triple that determines which machine a command targets.
-- **Provider**: The backend that implements machine lifecycle operations. The only MVP provider is Lima.
-- **State_Dir**: `~/.avr/` — avar's private metadata directory on the host (project records, machine registry, generated SSH config, logs).
+- **Provider**: The backend that implements environment lifecycle and execution operations. The only MVP provider is Lima; WSL2Provider is a post-MVP Windows provider.
+- **State_Dir**: avar's private metadata directory on the host (`~/.avr/` on macOS; a platform-appropriate per-user application-data directory on Windows) containing project records, environment registry, generated connection configuration, and logs.
 - **Idle_Timeout**: The period with no active avar sessions after which a machine is automatically stopped.
 
 ---
@@ -294,3 +296,37 @@ avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or 
 17.5 **Crash consistency**: IF avar is killed mid-operation THEN a subsequent invocation SHALL detect and recover or clean up partial state (no wedged "unknown" machines requiring manual Lima surgery).
 
 17.6 **Host platform**: MVP SHALL support macOS 13+ on Apple Silicon and Intel. Linux hosts, Windows, GUIs, cloud/remote environments, team policies, and Kubernetes are explicitly out of scope for MVP.
+
+### Requirement 18: Windows Host Support via WSL 2 — *Post-MVP*
+
+**User Story:** As a Windows developer, I want the same `avr` project-centred Linux shell experience backed by WSL 2, so that I can use avar consistently without installing or managing a second VM runtime.
+
+#### Acceptance Criteria
+
+18.1 WHERE `avr` runs on a supported Windows host THE CLI SHALL automatically select the WSL2Provider and preserve the same top-level shell, one-shot command, environment-selector, lifecycle, isolation, forwarding, and editor command grammar used on macOS.
+
+18.2 WHEN WSL 2 and a compatible WSL command-line interface are available THEN THE CLI SHALL use them directly without requiring Lima, Docker Desktop, Hyper-V VM configuration, or another third-party virtualization runtime.
+
+18.3 IF WSL is missing, disabled, outdated, or requires an administrative install, kernel update, or host restart THEN THE CLI SHALL identify the unmet prerequisite, offer an explicit installation or upgrade action where it can do so safely, describe any elevation or restart requirement before acting, and exit without registering a partial avar environment.
+
+18.4 IF the selected distribution is running under WSL 1 THEN THE CLI SHALL refuse to use it as an avar environment, explain that WSL 2 is required, and provide the exact upgrade command or next step.
+
+18.5 WHEN a user invokes `avr` or `avr <command>` from a Windows filesystem path THEN THE WSL2Provider SHALL resolve that path to its canonical WSL-visible path, start the guest process in the corresponding project directory, and preserve live bidirectional file visibility.
+
+18.6 WHEN a user selects a supported distribution THEN THE WSL2Provider SHALL create or reuse an avar-managed WSL 2 distribution for that selector without requiring the user to know its registered name. IF a requested architecture is not supported by the Windows host and WSL 2 runtime THEN THE CLI SHALL fail before provisioning with a provider-capability error listing the supported architecture values.
+
+18.7 THE WSL2Provider SHALL distinguish avar-managed distributions using both an avar-owned registry record and a reserved name prefix, and SHALL never start, stop, export, import, reset, unregister, or otherwise modify a user-managed WSL distribution.
+
+18.8 WHEN the WSL2Provider executes an interactive shell or one-shot command THEN THE CLI SHALL preserve stdin, stdout, stderr, PTY behavior, terminal resizing, signal/interrupt behavior where Windows and WSL expose an equivalent, and guest exit-code propagation consistent with Requirements 1–3.
+
+18.9 WHEN a guest process listens on a TCP port and WSL localhost forwarding is available THEN that port SHALL be reachable from the Windows host at the same `localhost` port. IF forwarding is unavailable or conflicts with an existing listener THEN the session SHALL continue and `avr status` SHALL report an actionable diagnostic.
+
+18.10 WHEN a Windows user runs `avr code` THEN THE CLI SHALL open the project through VS Code's WSL integration for the selected avar-managed distribution and SHALL NOT require or generate SSH configuration for that flow.
+
+18.11 WHEN a project resides on the Windows filesystem and avar detects a workload likely to suffer materially from cross-filesystem I/O THEN THE CLI SHALL display a dismissible, once-per-project recommendation for Linux-native workspace mode; accepting that recommendation SHALL use Requirement 14's reviewable synchronization and conflict-safety rules.
+
+18.12 THE WSL2Provider SHALL implement snapshot, restore, reset, project isolation, and crash recovery without changing or deleting host project files, and SHALL leave either a fully registered usable environment or a recoverable clean state after interruption.
+
+18.13 THE Windows build SHALL store state in a per-user, non-roaming application-data directory, canonicalize Windows project paths case-insensitively for Project_Identity, and prevent the same project path expressed with different drive-letter casing or separators from creating duplicate project records.
+
+18.14 THE Windows implementation SHALL ship as a self-contained `avr.exe` for supported Windows host architectures and SHALL keep all WSL-specific commands, parsing, lifecycle rules, and capability checks behind the Provider and dependency boundaries so that command-layer behavior remains provider-neutral.
