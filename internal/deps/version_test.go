@@ -185,19 +185,31 @@ func TestVersion_CompareOrdersNumericallyNotLexically(t *testing.T) {
 func TestVersion_AtLeastAcceptsTheMinimumItself_REQ_8_1(t *testing.T) {
 	t.Parallel()
 
+	// Cases are derived from the floor rather than spelling it out, so that
+	// moving MinLimaVersion cannot leave this test asserting against a version
+	// nobody supports any more.
+	min := MinLima()
+	bump := func(f func(*Version)) string {
+		v := min
+		f(&v)
+		return v.String()
+	}
+
 	tests := []struct {
 		version string
 		want    bool
 	}{
 		{version: MinLimaVersion, want: true},
-		{version: "1.0.1", want: true},
-		{version: "1.9.0", want: true},
-		{version: "1.10.0", want: true},
-		{version: "2.0.0", want: true},
-		{version: "1.0.0+dirty", want: true},
-		{version: "1.0.0-beta.1", want: false},
-		{version: "0.23.2", want: false},
-		{version: "0.9.9", want: false},
+		{version: bump(func(v *Version) { v.Patch++ }), want: true},
+		{version: bump(func(v *Version) { v.Minor += 9 }), want: true},
+		{version: bump(func(v *Version) { v.Minor += 10 }), want: true},
+		{version: bump(func(v *Version) { v.Major++ }), want: true},
+		// Build metadata takes no part in precedence.
+		{version: bump(func(v *Version) { v.Build = "dirty" }), want: true},
+		// A pre-release precedes its own release, so it is below the floor.
+		{version: bump(func(v *Version) { v.Pre = "beta.1" }), want: false},
+		{version: bump(func(v *Version) { v.Major--; v.Minor = 23; v.Patch = 2 }), want: false},
+		{version: bump(func(v *Version) { v.Major--; v.Minor = 9; v.Patch = 9 }), want: false},
 	}
 
 	for _, tc := range tests {

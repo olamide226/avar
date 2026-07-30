@@ -13,6 +13,23 @@ import (
 	"testing"
 )
 
+// supportedVersion is a release comfortably above the floor. Tests that need
+// "a Lima avar accepts" use it rather than a literal, so moving
+// MinLimaVersion cannot silently turn a supported case into an unsupported one.
+var supportedVersion = func() string {
+	v := MinLima()
+	v.Patch += 4
+	return v.String()
+}()
+
+// muchNewerVersion is well above the floor, for the "far ahead of the minimum"
+// case.
+var muchNewerVersion = func() string {
+	v := MinLima()
+	v.Minor += 10
+	return v.String()
+}()
+
 const (
 	fakeLimactl = "/opt/homebrew/bin/limactl"
 	fakeBrew    = "/opt/homebrew/bin/brew"
@@ -164,9 +181,9 @@ func TestEnsureLima_UsesCompatibleInstallWithoutPrompting_REQ_8_1(t *testing.T) 
 		versionOut  string
 		wantVersion string
 	}{
-		{name: "current release", versionOut: "limactl version 1.0.4\n", wantVersion: "1.0.4"},
+		{name: "current release", versionOut: "limactl version " + supportedVersion + "\n", wantVersion: supportedVersion},
 		{name: "exactly the minimum", versionOut: "limactl version " + MinLimaVersion, wantVersion: MinLimaVersion},
-		{name: "much newer", versionOut: "limactl version 1.10.0", wantVersion: "1.10.0"},
+		{name: "much newer", versionOut: "limactl version " + muchNewerVersion, wantVersion: muchNewerVersion},
 		{name: "next major", versionOut: "limactl version v2.1.0", wantVersion: "2.1.0"},
 	}
 
@@ -221,7 +238,7 @@ func TestEnsureLima_FindsLimactlInHomebrewDirWhenPathIsThin_REQ_8_1(t *testing.T
 		t.Fatalf("writing the non-executable file: %v", err)
 	}
 
-	e := &fakeEnv{brew: fakeBrew, versionOut: "limactl version 1.0.4", interactive: true}
+	e := &fakeEnv{brew: fakeBrew, versionOut: "limactl version " + supportedVersion, interactive: true}
 	m := e.manager(t)
 	m.FallbackDirs = []string{notExecutable, brewBin}
 	m.Confirm = func(context.Context, string) (bool, error) {
@@ -247,7 +264,7 @@ func TestEnsureLima_InstallsViaHomebrewAfterConfirmation_REQ_8_2(t *testing.T) {
 	e := &fakeEnv{
 		limactl:       "", // missing
 		brew:          fakeBrew,
-		versionOut:    "limactl version 1.0.4",
+		versionOut:    "limactl version " + supportedVersion,
 		interactive:   true,
 		confirmAnswer: true,
 	}
@@ -277,8 +294,8 @@ func TestEnsureLima_InstallsViaHomebrewAfterConfirmation_REQ_8_2(t *testing.T) {
 	if got := e.argvs(); !equalStrings(got, want) {
 		t.Fatalf("subprocess calls = %v, want %v", got, want)
 	}
-	if lima.Version.String() != "1.0.4" || lima.Path != fakeLimactl {
-		t.Errorf("re-verification returned %+v, want the freshly installed 1.0.4 at %s", lima, fakeLimactl)
+	if lima.Version.String() != supportedVersion || lima.Path != fakeLimactl {
+		t.Errorf("re-verification returned %+v, want the freshly installed %s at %s", lima, supportedVersion, fakeLimactl)
 	}
 	if !contains(e.out.String(), "Fetching lima") {
 		t.Errorf("installer output must be streamed to the user, got %q", e.out.String())
@@ -336,7 +353,7 @@ func TestEnsureLima_ReverifiesAfterInstallAndFailsWhenLimaIsStillUnusable_REQ_8_
 
 			e := &fakeEnv{
 				brew:          fakeBrew,
-				versionOut:    "limactl version 1.0.4",
+				versionOut:    "limactl version " + supportedVersion,
 				interactive:   true,
 				confirmAnswer: true,
 				installErr:    tc.installErr,
@@ -588,7 +605,7 @@ func TestEnsureLima_CancelledContextAborts(t *testing.T) {
 	t.Run("cancelled before the check", func(t *testing.T) {
 		t.Parallel()
 
-		e := &fakeEnv{limactl: fakeLimactl, brew: fakeBrew, versionOut: "limactl version 1.0.4", interactive: true}
+		e := &fakeEnv{limactl: fakeLimactl, brew: fakeBrew, versionOut: "limactl version " + supportedVersion, interactive: true}
 		m := e.manager(t)
 		m.Confirm = func(context.Context, string) (bool, error) {
 			t.Error("a cancelled invocation must not prompt")
@@ -631,7 +648,7 @@ func TestEnsureLima_CancelledContextAborts(t *testing.T) {
 func TestEnsureLima_NeverInvokesAShell(t *testing.T) {
 	t.Parallel()
 
-	e := &fakeEnv{brew: fakeBrew, versionOut: "limactl version 1.0.4", interactive: true, confirmAnswer: true}
+	e := &fakeEnv{brew: fakeBrew, versionOut: "limactl version " + supportedVersion, interactive: true, confirmAnswer: true}
 	if _, err := e.manager(t).EnsureLima(context.Background()); err != nil {
 		t.Fatalf("EnsureLima returned an unexpected error: %v", err)
 	}
