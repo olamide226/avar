@@ -117,6 +117,12 @@ make e2e      # real-Lima end-to-end (macOS + Lima required)
 
 - `main` is protected in practice: **all feature work arrives by PR.** The only
   direct-to-main commit is the initial scaffold.
+- **Spec changes arrive by PR too**, including ones that only tick `tasks.md`
+  checkboxes. The temptation is to treat bookkeeping as too small to review, but a
+  checkbox is a claim that a requirement is now satisfied, and the PR is where that
+  claim gets checked against the diff. Every correction to `design.md` so far came
+  out of exactly that review. If a bookkeeping commit does reach `main` directly,
+  do not rewrite published history to hide it — say so in the next PR.
 - Branch names: `feat/<area>-<short-description>`, `fix/<area>-<short-description>`,
   `chore/…`, `docs/…`. One task (or one coherent sub-task group) per branch.
 - Conventional commits: `feat(resolve): map each selector to its own machine`.
