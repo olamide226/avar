@@ -313,11 +313,17 @@ Key mappings:
 | Snapshot / Restore | `limactl snapshot create/apply/list <n> --tag <name>` (instance is stopped first if the operation requires it, then restarted if it was running). |
 | Isolated create (fast path) | Keep a pristine, stopped base machine per (distro, arch) (`avr-base-<distro>-<ver>-<arch>`); `limactl clone` it for `--isolate` (clone copies disk + ssh config verbatim, so it is fast and deterministic). Fallback: full provision if no base exists. |
 | Reset | `limactl delete <n>` + re-create from template/base (Req 10.3). |
-| SSH config | `limactl show-ssh --format config <n>` → rewritten into `~/.avr/ssh/config` under host alias `avr-<machine>`. |
+| SSH config | Read Lima's generated per-instance `~/.lima/<n>/ssh.config` and re-emit it into `~/.avr/ssh/config` under host alias `avr-<machine>`. **Not `limactl show-ssh`**: verified deprecated in Lima 2.2.0, which prints a warning directing callers to `ssh -F ~/.lima/<n>/ssh.config lima-<n>`. Building `avr code` (task 19) on a deprecated command would inherit its removal. |
 
 **Mount-change restart policy** (Req 6.4): mount edits requiring restart are expected to be rare (first `avr` in each new project). The provider reports a `ProgressSink` event ("Adding /Users/you/code/newproj to your Linux environment — one-time restart, ~10s") so the UX cost is explained. Registered mounts accumulate in the machine config, so revisiting any known project is instant.
 
-**Ownership guard** (Req 5.4): every operation validates the machine name has the `avr-` prefix *and* appears in `machines.json`. Recovery of an interrupted create additionally requires a matching operation-journal entry. `Status` filters `limactl list --json` by the same rule.
+**Ownership guard** (Req 5.4): **mutating** operations validate that the machine name has the `avr-` prefix *and* appears in `machines.json`. Recovery of an interrupted create additionally requires a matching operation-journal entry.
+
+**`Status` filters on the prefix alone** — deliberately weaker, and amended after implementation. Filtering the listing by registry membership as well makes a machine avar created but never finished recording invisible, which is precisely the damage a crash mid-create leaves and precisely what reconciliation (§3.3) exists to adopt. With the stricter filter, adoption is unimplementable. Req 5.4's own wording is prefix-based ("identified by an avar naming prefix/label"), so prefix-only listing is the requirement-faithful reading. Listing is how avar *discovers* damage; mutating is how it *acts* on it, and only the latter needs the record.
+
+`Status` populates `Kind` and `Selector` for unrecorded machines as far as the listing and the deterministic name allow, leaving unknown fields zero rather than guessing — an orphan the reconciler cannot attribute is left alone, never filed under a guessed project.
+
+**Machine state mapping**: a machine that is *coming up* (Lima `Installing`/`Uninitialized`) must map to its own `types.MachineState` value, never to `StateBroken` or `StateUnknown`. Reconciliation deletes unrecorded machines in those two states, and an in-flight create has no record yet: collapsing "starting" into "broken" lets one invocation delete the machine another is still creating. Unrecognised state values are left alone by design, which is what makes a distinct value safe.
 
 ### 3.6 WSL2Provider (`internal/provider/wsl2`) — Post-MVP
 
@@ -449,8 +455,8 @@ _For any_ host directory D beneath registered project P, `MapProjectPath(P, D)` 
 **Validates: 1.1, 2.1, 6.1, 6.6, 18.5**
 
 ### Property 2: Deterministic target resolution
-_For any_ fixed (ProviderID, cwd, flags, state) input, `Resolve` SHALL return the same `ResolvedTarget`, and distinct (provider, distro, arch) triples SHALL never share an environment identity.
-**Validates: 4.1, 4.2, 4.3, 11.2, 18.1, 18.6**
+_For any_ fixed (ProviderID, cwd, flags, state) input, `Resolve` SHALL return the same `ResolvedTarget`, and **no two distinct environments SHALL ever share a machine name** — neither two shared environments differing in (provider, distro, version, arch), nor two isolated environments differing in project *or* in environment. An isolated environment is identified by both, which is why its name carries both (§3.2).
+**Validates: 4.1, 4.2, 4.3, 11.1, 11.2, 18.1, 18.6**
 
 ### Property 3: Exit-code transparency
 _For any_ guest command exiting with code N (0 ≤ N ≤ 255), `avr <cmd>` SHALL exit with code N; _for any_ interactive shell exiting with code N, `avr` SHALL exit with code N.
@@ -465,8 +471,11 @@ _For any_ environment M, the set of host paths avar configures as mounts SHALL e
 **Validates: 6.3, 9.3, 9.4, 11.5, 18.5**
 
 ### Property 6: Ownership confinement
-_For any_ Lima VM or WSL distribution that lacks either the avar prefix or a matching avar ownership record, no normal avar operation SHALL list, start, stop, modify, export, unregister, or delete it; recovery additionally requires a matching pending operation and guest marker.
-**Validates: 5.4, 18.7**
+_For any_ Lima VM or WSL distribution that lacks the avar prefix, **no** avar operation SHALL list, start, stop, modify, export, unregister, or delete it — it is invisible, and not even reported.
+
+_For any_ prefixed environment that additionally lacks a matching avar ownership record, no **mutating** avar operation SHALL act on it, with one bounded exception: reconciliation may adopt it (write the missing record) or delete it when the backend reports it unusable. Listing is not restricted by the record, because a missing record is the damage reconciliation repairs and demanding it would be circular. Recovery of an interrupted create additionally requires a matching pending operation and guest marker.
+
+**Validates: 5.4, 18.7, 1.6, 17.5**
 
 ### Property 7: Provisioning atomicity
 _For any_ failed or interrupted provider create or restore, a subsequent `avr` invocation SHALL observe either a verified usable environment with a committed record, or a journaled state from which it can safely resume/roll back/clean up, never an unowned partial environment or a committed record for an unusable target.
