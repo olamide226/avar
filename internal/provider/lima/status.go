@@ -14,9 +14,11 @@ import (
 const (
 	// isolatedNamePrefix marks a per-project machine: avr-prj-<hash>.
 	isolatedNamePrefix = types.MachineNamePrefix + "prj-"
-	// baseNamePrefix marks a pristine machine cloned to create isolated ones:
+	// baseNamePrefix marks a pristine machine cloned to create isolated ones.
+	// It is built from baseNameToken (clone.go), which is what constructs
+	// these names, so that naming and parsing cannot drift apart:
 	// avr-base-<distro>-<version>-<arch>.
-	baseNamePrefix = types.MachineNamePrefix + "base-"
+	baseNamePrefix = types.MachineNamePrefix + baseNameToken
 )
 
 // Status reports one entry per machine avar owns, ordered by name.

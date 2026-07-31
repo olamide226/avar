@@ -1,14 +1,12 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/olamide226/avar/internal/cli"
@@ -40,6 +38,14 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 	envFile, err := loadEnvFile(inv.EnvFile)
 	if err != nil {
 		return fmt.Errorf("--env-file %s: %w", inv.EnvFile, err)
+	}
+
+	// No backend forwards the host SSH agent yet, so the flag is refused
+	// rather than ignored. Handing the user a session that silently has no
+	// agent is worse than refusing one: they would discover it only when an
+	// authenticated operation failed inside the guest (REQ-12.3).
+	if inv.SSHAgent {
+		return Exit(exitUsage, errors.New("--ssh-agent is not implemented yet: no avar backend forwards the host SSH agent, so the flag would have no effect"))
 	}
 
 	p, err := app.Provider(ctx)
@@ -117,9 +123,13 @@ func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, targ
 		return "", err
 	}
 
+	// The spec is addressed to the backend that is about to execute it. That
+	// routing decision was already made by choosing p, so naming any other
+	// backend here would be incoherent; the resolver's own view of which
+	// backend owns this machine is what recordMachine stores durably.
 	if err := p.EnsureMachine(ctx, provider.MachineSpec{
 		Name:     target.MachineName,
-		Provider: target.Provider,
+		Provider: p.ID(),
 		Selector: target.Selector,
 		Kind:     target.Kind,
 		Mounts:   []types.MountSpec{mount},
@@ -232,15 +242,7 @@ func promptRestart(app *App, hostPath string, sessionCount int) bool {
 	fmt.Fprintf(app.Err, "avr: sharing %s with your Linux environment will restart it.\n", hostPath)
 	fmt.Fprintf(app.Err, "      %d other session%s %s attached to it and would be disconnected.\n",
 		sessionCount, s, pluralize(sessionCount, "is", "are"))
-	fmt.Fprintf(app.Err, "      Continue? (y/N) ")
-
-	r := bufio.NewReader(os.Stdin)
-	reply, err := r.ReadString('\n')
-	if err != nil {
-		return false
-	}
-	reply = strings.TrimSpace(reply)
-	return reply == "y" || reply == "Y"
+	return app.confirmYesNo("      Continue? (y/N) ")
 }
 
 // pluralize returns singular if count is 1, plural otherwise.

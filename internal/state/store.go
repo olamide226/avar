@@ -774,11 +774,17 @@ func writeJSONAtomic(path string, value any) error {
 	return writeFileAtomic(path, append(data, '\n'))
 }
 
-// writeFileAtomic replaces path with data such that no reader — and no crash —
+// WriteFileAtomic replaces path with data such that no reader — and no crash —
 // can observe a half-written file: the bytes go to a temp file in the same
 // directory, are fsynced, and are then renamed over the target. rename(2)
 // within a directory is atomic, so an interrupted write leaves either the
 // previous file or the new one, never a mixture (REQ-17.5, PROP-7).
+//
+// It is exported because the durability rule belongs to this package and other
+// avar-owned files — the SSH configuration `avr code` writes, for one — need
+// the same guarantee. A second hand-rolled copy is how the fsync gets dropped.
+func WriteFileAtomic(path string, data []byte) error { return writeFileAtomic(path, data) }
+
 func writeFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")

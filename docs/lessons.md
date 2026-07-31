@@ -101,6 +101,37 @@ When an implementer says the spec cannot be satisfied as written, that is eviden
 about the spec, not about the implementer. Amend it in the same PR and say so — do
 not work around it silently, and do not make the code lie to match.
 
+### Parallel agents converge on the same wheel, and each reinvents it worse
+
+Six Phase 2 tasks ran as independent agents against disjoint file sets. The file sets
+held — no collisions — but four of the six independently hand-rolled an atomic file
+write, a yes/no prompt, or a state-directory path that `internal/state` already owned.
+Every copy was worse than the original: two dropped the fsync while their doc comments
+still claimed REQ-17.5, one used a fixed `.tmp` path two concurrent runs would collide
+on, and one ignored `$AVR_HOME` so `avr code` wrote outside the state directory every
+other command was using.
+
+Disjoint *files* do not make work disjoint. An agent that cannot see the other branches
+also cannot see that a helper it needs is being written next door, and it will not go
+looking for one in a package its task never mentions. When splitting work, name the
+shared helpers each task must use — or expect to spend the review consolidating them.
+
+### `--ssh-agent` was accepted, plumbed, and did nothing
+
+`ShellOpts.ForwardSSHAgent` was set from the flag and read by no backend. `avr
+--ssh-agent` printed nothing, failed nothing, and gave the user a session with no
+agent. Three independent reviewers found it; `grep -rn ForwardSSHAgent` returns the
+field declaration and one assignment.
+
+This is [the manifest lesson](#a-file-manifest-bounds-what-a-task-writes-not-what-it-finishes)
+again, one layer down: the task wired the flag end to end *except* the end that does
+the work, and a field being set looks exactly like a field being used. For a flag that
+weakens or strengthens a security boundary, silence is the worst failure mode — the
+user believes the grant happened. Until a backend implements it, the flag is refused.
+
+When a feature crosses a layer, the test that proves it belongs at the far side: assert
+the backend *acts*, not that the caller *asked*.
+
 ### A file manifest bounds what a task writes, not what it finishes
 
 `internal/state.Reconcile` was built and tested to 91% coverage, and nothing called

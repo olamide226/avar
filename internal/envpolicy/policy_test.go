@@ -173,11 +173,11 @@ func (environment) Generate(rand *rand.Rand, size int) reflect.Value {
 // block (REQ-12.1).
 func TestCompose_ExplicitForwarding_REQ_12_1(t *testing.T) {
 	host := map[string]string{
-		"TERM":      "xterm-kitty",
-		"LANG":      "en_GB.UTF-8",
-		"AWS_KEY":   "secret123",
-		"GITHUB":    "token456",
-		"NODE_ENV":  "development",
+		"TERM":     "xterm-kitty",
+		"LANG":     "en_GB.UTF-8",
+		"AWS_KEY":  "secret123",
+		"GITHUB":   "token456",
+		"NODE_ENV": "development",
 	}
 
 	got := Compose(Input{

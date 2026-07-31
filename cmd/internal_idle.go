@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/session"
@@ -49,15 +50,7 @@ func runIdleCheck(ctx context.Context, app *App) error {
 		return err
 	}
 
-	timeout, disabled, err := session.IdleTimeout(store)
-	if err != nil {
-		return err
-	}
-	if disabled {
-		return nil
-	}
-
-	idle, err := session.IdleMachines(store, timeout)
+	idle, err := session.IdleMachines(store, session.IdleTimeout(store))
 	if err != nil {
 		return err
 	}
@@ -103,8 +96,14 @@ func runIdleCheck(ctx context.Context, app *App) error {
 // auto-stop is active from the moment there is anything to stop.
 //
 // The function is a no-op when the plist already exists or when the user is
-// not on macOS.
+// not on macOS. launchd is macOS-only; the Windows build will schedule the
+// same `avr internal idle-check` through Task Scheduler instead (design §1),
+// which is why the guard is on the scheduler and not on the feature.
 func ensureLaunchdAgent(app *App) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -139,7 +138,9 @@ func ensureLaunchdAgent(app *App) {
 	fmt.Fprintf(app.Err, "     host resources when you are not using them.\n")
 	fmt.Fprintf(app.Err, "     The check runs every 10 minutes. To disable it:\n")
 	fmt.Fprintf(app.Err, "       launchctl bootout gui/$(id -u)/%s\n", launchdLabel)
-	fmt.Fprintf(app.Err, "     Or set idle_timeout = \"0\" in %s\n", filepath.Join(home, ".avr", "config.toml"))
+	if store, err := app.Store(); err == nil {
+		fmt.Fprintf(app.Err, "     Or set idle_timeout = \"0\" in %s\n", store.ConfigPath())
+	}
 }
 
 // launchdPlistContent returns the plist XML for the idle-check agent.

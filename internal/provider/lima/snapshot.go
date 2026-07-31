@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -48,7 +49,7 @@ func (p *Provider) Snapshot(ctx context.Context, machine, name string, progress 
 	if err != nil {
 		return fmt.Errorf("capturing a snapshot of %s: checking whether the name is taken: %w", machine, err)
 	}
-	if findSnapInfo(existing, name) >= 0 {
+	if hasSnapshot(existing, name) {
 		return fmt.Errorf("capturing snapshot %q of %s: a snapshot with that name already exists; rename the existing one with your virtualization tool, or pick a different name", name, machine)
 	}
 
@@ -128,7 +129,7 @@ func (p *Provider) RestoreSnapshot(ctx context.Context, machine, name string, pr
 	if err != nil {
 		return fmt.Errorf("restoring a snapshot of %s: checking the available snapshots: %w", machine, err)
 	}
-	if findSnapInfo(existing, name) < 0 {
+	if !hasSnapshot(existing, name) {
 		return fmt.Errorf("%w: %q on %s", provider.ErrSnapshotNotFound, name, machine)
 	}
 
@@ -201,9 +202,6 @@ func (p *Provider) listSnapshots(ctx context.Context, machine string) ([]provide
 // unparseable line does not hide the rest.
 func parseSnapshotList(out []byte) ([]provider.SnapshotInfo, error) {
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 0 {
-		return nil, nil
-	}
 
 	var (
 		snaps     []provider.SnapshotInfo
@@ -253,7 +251,6 @@ func parseSnapshotTime(s string) (time.Time, error) {
 	formats := []string{
 		"2006-01-02 15:04:05.999999999 -0700 MST",
 		"2006-01-02 15:04:05 -0700 MST",
-		"2006-01-02T15:04:05Z07:00",
 		time.RFC3339,
 	}
 	for _, layout := range formats {
@@ -264,11 +261,7 @@ func parseSnapshotTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("cannot parse %q as a snapshot timestamp", s)
 }
 
-func findSnapInfo(snaps []provider.SnapshotInfo, name string) int {
-	for i, s := range snaps {
-		if s.Name == name {
-			return i
-		}
-	}
-	return -1
+// hasSnapshot reports whether snaps contains one called name.
+func hasSnapshot(snaps []provider.SnapshotInfo, name string) bool {
+	return slices.ContainsFunc(snaps, func(s provider.SnapshotInfo) bool { return s.Name == name })
 }

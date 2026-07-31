@@ -9,10 +9,9 @@ import (
 	"github.com/olamide226/avar/internal/cli"
 )
 
-// Every name the argv grammar will route must have somewhere to go: a
-// registered handler, or an entry saying which task builds it. Without this,
-// adding a subcommand to the grammar and forgetting to handle it produces
-// "internal error" at runtime instead of a compile-time or test-time failure.
+// Every name the argv grammar will route must have a registered handler.
+// Without this, adding a subcommand to the grammar and forgetting to handle it
+// produces "internal error" at runtime instead of a test-time failure.
 func TestDispatch_EveryGrammarSubcommandIsAccountedFor_REQ_2_5(t *testing.T) {
 	for _, name := range cli.Subcommands() {
 		switch name {
@@ -22,13 +21,8 @@ func TestDispatch_EveryGrammarSubcommandIsAccountedFor_REQ_2_5(t *testing.T) {
 			continue
 		}
 
-		_, registered := handlers[name]
-		_, pending := pendingSubcommand[name]
-		if !registered && !pending {
-			t.Errorf("subcommand %q is in the argv grammar but has no handler and no pending-task entry", name)
-		}
-		if registered && pending {
-			t.Errorf("subcommand %q has a handler and is still listed as pending; remove it from pendingSubcommand", name)
+		if _, registered := handlers[name]; !registered {
+			t.Errorf("subcommand %q is in the argv grammar but has no handler", name)
 		}
 	}
 }

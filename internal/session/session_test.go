@@ -345,105 +345,37 @@ func TestIdleMachines_MultipleMachinesMixed(t *testing.T) {
 
 // --- Config parsing --------------------------------------------------------
 
-func TestIdleTimeout_DefaultWhenNoConfig(t *testing.T) {
-	d, disabled, err := idleTimeoutAt(filepath.Join(t.TempDir(), "nonexistent.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if disabled {
-		t.Error("no config should not disable idle stop")
-	}
-	if d != DefaultIdleTimeout {
-		t.Errorf("timeout = %v, want %v", d, DefaultIdleTimeout)
-	}
-}
-
-func TestIdleTimeout_ParsesQuotedDuration(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte(`idle_timeout = "30m"`+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	d, disabled, err := idleTimeoutAt(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if disabled {
-		t.Error("30m should not be disabled")
-	}
-	if d != 30*time.Minute {
-		t.Errorf("timeout = %v, want 30m", d)
-	}
-}
-
-func TestIdleTimeout_ZeroDisables(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte(`idle_timeout = "0"`+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, disabled, err := idleTimeoutAt(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !disabled {
-		t.Error(`idle_timeout = "0" should disable auto-stop`)
-	}
-}
-
-func TestIdleTimeout_BareZeroDisables(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte("idle_timeout = 0\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, disabled, err := idleTimeoutAt(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !disabled {
-		t.Error("idle_timeout = 0 (bare) should disable auto-stop")
-	}
-}
-
-func TestIdleTimeout_ParsesHours(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte(`idle_timeout = "4h"`+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	d, disabled, err := idleTimeoutAt(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if disabled {
-		t.Error("4h should not be disabled")
-	}
-	if d != 4*time.Hour {
-		t.Errorf("timeout = %v, want 4h", d)
-	}
-}
-
-func TestIdleTimeout_InvalidDurationFallsBackToDefault(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte(`idle_timeout = "garbage"`+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	d, disabled, err := idleTimeoutAt(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if disabled {
-		t.Error("garbage value should fall back to default, not disable")
-	}
-	if d != DefaultIdleTimeout {
-		t.Errorf("timeout = %v, want default %v", d, DefaultIdleTimeout)
+func TestIdleTimeout_ReadsTheConfiguredValue_REQ_5_5(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// config is the file contents; empty means no config file at all.
+		config string
+		want   time.Duration
+	}{
+		{"no config file", "", DefaultIdleTimeout},
+		{"quoted duration", `idle_timeout = "30m"`, 30 * time.Minute},
+		{"bare duration", "idle_timeout = 4h", 4 * time.Hour},
+		{"quoted zero disables", `idle_timeout = "0"`, 0},
+		{"bare zero disables", "idle_timeout = 0", 0},
+		{"negative disables", `idle_timeout = "-1h"`, 0},
+		{"unparseable falls back to the default", `idle_timeout = "garbage"`, DefaultIdleTimeout},
+		// A bare integer is not a Go duration, so it is not accepted. This is
+		// asserted rather than left implicit because an earlier unreached
+		// helper claimed to read it as hours: `idle_timeout = 4` means the
+		// default, not four hours.
+		{"bare integer is not a duration", "idle_timeout = 4", DefaultIdleTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if tc.config != "" {
+				if err := os.WriteFile(path, []byte(tc.config+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := idleTimeoutAt(path); got != tc.want {
+				t.Errorf("idleTimeoutAt(%q) = %v, want %v", tc.config, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -476,36 +408,6 @@ func TestStripQuotes(t *testing.T) {
 		got := stripQuotes(tc.in)
 		if got != tc.want {
 			t.Errorf("stripQuotes(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestParseDuration(t *testing.T) {
-	tests := []struct {
-		raw     string
-		want    time.Duration
-		wantErr bool
-	}{
-		{"2h", 2 * time.Hour, false},
-		{"30m", 30 * time.Minute, false},
-		{"90s", 90 * time.Second, false},
-		{"0", 0, false},
-		{"", 0, false},
-		{"2", 2 * time.Hour, false}, // bare integer = hours
-		{"garbage", 0, true},
-	}
-	for _, tc := range tests {
-		got, err := parseDuration(tc.raw)
-		if tc.wantErr && err == nil {
-			t.Errorf("parseDuration(%q) = %v, want error", tc.raw, got)
-			continue
-		}
-		if !tc.wantErr && err != nil {
-			t.Errorf("parseDuration(%q) unexpected error: %v", tc.raw, err)
-			continue
-		}
-		if got != tc.want {
-			t.Errorf("parseDuration(%q) = %v, want %v", tc.raw, got, tc.want)
 		}
 	}
 }

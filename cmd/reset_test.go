@@ -32,11 +32,15 @@ func TestReset_DeletesAndRecreatesWithYes_REQ_10_3(t *testing.T) {
 		t.Fatalf("avr reset --yes: %v", err)
 	}
 
-	// The provider must be called in order: first Delete, then EnsureMachine,
-	// and nothing else (the Status listing is a read of what the app has, not
-	// a subsequent call — it was made when Provider() was built, which this
-	// test's direct seeding skips, so the command makes its own).
-	f.AssertOps(t, fake.OpStatus, fake.OpDelete, fake.OpEnsureMachine)
+	// The provider must be called in order: Delete, then EnsureMachine. (The
+	// leading Status is the command's own listing — Provider() was built by
+	// this test's direct seeding, which skips the one made there.)
+	//
+	// The recreate goes through the same path as an ordinary first use, so the
+	// fresh machine is given the project mount rather than coming up bare.
+	// AppliedMounts is the reconcile confirming EnsureMachine already applied
+	// it; a SetMounts here would mean the machine had come up without it.
+	f.AssertOps(t, fake.OpStatus, fake.OpDelete, fake.OpEnsureMachine, fake.OpAppliedMounts)
 
 	del := f.AssertCalled(t, fake.OpDelete)
 	if del.Machine != target {
@@ -135,7 +139,11 @@ func TestReset_ConfirmationAccepted_REQ_10_3(t *testing.T) {
 		t.Fatalf("avr reset: %v", err)
 	}
 
-	f.AssertOps(t, fake.OpStatus, fake.OpDelete, fake.OpEnsureMachine)
+	// The recreate goes through the same path as an ordinary first use, so the
+	// fresh machine is given the project mount rather than coming up bare.
+	// AppliedMounts is the reconcile confirming EnsureMachine already applied
+	// it; a SetMounts here would mean the machine had come up without it.
+	f.AssertOps(t, fake.OpStatus, fake.OpDelete, fake.OpEnsureMachine, fake.OpAppliedMounts)
 	f.AssertMachineState(t, target, types.StateRunning)
 
 	out := app.stdout()
