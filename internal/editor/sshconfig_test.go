@@ -2,24 +2,23 @@ package editor
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// withTempHome runs a test with HOME set to a temporary directory so that
-// avar's SSH config is written there rather than to the developer's own
-// home.
-func withTempHome(t *testing.T, fn func(home string)) {
+// withTempSSHDir runs a test against a temporary SSH-config directory, which
+// is what the store would supply in production, so nothing is written to the
+// developer's own state directory.
+func withTempSSHDir(t *testing.T, fn func(sshDir string)) {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	fn(home)
+	fn(filepath.Join(t.TempDir(), "ssh"))
 }
 
 // TestWriteHost_CreatesAWellFormedBlock_REQ_13_3 verifies that WriteHost
 // produces a Host block that a real SSH client could parse.
 func TestWriteHost_CreatesAWellFormedBlock_REQ_13_3(t *testing.T) {
-	withTempHome(t, func(home string) {
+	withTempSSHDir(t, func(sshDir string) {
 		const machine = "avr-ubuntu-24.04-arm64"
 		hostBlock := `Host ssh-remote+avr-ubuntu-24.04-arm64
   Hostname 127.0.0.1
@@ -28,11 +27,11 @@ func TestWriteHost_CreatesAWellFormedBlock_REQ_13_3(t *testing.T) {
   User test
   StrictHostKeyChecking no`
 
-		if err := WriteHost(machine, hostBlock); err != nil {
+		if err := WriteHost(sshDir, machine, hostBlock); err != nil {
 			t.Fatalf("WriteHost: %v", err)
 		}
 
-		content, err := ReadHostConfig()
+		content, err := ReadHostConfig(sshDir)
 		if err != nil {
 			t.Fatalf("ReadHostConfig: %v", err)
 		}
@@ -58,7 +57,7 @@ func TestWriteHost_CreatesAWellFormedBlock_REQ_13_3(t *testing.T) {
 // TestWriteHost_UpdatesAnExistingEntry verifies that writing the same
 // machine again replaces the old block rather than appending a duplicate.
 func TestWriteHost_UpdatesAnExistingEntry(t *testing.T) {
-	withTempHome(t, func(home string) {
+	withTempSSHDir(t, func(sshDir string) {
 		const machine = "avr-ubuntu-24.04-arm64"
 
 		firstBlock := `Host ssh-remote+avr-ubuntu-24.04-arm64
@@ -66,7 +65,7 @@ func TestWriteHost_UpdatesAnExistingEntry(t *testing.T) {
   Port 60022
   User old-user`
 
-		if err := WriteHost(machine, firstBlock); err != nil {
+		if err := WriteHost(sshDir, machine, firstBlock); err != nil {
 			t.Fatalf("WriteHost (first): %v", err)
 		}
 
@@ -75,11 +74,11 @@ func TestWriteHost_UpdatesAnExistingEntry(t *testing.T) {
   Port 60023
   User new-user`
 
-		if err := WriteHost(machine, secondBlock); err != nil {
+		if err := WriteHost(sshDir, machine, secondBlock); err != nil {
 			t.Fatalf("WriteHost (second): %v", err)
 		}
 
-		content, err := ReadHostConfig()
+		content, err := ReadHostConfig(sshDir)
 		if err != nil {
 			t.Fatalf("ReadHostConfig: %v", err)
 		}
@@ -106,7 +105,7 @@ func TestWriteHost_UpdatesAnExistingEntry(t *testing.T) {
 // TestWriteHost_MultipleMachinesAreIndependent verifies that writing a
 // second machine does not disturb the first.
 func TestWriteHost_MultipleMachinesAreIndependent(t *testing.T) {
-	withTempHome(t, func(home string) {
+	withTempSSHDir(t, func(sshDir string) {
 		const ubuntu = "avr-ubuntu-24.04-arm64"
 		const fedora = "avr-fedora-42-arm64"
 
@@ -120,14 +119,14 @@ func TestWriteHost_MultipleMachinesAreIndependent(t *testing.T) {
   Port 60023
   User fedora-user`
 
-		if err := WriteHost(ubuntu, ubuntuBlock); err != nil {
+		if err := WriteHost(sshDir, ubuntu, ubuntuBlock); err != nil {
 			t.Fatalf("WriteHost (ubuntu): %v", err)
 		}
-		if err := WriteHost(fedora, fedoraBlock); err != nil {
+		if err := WriteHost(sshDir, fedora, fedoraBlock); err != nil {
 			t.Fatalf("WriteHost (fedora): %v", err)
 		}
 
-		content, err := ReadHostConfig()
+		content, err := ReadHostConfig(sshDir)
 		if err != nil {
 			t.Fatalf("ReadHostConfig: %v", err)
 		}
@@ -153,22 +152,22 @@ func TestWriteHost_MultipleMachinesAreIndependent(t *testing.T) {
 // TestRemoveHost_RemovesOnlyTheNamedMachine verifies that RemoveHost
 // deletes one entry without touching others.
 func TestRemoveHost_RemovesOnlyTheNamedMachine(t *testing.T) {
-	withTempHome(t, func(home string) {
+	withTempSSHDir(t, func(sshDir string) {
 		const ubuntu = "avr-ubuntu-24.04-arm64"
 		const fedora = "avr-fedora-42-arm64"
 
-		if err := WriteHost(ubuntu, "Host ubuntu-host\n  Hostname 127.0.0.1\n  Port 60022"); err != nil {
+		if err := WriteHost(sshDir, ubuntu, "Host ubuntu-host\n  Hostname 127.0.0.1\n  Port 60022"); err != nil {
 			t.Fatalf("WriteHost (ubuntu): %v", err)
 		}
-		if err := WriteHost(fedora, "Host fedora-host\n  Hostname 127.0.0.1\n  Port 60023"); err != nil {
+		if err := WriteHost(sshDir, fedora, "Host fedora-host\n  Hostname 127.0.0.1\n  Port 60023"); err != nil {
 			t.Fatalf("WriteHost (fedora): %v", err)
 		}
 
-		if err := RemoveHost(ubuntu); err != nil {
+		if err := RemoveHost(sshDir, ubuntu); err != nil {
 			t.Fatalf("RemoveHost (ubuntu): %v", err)
 		}
 
-		content, err := ReadHostConfig()
+		content, err := ReadHostConfig(sshDir)
 		if err != nil {
 			t.Fatalf("ReadHostConfig: %v", err)
 		}
@@ -185,14 +184,14 @@ func TestRemoveHost_RemovesOnlyTheNamedMachine(t *testing.T) {
 // TestRemoveHost_UnknownMachineIsANoOp verifies that removing a machine
 // that never had an entry does not fail or touch the file.
 func TestRemoveHost_UnknownMachineIsANoOp(t *testing.T) {
-	withTempHome(t, func(home string) {
+	withTempSSHDir(t, func(sshDir string) {
 		const machine = "avr-does-not-exist"
 
-		if err := RemoveHost(machine); err != nil {
+		if err := RemoveHost(sshDir, machine); err != nil {
 			t.Fatalf("RemoveHost (unknown): %v", err)
 		}
 
-		content, err := ReadHostConfig()
+		content, err := ReadHostConfig(sshDir)
 		if err != nil {
 			t.Fatalf("ReadHostConfig: %v", err)
 		}
@@ -207,26 +206,26 @@ func TestRemoveHost_UnknownMachineIsANoOp(t *testing.T) {
 // diff quiet when the config is committed (or at least guarantees that the
 // format is deterministic).
 func TestWriteHost_ProducesAStableConfigBetweenRuns(t *testing.T) {
-	withTempHome(t, func(home string) {
+	withTempSSHDir(t, func(sshDir string) {
 		const machine = "avr-ubuntu-24.04-arm64"
 		block := `Host ssh-remote+avr-ubuntu-24.04-arm64
   Hostname 127.0.0.1
   Port 60022
   User test`
 
-		if err := WriteHost(machine, block); err != nil {
+		if err := WriteHost(sshDir, machine, block); err != nil {
 			t.Fatalf("WriteHost (first): %v", err)
 		}
-		first, err := ReadHostConfig()
+		first, err := ReadHostConfig(sshDir)
 		if err != nil {
 			t.Fatalf("ReadHostConfig (first): %v", err)
 		}
 
 		// Write the same block again.
-		if err := WriteHost(machine, block); err != nil {
+		if err := WriteHost(sshDir, machine, block); err != nil {
 			t.Fatalf("WriteHost (second): %v", err)
 		}
-		second, err := ReadHostConfig()
+		second, err := ReadHostConfig(sshDir)
 		if err != nil {
 			t.Fatalf("ReadHostConfig (second): %v", err)
 		}
@@ -237,27 +236,22 @@ func TestWriteHost_ProducesAStableConfigBetweenRuns(t *testing.T) {
 	})
 }
 
-// TestConfigDir_ReturnsAHomeRelativePath verifies that ConfigDir and
-// ConfigPath are rooted in the user's home directory.
-func TestConfigDir_ReturnsAHomeRelativePath(t *testing.T) {
-	withTempHome(t, func(home string) {
-		dir, err := ConfigDir()
-		if err != nil {
-			t.Fatalf("ConfigDir: %v", err)
-		}
-		if !strings.HasPrefix(dir, home) {
-			t.Errorf("ConfigDir() = %q, want a path starting with the home directory %q", dir, home)
-		}
-		if !strings.HasSuffix(dir, "ssh") {
-			t.Errorf("ConfigDir() = %q, want it to end in 'ssh'", dir)
+// TestConfigPath_StaysInsideTheSuppliedDirectory pins the contract that
+// replaced this package's own path derivation: the config lives wherever the
+// caller — in production, the state store — says it does, so that $AVR_HOME
+// moves avar's SSH configuration along with the rest of its state.
+func TestConfigPath_StaysInsideTheSuppliedDirectory(t *testing.T) {
+	withTempSSHDir(t, func(sshDir string) {
+		configPath := ConfigPath(sshDir)
+		if filepath.Dir(configPath) != sshDir {
+			t.Errorf("ConfigPath(%q) = %q, want it directly inside the supplied directory", sshDir, configPath)
 		}
 
-		configPath, err := ConfigPath()
-		if err != nil {
-			t.Fatalf("ConfigPath: %v", err)
+		if err := WriteHost(sshDir, "avr-ubuntu-24.04-arm64", "Host avr-ubuntu-24.04-arm64\n  Port 60022"); err != nil {
+			t.Fatalf("WriteHost: %v", err)
 		}
-		if !strings.HasPrefix(configPath, dir) {
-			t.Errorf("ConfigPath() = %q, want it to be inside ConfigDir() = %q", configPath, dir)
+		if _, err := os.Stat(configPath); err != nil {
+			t.Errorf("after WriteHost, no config at %s: %v", configPath, err)
 		}
 	})
 }
@@ -267,11 +261,8 @@ func TestConfigDir_ReturnsAHomeRelativePath(t *testing.T) {
 // when a later write fails in a way that can be tested. (Atomic file
 // operations are tested via the temp-file-and-rename pattern.)
 func TestWriteHost_EmptyFileBeforeFirstWrite(t *testing.T) {
-	withTempHome(t, func(home string) {
-		configPath, err := ConfigPath()
-		if err != nil {
-			t.Fatalf("ConfigPath: %v", err)
-		}
+	withTempSSHDir(t, func(sshDir string) {
+		configPath := ConfigPath(sshDir)
 
 		// Before any write the config file must not exist.
 		if _, err := os.Stat(configPath); err == nil {
@@ -281,7 +272,7 @@ func TestWriteHost_EmptyFileBeforeFirstWrite(t *testing.T) {
 		}
 
 		// After WriteHost it must exist.
-		if err := WriteHost("avr-ubuntu-24.04-arm64", "Host test\n  Hostname 127.0.0.1"); err != nil {
+		if err := WriteHost(sshDir, "avr-ubuntu-24.04-arm64", "Host test\n  Hostname 127.0.0.1"); err != nil {
 			t.Fatalf("WriteHost: %v", err)
 		}
 		if _, err := os.Stat(configPath); err != nil {

@@ -2,11 +2,13 @@
 // `avr code`. It manages avar-owned SSH configuration — never the user's own
 // ~/.ssh/config — and launches editors that connect through it.
 //
-// The SSH configuration lives at ~/.avr/ssh/config. Every host entry is
-// delimited by a comment header that names the machine it belongs to, so that
-// individual entries can be added, replaced or removed without rewriting the
-// rest. WriteHost writes atomically: a temporary file is written, fsynced,
-// and renamed, so a crash never leaves a half-written config (REQ-17.5).
+// The SSH configuration lives in the state store's ssh directory, which the
+// caller supplies — this package derives no paths of its own, so avar has a
+// single answer to where its state lives. Every host entry is delimited by a
+// comment header that names the machine it belongs to, so that individual
+// entries can be added, replaced or removed without rewriting the rest.
+// Writes go through state.WriteFileAtomic, so a crash never leaves a
+// half-written config (REQ-17.5).
 package editor
 
 import (
@@ -16,6 +18,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/olamide226/avar/internal/state"
 )
 
 const (
@@ -34,27 +38,15 @@ const (
 // sshDirPerm locks access to ~/.avr/ssh/ down to the user.
 const sshDirPerm = 0o700
 
-// configPerm keeps SSH private key references readable only by the owner.
-const configPerm = 0o600
-
-// ConfigDir returns the path to avar's SSH configuration directory
-// (~/.avr/ssh/).
-func ConfigDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("find your home directory: %w", err)
-	}
-	return filepath.Join(home, ".avr", "ssh"), nil
-}
-
-// ConfigPath returns the path to avar's SSH config file
-// (~/.avr/ssh/config).
-func ConfigPath() (string, error) {
-	dir, err := ConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "config"), nil
+// ConfigPath returns the path to avar's SSH config file inside sshDir, which
+// the caller takes from the state store (state.Store.SSHDir).
+//
+// The directory is a parameter rather than derived here so that avar has one
+// answer to "where is the state directory": the store's, which honours
+// $AVR_HOME and is platform-aware. Deriving ~/.avr independently would put
+// this file somewhere the rest of avar is not looking.
+func ConfigPath(sshDir string) string {
+	return filepath.Join(sshDir, "config")
 }
 
 // hostHeader builds the comment that marks the start of one machine's block.
@@ -68,19 +60,12 @@ func hostHeader(machine string) string {
 // hostBlock is the full SSH config stanza including the Host line. It is
 // written verbatim after a header comment that names the machine, so a later
 // write can find and replace the same entry. The file is written atomically.
-func WriteHost(machine, hostBlock string) error {
-	dir, err := ConfigDir()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, sshDirPerm); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
+func WriteHost(sshDir, machine, hostBlock string) error {
+	if err := os.MkdirAll(sshDir, sshDirPerm); err != nil {
+		return fmt.Errorf("create %s: %w", sshDir, err)
 	}
 
-	configPath, err := ConfigPath()
-	if err != nil {
-		return err
-	}
+	configPath := ConfigPath(sshDir)
 
 	hosts, err := readHosts(configPath)
 	if err != nil {
@@ -98,11 +83,8 @@ func WriteHost(machine, hostBlock string) error {
 
 // RemoveHost deletes the SSH host entry for machine from avar's config file.
 // Removing a machine that has no entry is a no-op.
-func RemoveHost(machine string) error {
-	configPath, err := ConfigPath()
-	if err != nil {
-		return err
-	}
+func RemoveHost(sshDir, machine string) error {
+	configPath := ConfigPath(sshDir)
 
 	hosts, err := readHosts(configPath)
 	if err != nil {
@@ -191,24 +173,18 @@ func writeConfigAtomic(configPath string, hosts map[string]string) error {
 		}
 	}
 
-	tmpPath := configPath + ".tmp"
-	if err := os.WriteFile(tmpPath, buf.Bytes(), configPerm); err != nil {
-		return fmt.Errorf("write temporary SSH configuration at %s: %w", tmpPath, err)
-	}
-	if err := os.Rename(tmpPath, configPath); err != nil {
-		return fmt.Errorf("install the SSH configuration at %s: %w", configPath, err)
-	}
-	return nil
+	// The state package owns avar's atomic-write rule, so this uses it rather
+	// than repeating it: the copy that lived here wrote to a fixed ".tmp" path
+	// two concurrent `avr code` runs would collide on, and never fsynced,
+	// which made the guarantee in this package's doc comment untrue.
+	return state.WriteFileAtomic(configPath, buf.Bytes())
 }
 
 // ReadHostConfig returns the full SSH config file content as a string,
 // suitable for passing to `ssh -F` or for writing tests against. It returns
 // an empty string when the file does not exist.
-func ReadHostConfig() (string, error) {
-	configPath, err := ConfigPath()
-	if err != nil {
-		return "", err
-	}
+func ReadHostConfig(sshDir string) (string, error) {
+	configPath := ConfigPath(sshDir)
 	data, err := os.ReadFile(configPath)
 	if os.IsNotExist(err) {
 		return "", nil

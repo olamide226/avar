@@ -102,7 +102,7 @@ func runRestore(ctx context.Context, app *App, inv cli.Invocation) error {
 	fmt.Fprintf(app.Err, "Restoring %s to snapshot %q…\n", target.Selector.Label(), name)
 	if err := snapter.RestoreSnapshot(ctx, target.MachineName, name, progressTo(app.Err)); err != nil {
 		if errors.Is(err, provider.ErrSnapshotNotFound) {
-			return suggestAvailableSnapshots(ctx, app, name, err, target, snapter)
+			return suggestAvailableSnapshots(ctx, err, target, snapter)
 		}
 		return err
 	}
@@ -114,7 +114,7 @@ func runRestore(ctx context.Context, app *App, inv cli.Invocation) error {
 // suggestAvailableSnapshots lists the available snapshots after a failed
 // restore so the user can pick one without running a second command
 // (REQ-10.2).
-func suggestAvailableSnapshots(ctx context.Context, app *App, requested string, err error, target resolve.ResolvedTarget, snapter provider.Snapshotter) error {
+func suggestAvailableSnapshots(ctx context.Context, err error, target resolve.ResolvedTarget, snapter provider.Snapshotter) error {
 	snaps, listErr := snapter.ListSnapshots(ctx, target.MachineName)
 	if listErr != nil {
 		return fmt.Errorf("%w; listing the available snapshots also failed: %v", err, listErr)

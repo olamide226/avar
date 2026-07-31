@@ -3,11 +3,11 @@ package session
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/olamide226/avar/internal/state"
+	"github.com/olamide226/avar/internal/types"
 )
 
 // DefaultIdleTimeout is the timeout when config.toml does not set one.
@@ -24,41 +24,35 @@ const configKey = "idle_timeout"
 // config returns the default (2h). Parsing is intentionally simple rather
 // than pulling in a TOML parser: idle_timeout is the only key we own right
 // now, and a purpose-built line reader is both correct and smaller.
-func IdleTimeout(store *state.Store) (time.Duration, bool, error) {
+// A zero return means auto-stop is disabled (REQ-5.5). There is no separate
+// "disabled" flag and no error: every failure to read or parse falls back to
+// the default rather than refusing to check idle state at all, and a caller
+// that has the duration already knows disabled means "do not stop anything" —
+// IdleMachines enforces exactly that.
+func IdleTimeout(store *state.Store) time.Duration {
 	return idleTimeoutAt(store.ConfigPath())
 }
 
-func idleTimeoutAt(configPath string) (time.Duration, bool, error) {
+func idleTimeoutAt(configPath string) time.Duration {
 	data, err := os.ReadFile(configPath)
-	if os.IsNotExist(err) {
-		return DefaultIdleTimeout, false, nil
-	}
 	if err != nil {
-		// A config file that cannot be read is not a fatal condition: use
-		// the default rather than refusing to check idle state at all.
-		return DefaultIdleTimeout, false, nil
+		return DefaultIdleTimeout
 	}
 
-	val := parseTOMLKey(string(data), configKey)
+	val := stripQuotes(parseTOMLKey(string(data), configKey))
 	if val == "" {
-		return DefaultIdleTimeout, false, nil
+		return DefaultIdleTimeout
 	}
 
-	// "0" means disabled (REQ-5.5).
-	if val == "0" || val == `"0"` {
-		return 0, true, nil
-	}
-
-	// The value may be quoted or bare in TOML.
-	val = stripQuotes(val)
+	// A non-positive duration — "0", "0s", "-1h" — disables auto-stop.
 	d, err := time.ParseDuration(val)
 	if err != nil {
-		return DefaultIdleTimeout, false, nil
+		return DefaultIdleTimeout
 	}
 	if d <= 0 {
-		return 0, true, nil
+		return 0
 	}
-	return d, false, nil
+	return d
 }
 
 // IdleMachines returns the names of the avar-managed machines that have been
@@ -73,21 +67,26 @@ func IdleMachines(store *state.Store, timeout time.Duration) ([]string, error) {
 		return nil, nil
 	}
 
-	// Live sessions: the definitive answer to "is this machine in use?"
-	// (Property 11 — a machine with any session is never idle regardless
-	// of what the idle-since file says).
-	sessions, err := store.Sessions()
-	if err != nil {
-		return nil, fmt.Errorf("checking for live sessions: %w", err)
+	// Sessions and machines are read in one transaction, not two. Read
+	// separately, a session could attach between the two loads and its machine
+	// would then look sessionless — Property 11 violated by a machine being
+	// stopped while somebody is working in it.
+	var (
+		sessions []types.SessionRecord
+		machines []types.MachineRecord
+	)
+	if err := store.Update(func(tx *state.Tx) error {
+		sessions = tx.Sessions()
+		machines = tx.Machines()
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("reading avar's session and machine records: %w", err)
 	}
+
+	// Live sessions: the definitive answer to "is this machine in use?"
 	inUse := make(map[string]bool, len(sessions))
 	for _, s := range sessions {
 		inUse[s.Machine] = true
-	}
-
-	machines, err := store.Machines()
-	if err != nil {
-		return nil, fmt.Errorf("listing avar-managed machines: %w", err)
 	}
 
 	since, err := readIdleSince(store)
@@ -162,21 +161,4 @@ func stripQuotes(s string) string {
 		s = s[1 : len(s)-1]
 	}
 	return s
-}
-
-// parseDuration parses a duration string, accepting bare integers as hours
-// for backward-compat with users who write `idle_timeout = 2` meaning 2h.
-func parseDuration(raw string) (time.Duration, error) {
-	if raw == "" || raw == "0" {
-		return 0, nil
-	}
-	// Try standard Go duration first.
-	if d, err := time.ParseDuration(raw); err == nil {
-		return d, nil
-	}
-	// Accept a bare integer as hours.
-	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-		return time.Duration(n) * time.Hour, nil
-	}
-	return 0, fmt.Errorf("not a duration: %q", raw)
 }

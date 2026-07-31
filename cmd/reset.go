@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/olamide226/avar/internal/cli"
-	"github.com/olamide226/avar/internal/provider"
 	"github.com/olamide226/avar/internal/types"
 )
 
@@ -102,14 +101,14 @@ func runReset(ctx context.Context, app *App, inv cli.Invocation) error {
 	if err := p.Delete(ctx, target.MachineName); err != nil {
 		return fmt.Errorf("resetting %s: %w", label, err)
 	}
+	forgetSSHHost(app, target.MachineName)
 
+	// Recreating goes through the same path as an ordinary first use, so the
+	// fresh machine gets the project mount, avar's record is rewritten, and
+	// the user sees provisioning progress — a cold create takes minutes, and
+	// silence through it reads as a hang.
 	fmt.Fprintf(app.Out, "Creating a fresh %s…\n", label)
-	if err := p.EnsureMachine(ctx, provider.MachineSpec{
-		Name:     target.MachineName,
-		Provider: p.ID(),
-		Selector: target.Selector,
-		Kind:     target.Kind,
-	}, types.DiscardProgress); err != nil {
+	if _, err := prepareEnvironment(ctx, app, p, target, progressTo(app.Err)); err != nil {
 		return fmt.Errorf("resetting %s after destroying it: %w", label, err)
 	}
 

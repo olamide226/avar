@@ -1,13 +1,13 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/olamide226/avar/internal/cli"
+	"github.com/olamide226/avar/internal/state"
 	"github.com/olamide226/avar/internal/types"
 )
 
@@ -19,12 +19,12 @@ func runIsolate(ctx context.Context, app *App, inv cli.Invocation) error {
 	args := inv.SubcommandArgs
 
 	if len(args) == 0 {
-		return showIsolation(ctx, app)
+		return showIsolation(app)
 	}
 
 	switch args[0] {
 	case "on":
-		return turnOn(ctx, app, args[1:])
+		return turnOn(app, args[1:])
 	case "off":
 		return turnOff(ctx, app, args[1:])
 	default:
@@ -35,24 +35,11 @@ func runIsolate(ctx context.Context, app *App, inv cli.Invocation) error {
 
 // showIsolation reports whether the current project defaults to an isolated
 // machine (REQ-11.2).
-func showIsolation(ctx context.Context, app *App) error {
-	store, err := app.Store()
+func showIsolation(app *App) error {
+	_, rec, cwd, ok, err := currentProject(app)
 	if err != nil {
 		return err
 	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("find the current directory: %w", err)
-	}
-
-	projects, err := store.Projects()
-	if err != nil {
-		return fmt.Errorf("read avar's project records: %w", err)
-	}
-
-	// Find the project this directory belongs to.
-	rec, ok := findProject(projects, cwd)
 	if !ok {
 		fmt.Fprintf(app.Out, "No avar project is recorded for %s yet. Run `avr` to create one.\n", cwd)
 		return nil
@@ -71,27 +58,15 @@ func showIsolation(ctx context.Context, app *App) error {
 // turnOn remembers that the current project should use its own machine
 // (REQ-11.2). The machine is created on the next `avr`, not here — this just
 // changes the default.
-func turnOn(ctx context.Context, app *App, args []string) error {
-	if len(args) > 0 {
-		return fmt.Errorf("`avr isolate on` takes no arguments, got %q", strings.Join(args, " "))
-	}
-
-	store, err := app.Store()
-	if err != nil {
+func turnOn(app *App, args []string) error {
+	if err := expectNoArgs("avr isolate on", args); err != nil {
 		return err
 	}
 
-	cwd, err := os.Getwd()
+	store, rec, cwd, ok, err := currentProject(app)
 	if err != nil {
-		return fmt.Errorf("find the current directory: %w", err)
+		return err
 	}
-
-	projects, err := store.Projects()
-	if err != nil {
-		return fmt.Errorf("read avar's project records: %w", err)
-	}
-
-	rec, ok := findProject(projects, cwd)
 	if !ok {
 		return fmt.Errorf("no avar project is recorded for %s yet — run `avr` first to create one", cwd)
 	}
@@ -114,26 +89,14 @@ func turnOn(ctx context.Context, app *App, args []string) error {
 // turnOff clears the project's isolation default and offers to delete the
 // isolated machine (REQ-11.3).
 func turnOff(ctx context.Context, app *App, args []string) error {
-	if len(args) > 0 {
-		return fmt.Errorf("`avr isolate off` takes no arguments, got %q", strings.Join(args, " "))
-	}
-
-	store, err := app.Store()
-	if err != nil {
+	if err := expectNoArgs("avr isolate off", args); err != nil {
 		return err
 	}
 
-	cwd, err := os.Getwd()
+	store, rec, cwd, ok, err := currentProject(app)
 	if err != nil {
-		return fmt.Errorf("find the current directory: %w", err)
+		return err
 	}
-
-	projects, err := store.Projects()
-	if err != nil {
-		return fmt.Errorf("read avar's project records: %w", err)
-	}
-
-	rec, ok := findProject(projects, cwd)
 	if !ok {
 		return fmt.Errorf("no avar project is recorded for %s yet — run `avr` first to create one", cwd)
 	}
@@ -145,9 +108,7 @@ func turnOff(ctx context.Context, app *App, args []string) error {
 
 	// Resolve the target so we can name the isolated machine before clearing
 	// the flag. We use --isolate to force the isolated resolution path.
-	inv := cli.Invocation{Mode: cli.ModeSubcommand, Subcommand: "isolate"}
-	inv.Selector.Isolate = true
-	target, err := app.Resolve(inv)
+	target, err := app.Resolve(cli.Invocation{Selector: cli.Selector{Isolate: true}})
 	if err != nil {
 		return fmt.Errorf("resolving the isolated environment: %w", err)
 	}
@@ -169,16 +130,17 @@ func turnOff(ctx context.Context, app *App, args []string) error {
 				return err
 			}
 			if err := p.Delete(ctx, target.MachineName); err != nil {
-				return fmt.Errorf("deleting the isolated machine %s: %w. "+
-					"Run `limactl delete --force %s` to remove it by hand.",
-					target.MachineName, err, target.MachineName)
+				return fmt.Errorf("deleting the isolated machine for %s: %w. "+
+					"The project is no longer isolated; run `avr isolate off` again to retry the deletion",
+					rec.Path, err)
 			}
+			forgetSSHHost(app, target.MachineName)
 			fmt.Fprintf(app.Out, "Deleted %s.\n", target.MachineName)
 		} else {
 			fmt.Fprintf(app.Out, "Left %s alone.\n", target.MachineName)
 		}
 	} else {
-		fmt.Fprintf(app.Out, "Run `limactl delete --force %s` to remove it.\n", target.MachineName)
+		fmt.Fprintf(app.Out, "Run `avr isolate off` from a terminal to delete it.\n")
 	}
 
 	return nil
@@ -186,15 +148,39 @@ func turnOff(ctx context.Context, app *App, args []string) error {
 
 // promptDelete asks whether the user wants the isolated machine removed.
 func promptDelete(app *App, machine string) bool {
-	fmt.Fprintf(app.Err, "      Delete %s? (y/N) ", machine)
+	return app.confirmYesNo(fmt.Sprintf("      Delete %s? (y/N) ", machine))
+}
 
-	r := bufio.NewReader(os.Stdin)
-	reply, err := r.ReadString('\n')
-	if err != nil {
-		return false
+// expectNoArgs rejects arguments a subcommand does not take, as a usage error
+// so that every "avar could not read your command line" case exits 2 alike.
+func expectNoArgs(command string, args []string) error {
+	if len(args) == 0 {
+		return nil
 	}
-	reply = strings.TrimSpace(reply)
-	return reply == "y" || reply == "Y"
+	return Exit(exitUsage, fmt.Errorf("`%s` takes no arguments, got %q", command, strings.Join(args, " ")))
+}
+
+// currentProject finds the project record covering the current directory,
+// together with that directory for use in messages.
+//
+// It looks the project up rather than resolving it: resolution registers a
+// project on first sight, and `avr isolate` reports and edits a remembered
+// default — a directory the user has never entered has no default to show.
+func currentProject(app *App) (store *state.Store, rec types.ProjectRecord, cwd string, found bool, err error) {
+	store, err = app.Store()
+	if err != nil {
+		return nil, types.ProjectRecord{}, "", false, err
+	}
+	cwd, err = os.Getwd()
+	if err != nil {
+		return nil, types.ProjectRecord{}, "", false, fmt.Errorf("find the current directory: %w", err)
+	}
+	projects, err := store.Projects()
+	if err != nil {
+		return nil, types.ProjectRecord{}, "", false, fmt.Errorf("read avar's project records: %w", err)
+	}
+	rec, found = findProject(projects, cwd)
+	return store, rec, cwd, found, nil
 }
 
 // findProject locates the project record that covers the given directory.
@@ -215,8 +201,15 @@ func findProject(projects []types.ProjectRecord, dir string) (types.ProjectRecor
 
 // coversProject reports whether dir is root itself or a directory beneath it.
 func coversProject(root, dir string) bool {
+	if root == "" {
+		return false
+	}
 	if root == dir {
 		return true
 	}
-	return strings.HasPrefix(dir, root+string(os.PathSeparator))
+	sep := string(os.PathSeparator)
+	if root == sep {
+		return strings.HasPrefix(dir, sep)
+	}
+	return strings.HasPrefix(dir, root+sep)
 }

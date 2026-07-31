@@ -51,26 +51,18 @@ func registerGuest(h Handler) {
 	guestHandler = h
 }
 
-// pendingSubcommand names the task that makes each unregistered subcommand
-// real, so an early build answers specifically instead of failing blankly.
-// Entries disappear as the commands land.
-var pendingSubcommand = map[string]string{}
-
 // dispatch routes a parsed invocation to its registered handler.
 func dispatch(ctx context.Context, app *App, inv cli.Invocation) error {
 	switch inv.Mode {
 	case cli.ModeShell, cli.ModeGuestCommand:
 		if guestHandler == nil {
-			return fmt.Errorf("not implemented yet: running commands in Linux lands with task 8 (REQ-1.1, REQ-2.1)")
+			return fmt.Errorf("internal error: no handler for the guest command path")
 		}
 		return guestHandler(ctx, app, inv)
 
 	case cli.ModeSubcommand:
 		if h, ok := handlers[inv.Subcommand]; ok {
 			return h(ctx, app, inv)
-		}
-		if owner, ok := pendingSubcommand[inv.Subcommand]; ok {
-			return fmt.Errorf("not implemented yet: `avr %s` lands with %s", inv.Subcommand, owner)
 		}
 		// The grammar accepted a name nothing here knows about, so the two
 		// have drifted apart.

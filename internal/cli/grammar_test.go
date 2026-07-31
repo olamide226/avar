@@ -522,10 +522,10 @@ func TestParse_EnvForwardingFlags_REQ_12_1_12_2_12_3(t *testing.T) {
 			name: "forwarding flags with selector flags",
 			argv: []string{"--arch", "amd64", "--env", "CC=gcc", "--env-file", ".env"},
 			want: Invocation{
-				Mode:    ModeShell,
+				Mode:     ModeShell,
 				Selector: Selector{Arch: types.ArchAMD64},
-				Env:     []string{"CC=gcc"},
-				EnvFile: ".env",
+				Env:      []string{"CC=gcc"},
+				EnvFile:  ".env",
 			},
 		},
 		{

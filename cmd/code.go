@@ -12,6 +12,21 @@ import (
 
 func init() { registerSubcommand("code", runCode) }
 
+// forgetSSHHost drops a destroyed machine's entry from avar's SSH
+// configuration, so the file does not accumulate stanzas pointing at guests
+// that no longer exist.
+//
+// Failure is deliberately silent: the machine is already gone, and a stale
+// entry is harmless clutter that the next `avr code` overwrites. Reporting it
+// would put an error the user cannot act on in front of a successful command.
+func forgetSSHHost(app *App, machine string) {
+	store, err := app.Store()
+	if err != nil {
+		return
+	}
+	_ = editor.RemoveHost(store.SSHDir(), machine)
+}
+
 // runCode opens the current project in VS Code attached to the target Linux
 // environment (REQ-13.1). It ensures the machine is running, writes avar's
 // SSH configuration for it, and launches `code --remote <authority> <path>`.
@@ -52,7 +67,7 @@ func runCode(ctx context.Context, app *App, inv cli.Invocation) error {
 	// The backend describes how an editor reaches the guest.
 	etp, ok := p.(provider.EditorTargetProvider)
 	if !ok {
-		return fmt.Errorf("your Linux environment does not support opening an editor on this host; try a different backend")
+		return fmt.Errorf("the %s backend cannot open an editor on a Linux environment", p.ID())
 	}
 
 	et, err := etp.EditorTarget(ctx, target.MachineName, guestCwd)
@@ -64,7 +79,11 @@ func runCode(ctx context.Context, app *App, inv cli.Invocation) error {
 	// can resolve the authority. Nothing touches the user's ~/.ssh/config
 	// — this file belongs to avar alone (REQ-13.3).
 	if et.SSHConfig != "" {
-		if err := editor.WriteHost(target.MachineName, et.SSHConfig); err != nil {
+		store, err := app.Store()
+		if err != nil {
+			return err
+		}
+		if err := editor.WriteHost(store.SSHDir(), target.MachineName, et.SSHConfig); err != nil {
 			return fmt.Errorf("prepare the SSH configuration for %s: %w", target.Selector.Label(), err)
 		}
 		fmt.Fprintf(app.Out, "avr: wrote SSH configuration for %s\n", target.Selector.Label())

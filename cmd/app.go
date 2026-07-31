@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/olamide226/avar/internal/cli"
@@ -50,6 +52,28 @@ type App struct {
 // newApp returns an App writing to the real streams.
 func newApp(version string) *App {
 	return &App{Version: version, Stdin: os.Stdin, Out: os.Stdout, Err: os.Stderr}
+}
+
+// confirmYesNo puts a yes/no question to the user and reports whether they
+// agreed. Anything other than an explicit yes — including a closed input — is
+// "no", so an unattended run never destroys anything by default.
+//
+// The question goes to the error stream because stdout belongs to the command
+// the user actually ran (REQ-2.3), and the answer is read through App.Stdin
+// rather than os.Stdin so that these paths can be driven by a test.
+func (a *App) confirmYesNo(question string) bool {
+	fmt.Fprint(a.Err, question)
+
+	reply, err := bufio.NewReader(a.Stdin).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(reply)) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // Store opens avar's state directory.
