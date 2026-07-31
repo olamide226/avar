@@ -286,3 +286,119 @@ func TestWriteHost_EmptyFileBeforeFirstWrite(t *testing.T) {
 		}
 	})
 }
+
+// avar edits a file it does not own, so the one thing that must never happen
+// is losing what was already there (REQ-13.3).
+func TestAddInclude_PreservesTheUsersConfigByteForByte_REQ_13_3(t *testing.T) {
+	dir := t.TempDir()
+	userConfig := filepath.Join(dir, "config")
+	original := "Host myserver\n  HostName example.com\n  User me\n\nHost *\n  AddKeysToAgent yes\n"
+	if err := os.WriteFile(userConfig, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	avarConfig := filepath.Join(dir, "avr", "ssh", "config")
+	if err := AddInclude(userConfig, avarConfig); err != nil {
+		t.Fatalf("AddInclude: %v", err)
+	}
+
+	got, err := os.ReadFile(userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), original) {
+		t.Errorf("the user's existing configuration did not survive intact:\n%s", got)
+	}
+	if !strings.Contains(string(got), IncludeLine(avarConfig)) {
+		t.Errorf("the Include line was not added:\n%s", got)
+	}
+	// OpenSSH takes the first value it obtains for an option, so an Include
+	// placed after the existing "Host *" block would never apply to avar's
+	// hosts.
+	if strings.Index(string(got), "Include ") > strings.Index(string(got), "Host myserver") {
+		t.Error("the Include was added below existing Host blocks, where ssh will not apply it")
+	}
+}
+
+func TestAddInclude_CreatesTheConfigWhenThereIsNone(t *testing.T) {
+	dir := t.TempDir()
+	userConfig := filepath.Join(dir, ".ssh", "config")
+	avarConfig := filepath.Join(dir, "avr", "ssh", "config")
+
+	if err := AddInclude(userConfig, avarConfig); err != nil {
+		t.Fatalf("AddInclude: %v", err)
+	}
+	got, err := os.ReadFile(userConfig)
+	if err != nil {
+		t.Fatalf("no config was created: %v", err)
+	}
+	if !strings.Contains(string(got), IncludeLine(avarConfig)) {
+		t.Errorf("the Include line is missing:\n%s", got)
+	}
+}
+
+// Asking a user to add a line they already have is how a tool wears out its
+// welcome, so detection matches on the resolved path, not the literal text.
+func TestHasInclude_MatchesHowEverTheLineIsSpelled_REQ_13_1(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	avarConfig := filepath.Join(home, ".avr", "ssh", "config")
+
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"absolute path", "Include " + avarConfig + "\n", true},
+		{"home-relative", "Include ~/.avr/ssh/config\n", true},
+		{"quoted", `Include "` + avarConfig + "\"\n", true},
+		{"lowercase directive", "include " + avarConfig + "\n", true},
+		{"indented", "  Include " + avarConfig + "\n", true},
+		{"among several arguments", "Include /other/config " + avarConfig + "\n", true},
+		{"a different tool's include", "Include ~/.orbstack/ssh/config\n", false},
+		{"no include at all", "Host x\n  User y\n", false},
+		{"empty file", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			userConfig := filepath.Join(t.TempDir(), "config")
+			if err := os.WriteFile(userConfig, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := HasInclude(userConfig, avarConfig)
+			if err != nil {
+				t.Fatalf("HasInclude: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("HasInclude(%q) = %t, want %t", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHasInclude_IsFalseWhenThereIsNoUserConfig(t *testing.T) {
+	got, err := HasInclude(filepath.Join(t.TempDir(), "nope"), "/x/config")
+	if err != nil {
+		t.Fatalf("a missing user config is not an error: %v", err)
+	}
+	if got {
+		t.Error("reported an Include in a file that does not exist")
+	}
+}
+
+// Adding the line twice would grow the user's file on every run.
+func TestAddInclude_IsNotRepeatedOncePresent(t *testing.T) {
+	dir := t.TempDir()
+	userConfig := filepath.Join(dir, "config")
+	avarConfig := filepath.Join(dir, "avr", "ssh", "config")
+
+	if err := AddInclude(userConfig, avarConfig); err != nil {
+		t.Fatal(err)
+	}
+	present, err := HasInclude(userConfig, avarConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !present {
+		t.Fatal("the line AddInclude just wrote is not detected by HasInclude, so it would be added again every run")
+	}
+}
