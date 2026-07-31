@@ -57,9 +57,7 @@ func registerGuest(h Handler) {
 var pendingSubcommand = map[string]string{
 	"snapshot": "task 15 (REQ-10.1)",
 	"restore":  "task 15 (REQ-10.2)",
-	"reset":    "task 16 (REQ-10.3)",
 	"isolate":  "task 17 (REQ-11.3)",
-	"code":     "task 19 (REQ-13.1)",
 }
 
 // dispatch routes a parsed invocation to its registered handler.
