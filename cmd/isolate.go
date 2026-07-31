@@ -89,7 +89,8 @@ func turnOn(app *App, args []string) error {
 // turnOff clears the project's isolation default and offers to delete the
 // isolated machine (REQ-11.3).
 func turnOff(ctx context.Context, app *App, args []string) error {
-	if err := expectNoArgs("avr isolate off", args); err != nil {
+	yes, err := parseIsolateOffArgs(args)
+	if err != nil {
 		return err
 	}
 
@@ -121,10 +122,12 @@ func turnOff(ctx context.Context, app *App, args []string) error {
 	}
 
 	fmt.Fprintf(app.Out, "%s no longer defaults to its own Linux environment.\n", rec.Path)
-	fmt.Fprintf(app.Out, "Its isolated machine, %s, still exists.\n", target.MachineName)
+	if !yes {
+		fmt.Fprintf(app.Out, "Its isolated machine, %s, still exists.\n", target.MachineName)
+	}
 
-	if stdinIsTerminal() {
-		if promptDelete(app, target.MachineName) {
+	if yes || stdinIsTerminal() {
+		if yes || promptDelete(app, target.MachineName) {
 			p, err := app.Provider(ctx)
 			if err != nil {
 				return err
@@ -140,10 +143,28 @@ func turnOff(ctx context.Context, app *App, args []string) error {
 			fmt.Fprintf(app.Out, "Left %s alone.\n", target.MachineName)
 		}
 	} else {
-		fmt.Fprintf(app.Out, "Run `avr isolate off` from a terminal to delete it.\n")
+		fmt.Fprintf(app.Out, "Run `avr isolate off --yes` to delete it, or `avr isolate off` from a terminal to be asked.\n")
 	}
 
 	return nil
+}
+
+// isolateYesFlag deletes the isolated machine without asking, so that scripts
+// and test suites can clean up after themselves. Without it the only way to
+// remove an isolated machine is to answer a prompt, which leaves anything
+// non-interactive — CI, `make e2e` — accumulating machines it cannot remove.
+const isolateYesFlag = "--yes"
+
+// parseIsolateOffArgs reads `isolate off`'s own flags.
+func parseIsolateOffArgs(args []string) (yes bool, err error) {
+	for _, arg := range args {
+		if arg != isolateYesFlag {
+			return false, Exit(exitUsage,
+				fmt.Errorf("`avr isolate off` does not understand %q: it takes no arguments except %s to delete the machine without asking", arg, isolateYesFlag))
+		}
+		yes = true
+	}
+	return yes, nil
 }
 
 // promptDelete asks whether the user wants the isolated machine removed.
