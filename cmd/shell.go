@@ -1,16 +1,19 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/envpolicy"
+	"github.com/olamide226/avar/internal/mounts"
 	"github.com/olamide226/avar/internal/provider"
 	"github.com/olamide226/avar/internal/resolve"
 	"github.com/olamide226/avar/internal/types"
@@ -99,11 +102,8 @@ func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, targ
 		return "", err
 	}
 
-	// Registering the project is task 9's subject; this is the smallest
-	// correct version of it, kept here so the shell path works end to end.
-	// Task 9 replaces it with internal/mounts, which also handles the
-	// restart prompt when other sessions are attached (REQ-6.4).
-	if err := ensureMounted(ctx, p, target.MachineName, mount, progress); err != nil {
+	guestCwd, err = ensureMounted(ctx, app, p, target.MachineName, mount, guestCwd, progress)
+	if err != nil {
 		return "", err
 	}
 
@@ -136,22 +136,76 @@ func isolatedProjectID(target resolve.ResolvedTarget) string {
 	return ""
 }
 
-// ensureMounted adds the project to the machine's shares if it is not already
-// there, leaving the shares it already had alone.
-func ensureMounted(ctx context.Context, p provider.Provider, machine string, mount types.MountSpec, progress types.ProgressSink) error {
-	applied, err := p.AppliedMounts(ctx, machine)
+// ensureMounted delegates mount decisions to the mount management component and
+// handles the interactive restart prompt when it would interrupt other sessions.
+func ensureMounted(ctx context.Context, app *App, p provider.Provider, machine string, mount types.MountSpec, guestCwd string, progress types.ProgressSink) (string, error) {
+	sessions, err := liveSessions(ctx, app, machine)
 	if err != nil {
-		return err
+		return "", err
 	}
-	for _, m := range applied {
-		if m.HostPath == mount.HostPath {
-			return nil
+
+	result, err := mounts.Ensure(ctx, p, machine, mount, guestCwd, sessions, progress)
+	if err != nil {
+		return "", err
+	}
+	if result.SessionConflict {
+		if !stdinIsTerminal() {
+			return "", fmt.Errorf("sharing %s with your Linux environment would restart it while %d other sessions are attached to it; run in an interactive terminal, or close the other sessions, and try again",
+				mount.HostPath, result.SessionCount)
+		}
+		if !promptRestart(app, mount.HostPath, result.SessionCount) {
+			return "", Exit(130, nil)
+		}
+		// Retry without sessions — the prompt was accepted.
+		result, err = mounts.Ensure(ctx, p, machine, mount, guestCwd, 0, progress)
+		if err != nil {
+			return "", err
 		}
 	}
-	// SetMounts takes the complete desired set, so the existing shares are
-	// carried over: passing only the new one would unshare every other
-	// project registered to this machine.
-	return p.SetMounts(ctx, machine, append(applied, mount), progress)
+	return result.GuestCwd, nil
+}
+
+// liveSessions returns the number of other live avr sessions attached to the
+// machine.
+func liveSessions(ctx context.Context, app *App, machine string) (int, error) {
+	store, err := app.Store()
+	if err != nil {
+		return 0, err
+	}
+	sessions, err := store.SessionsFor(machine)
+	if err != nil {
+		return 0, fmt.Errorf("checking for other sessions on %s: %w", machine, err)
+	}
+	return len(sessions), nil
+}
+
+// promptRestart asks the user whether they are willing to restart the machine
+// despite other attached sessions, and returns true if they accept.
+func promptRestart(app *App, hostPath string, sessionCount int) bool {
+	s := "s"
+	if sessionCount == 1 {
+		s = ""
+	}
+	fmt.Fprintf(app.Err, "avr: sharing %s with your Linux environment will restart it.\n", hostPath)
+	fmt.Fprintf(app.Err, "      %d other session%s %s attached to it and would be disconnected.\n",
+		sessionCount, s, pluralize(sessionCount, "is", "are"))
+	fmt.Fprintf(app.Err, "      Continue? (y/N) ")
+
+	r := bufio.NewReader(os.Stdin)
+	reply, err := r.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	reply = strings.TrimSpace(reply)
+	return reply == "y" || reply == "Y"
+}
+
+// pluralize returns singular if count is 1, plural otherwise.
+func pluralize(count int, singular, plural string) string {
+	if count == 1 {
+		return singular
+	}
+	return plural
 }
 
 // stdinIsTerminal reports whether the guest should get a pseudo-terminal.
