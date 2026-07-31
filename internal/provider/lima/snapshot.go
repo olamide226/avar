@@ -60,7 +60,7 @@ func (p *Provider) Snapshot(ctx context.Context, machine, name string, progress 
 			Machine: machine,
 			Message: fmt.Sprintf("Pausing %s to capture a snapshot", machine),
 		})
-		if _, err := p.run(ctx, "stop", machine); err != nil {
+		if err := p.stopMachine(ctx, machine, progress); err != nil {
 			return fmt.Errorf("capturing a snapshot of %s: stopping the machine first: %w", machine, err)
 		}
 	}
@@ -140,7 +140,7 @@ func (p *Provider) RestoreSnapshot(ctx context.Context, machine, name string, pr
 			Machine: machine,
 			Message: fmt.Sprintf("Pausing %s to restore snapshot %q", machine, name),
 		})
-		if _, err := p.run(ctx, "stop", machine); err != nil {
+		if err := p.stopMachine(ctx, machine, progress); err != nil {
 			return fmt.Errorf("restoring snapshot %q of %s: stopping the machine first: %w", name, machine, err)
 		}
 	}
