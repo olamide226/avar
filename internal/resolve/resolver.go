@@ -24,7 +24,11 @@
 //
 // Nothing here names a virtualization technology, an image, or a command-line
 // tool. The resolver decides *what* environment is wanted and hands the answer
-// to a provider, which decides how to produce it (REQ-17.3).
+// to a provider, which decides how to produce it (REQ-17.3). The backend serving
+// the host arrives as a types.ProviderID, so a target records which backend it
+// belongs to without this package knowing anything else about it — including,
+// deliberately, how a host directory looks from inside the guest, which is
+// Provider.MapProjectPath's answer and not the resolver's (REQ-18.5).
 package resolve
 
 import (
@@ -114,6 +118,13 @@ type Options struct {
 // ResolvedTarget is one fully specified answer: everything a caller needs to
 // bring the right machine up and enter it, with nothing left to decide.
 type ResolvedTarget struct {
+	// Provider is the backend this target belongs to, echoed back from the
+	// argument Resolve was given. A machine's identity is per-provider —
+	// nothing here is meaningful on a host running a different backend — so a
+	// resolved target says which one it was resolved for rather than leaving
+	// the caller to remember (design §3.2).
+	Provider types.ProviderID
+
 	// Selector is the environment, fully specified: no empty version, no
 	// implied architecture, and checked against the supported matrix.
 	Selector types.EnvironmentSelector
@@ -135,12 +146,16 @@ type ResolvedTarget struct {
 	// project.
 	Project types.ProjectRecord
 
-	// GuestCwd is the directory the guest process starts in. It equals the host
-	// directory avr was run from, because the project is mounted at the
-	// identical absolute path, which is what makes a subdirectory of a project
-	// land in the matching subdirectory inside Linux (REQ-6.1, REQ-6.6,
-	// PROP-1).
-	GuestCwd string
+	// HostCwd is the canonical host directory avr was run from, and it is a
+	// host path: it is never passed to a guest as it stands.
+	//
+	// Turning it into the directory the guest process starts in is the
+	// provider's job, through Provider.MapProjectPath — on Lima the answer is
+	// the same path, because the project is shared at the identical absolute
+	// path, but on WSL it is a path beneath the project's deterministic guest
+	// root and a resolver that returned a "guest cwd" would be asserting
+	// something only the backend can know (REQ-6.6, REQ-18.5, PROP-1).
+	HostCwd string
 
 	// Emulated reports that this environment can only run under CPU emulation
 	// on this host, which costs enough performance to be worth telling the user
@@ -152,8 +167,18 @@ type ResolvedTarget struct {
 	Emulated bool
 }
 
-// Resolve maps (cwd, flags, state) onto the single machine this invocation
-// targets.
+// Resolve maps (provider, cwd, flags, state) onto the single machine this
+// invocation targets.
+//
+// provider is the backend serving this host, chosen from the host platform
+// before resolution begins (design §2, step 2). It is a parameter rather than
+// something the resolver works out, because which backend a host uses is not a
+// question about the user's directory or flags, and because a resolution
+// performed for one backend must stay self-consistent when tested on a machine
+// running another. Machine names are deterministic *within* a provider
+// (design §3.2): a host runs one backend, so nothing has to be added to a name
+// to keep two backends' machines apart, but a resolved target still records
+// which backend it belongs to and so does every machine record.
 //
 // cwd is the host directory avr was run from, and must be absolute and
 // symlink-resolved — the caller canonicalises it (state.ResolveProjectPath),
@@ -170,12 +195,15 @@ type ResolvedTarget struct {
 // Resolve writes through st: the project is registered on first use, and
 // --isolate is remembered so that a later bare `avr` in the same project goes
 // to the same private machine (REQ-11.2). --shared deliberately writes nothing.
-func Resolve(cwd string, sel cli.Selector, st Store, opts Options) (ResolvedTarget, error) {
+func Resolve(provider types.ProviderID, cwd string, sel cli.Selector, st Store, opts Options) (ResolvedTarget, error) {
 	if st == nil {
 		return ResolvedTarget{}, errors.New("resolve the target environment: no state store was provided")
 	}
+	if err := types.ValidateProviderID(provider); err != nil {
+		return ResolvedTarget{}, fmt.Errorf("resolve the target environment: %w", err)
+	}
 
-	guestCwd, err := guestWorkdir(cwd)
+	hostCwd, err := hostWorkdir(cwd)
 	if err != nil {
 		return ResolvedTarget{}, err
 	}
@@ -185,7 +213,7 @@ func Resolve(cwd string, sel cli.Selector, st Store, opts Options) (ResolvedTarg
 		hostArch = types.HostArch()
 	}
 
-	project, err := resolveProject(guestCwd, st)
+	project, err := resolveProject(hostCwd, st)
 	if err != nil {
 		return ResolvedTarget{}, err
 	}
@@ -212,23 +240,24 @@ func Resolve(cwd string, sel cli.Selector, st Store, opts Options) (ResolvedTarg
 	}
 
 	return ResolvedTarget{
+		Provider:    provider,
 		Selector:    env,
 		MachineName: name,
 		Kind:        kind,
 		Project:     project,
-		GuestCwd:    guestCwd,
+		HostCwd:     hostCwd,
 		Emulated:    env.Arch != hostArch,
 	}, nil
 }
 
-// guestWorkdir checks the directory avar was invoked from and returns the path
-// the guest will use for it, which is the same path (REQ-6.1).
+// hostWorkdir checks the directory avar was invoked from and returns it in the
+// canonical form the rest of resolution compares against.
 //
 // The absolute check is not pedantry: every later comparison against a recorded
 // project path is a path comparison, and a relative or unresolved directory
 // would silently match nothing and register a second project for a directory
 // avar already knows.
-func guestWorkdir(cwd string) (string, error) {
+func hostWorkdir(cwd string) (string, error) {
 	trimmed := strings.TrimSpace(cwd)
 	if trimmed == "" {
 		return "", errors.New("resolve the target environment: no current directory was given")
