@@ -100,7 +100,7 @@ post-MVP WSL2Provider can satisfy it unchanged. These land **before task 9**, be
 task 9 is the first consumer of the new mount shape. They refactor merged code rather
 than adding behaviour, so they are one coherent change, not a per-package guess.
 
-- [ ] 27. Make the backend contract provider-neutral
+- [x] 27. Make the backend contract provider-neutral  _(PR #15)_
   - `internal/types`: add `ProviderID` and `MountSpec{ProjectID, HostPath, GuestPath, Writable}`; `MachineRecord.Mounts` becomes `[]MountSpec`, `VMType` becomes `Runtime`, plus a `Provider` field
   - `internal/provider`: `Provider` gains `ID()` and `MapProjectPath(projectID, hostRoot, hostCwd) (MountSpec, guestCwd, error)`; `AppliedMounts`/`SetMounts` move to `[]MountSpec`; `SSHConfigProvider` becomes the transport-neutral `EditorTargetProvider` so WSL is not forced through SSH
   - `internal/provider/fake` and `internal/provider/lima` follow; `internal/resolve.Resolve` takes a `ProviderID`
