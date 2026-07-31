@@ -38,20 +38,6 @@ func (e *ExitCodeError) Unwrap() error { return e.Err }
 // nothing when err is nil.
 func Exit(code int, err error) error { return &ExitCodeError{Code: code, Err: err} }
 
-// subcommandOwner names the task that makes each subcommand real, so that an
-// early adopter of a Phase 1 build gets a specific answer instead of an
-// unknown-command error. Entries disappear as the commands land.
-var subcommandOwner = map[string]string{
-	"status":   "task 10 (REQ-5.1)",
-	"stop":     "task 10 (REQ-5.2)",
-	"snapshot": "task 15 (REQ-10.1)",
-	"restore":  "task 15 (REQ-10.2)",
-	"reset":    "task 16 (REQ-10.3)",
-	"isolate":  "task 17 (REQ-11.3)",
-	"code":     "task 19 (REQ-13.1)",
-	"internal": "task 20 (REQ-5.5)",
-}
-
 // NewRootCommand builds the root command tree for an already-parsed
 // invocation.
 //
@@ -61,7 +47,7 @@ var subcommandOwner = map[string]string{
 // consequence of pflag's behaviour around "--". Cobra renders help and routes
 // subcommands; the selector flags below are declared purely so that
 // `avr --help` documents them.
-func NewRootCommand(version string, inv cli.Invocation) *cobra.Command {
+func NewRootCommand(version string, inv cli.Invocation, app *App) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "avr [flags] [--] [command [args...]]",
 		Short: "Run your current directory in Linux",
@@ -99,7 +85,7 @@ func NewRootCommand(version string, inv cli.Invocation) *cobra.Command {
 		Args: cobra.ArbitraryArgs,
 
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cmd.Context(), inv)
+			return dispatch(cmd.Context(), app, inv)
 		},
 	}
 
@@ -116,30 +102,6 @@ func NewRootCommand(version string, inv cli.Invocation) *cobra.Command {
 	return root
 }
 
-// run dispatches a parsed invocation. The shell and one-shot paths are task 8;
-// each avar subcommand has its own later task.
-func run(_ context.Context, inv cli.Invocation) error {
-	switch inv.Mode {
-	case cli.ModeShell:
-		return errors.New("not implemented yet: the interactive shell lands with task 8 (REQ-1.1)")
-
-	case cli.ModeGuestCommand:
-		return fmt.Errorf("not implemented yet: running %q in Linux lands with task 8 (REQ-2.1)", inv.Guest[0])
-
-	case cli.ModeSubcommand:
-		owner, ok := subcommandOwner[inv.Subcommand]
-		if !ok {
-			// help and version are handled before dispatch; anything else
-			// reaching here means the grammar and this switch disagree.
-			return fmt.Errorf("internal error: no handler for subcommand %q", inv.Subcommand)
-		}
-		return fmt.Errorf("not implemented yet: `avr %s` lands with %s", inv.Subcommand, owner)
-
-	default:
-		return fmt.Errorf("internal error: unknown invocation mode %s", inv.Mode)
-	}
-}
-
 // Execute runs avar and returns the process exit code. It never calls
 // os.Exit so that tests can drive the whole command surface in-process.
 func Execute(ctx context.Context, version string, args []string) int {
@@ -149,7 +111,8 @@ func Execute(ctx context.Context, version string, args []string) int {
 		return exitUsage
 	}
 
-	root := NewRootCommand(version, inv)
+	app := newApp(version)
+	root := NewRootCommand(version, inv, app)
 
 	// `avr help` and `avr version` are the subcommand spellings of the flags
 	// (REQ-2.5 keeps them in the subcommand set so that a guest command of
