@@ -154,6 +154,9 @@ func (p *Provider) EnsureMachine(ctx context.Context, spec provider.MachineSpec,
 
 	switch {
 	case !exists:
+		if spec.Kind == types.KindIsolated {
+			return p.createIsolated(ctx, spec, progress)
+		}
 		return p.create(ctx, spec, progress)
 
 	case inst.running():
