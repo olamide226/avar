@@ -64,7 +64,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -394,7 +393,10 @@ func classify(state types.MachineState) health {
 //
 // Adoption copies what the backend knows and invents nothing:
 //
-//   - Recovered from the listing: Name, Selector, Kind, Mounts, VMType.
+//   - Recovered from the listing: Name, Provider, Selector, Kind, Mounts,
+//     Runtime. Provider is recoverable precisely because the backend doing the
+//     listing is the backend that owns the machine: it is the one thing about a
+//     machine that a backend can always say for certain about itself.
 //   - Not recoverable, and not fabricated: CreatedAt, which the listing does
 //     not carry. Tx.PutMachine stamps it now, so an adopted record's CreatedAt
 //     means "since when avar has known about this machine" rather than when the
@@ -407,7 +409,14 @@ func classify(state types.MachineState) health {
 //     and matching on that would be a guess — filing a machine under the wrong
 //     project would mount the wrong directory into it. So an isolated orphan is
 //     structurally unadoptable and is left alone (ActionLeft) rather than
-//     adopted on a guess or destroyed while healthy.
+//     adopted on a guess or destroyed while healthy. Giving MachineStatus a
+//     ProjectID field was considered as part of making the backend contract
+//     provider-neutral and rejected on that evidence: no backend can populate
+//     it, so the field would exist only to be empty.
+//
+// A mount whose mapping the backend reports incompletely is dropped rather than
+// adopted, for the same reason: the record must describe what the guest can
+// actually reach (PROP-5).
 //
 // The set of unrecoverable fields is not fixed — a record gains a field
 // whenever avar learns to record something new, and a listing has no more way
@@ -426,25 +435,29 @@ func recordFor(m types.MachineStatus) (types.MachineRecord, string) {
 	if m.Selector.Distro == "" || m.Selector.Arch == "" {
 		return types.MachineRecord{}, "the backend does not report which Linux environment this unregistered machine provides, so avar left it alone rather than record a guess"
 	}
+	if types.ValidateProviderID(m.Provider) != nil {
+		return types.MachineRecord{}, "the backend did not say which provider owns this unregistered environment, so avar left it alone rather than record a machine it could not act on later"
+	}
 	return types.MachineRecord{
 		Name:     m.Name,
+		Provider: m.Provider,
 		Selector: m.Selector,
 		Kind:     m.Kind,
-		Mounts:   absoluteMounts(m.Mounts),
-		VMType:   m.VMType,
+		Mounts:   recordableMounts(m.Mounts),
+		Runtime:  m.Runtime,
 	}, ""
 }
 
-// absoluteMounts keeps the mount paths a record may hold. A record's mounts are
-// host project roots, which are absolute by construction (Tx.PutMachine refuses
-// anything else); anything else in a backend's report is not a project root avar
-// registered, so it is not adopted as one. Dropping it here rather than letting
-// PutMachine refuse the whole record keeps one odd entry in a listing from
-// aborting a repair that is otherwise correct.
-func absoluteMounts(in []string) []string {
-	out := make([]string, 0, len(in))
+// recordableMounts keeps the shares a record may hold. A record's mounts are
+// host project roots mapped to guest paths, both absolute by construction
+// (Tx.PutMachine refuses anything else); anything else in a backend's report is
+// not a project registration avar made, so it is not adopted as one. Dropping
+// it here rather than letting PutMachine refuse the whole record keeps one odd
+// entry in a listing from aborting a repair that is otherwise correct.
+func recordableMounts(in []types.MountSpec) []types.MountSpec {
+	out := make([]types.MountSpec, 0, len(in))
 	for _, m := range in {
-		if filepath.IsAbs(m) {
+		if m.Validate() == nil {
 			out = append(out, m)
 		}
 	}

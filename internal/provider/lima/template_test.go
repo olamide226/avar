@@ -50,7 +50,7 @@ func TestRenderInstanceConfig_Golden_REQ_1_2(t *testing.T) {
 				Name:     "avr-ubuntu-24.04-arm64",
 				Selector: types.EnvironmentSelector{Distro: types.DistroUbuntu, Version: "24.04", Arch: types.ArchARM64},
 				Kind:     types.KindShared,
-				Mounts:   []string{"/Users/dev/code/web", "/Users/dev/code/api"},
+				Mounts:   shares("/Users/dev/code/web", "/Users/dev/code/api"),
 			},
 		},
 		{
@@ -62,7 +62,7 @@ func TestRenderInstanceConfig_Golden_REQ_1_2(t *testing.T) {
 				Name:     "avr-ubuntu-24.04-amd64",
 				Selector: types.EnvironmentSelector{Distro: types.DistroUbuntu, Version: "24.04", Arch: types.ArchAMD64},
 				Kind:     types.KindShared,
-				Mounts:   []string{"/Users/dev/code/api"},
+				Mounts:   shares("/Users/dev/code/api"),
 			},
 		},
 		{
@@ -74,7 +74,7 @@ func TestRenderInstanceConfig_Golden_REQ_1_2(t *testing.T) {
 				Name:     "avr-ubuntu-24.04-amd64",
 				Selector: types.EnvironmentSelector{Distro: types.DistroUbuntu, Version: "24.04", Arch: types.ArchAMD64},
 				Kind:     types.KindShared,
-				Mounts:   []string{"/Users/dev/code/api"},
+				Mounts:   shares("/Users/dev/code/api"),
 			},
 		},
 		{
@@ -84,7 +84,7 @@ func TestRenderInstanceConfig_Golden_REQ_1_2(t *testing.T) {
 				Name:     "avr-debian-12-arm64",
 				Selector: types.EnvironmentSelector{Distro: types.DistroDebian, Version: "12", Arch: types.ArchARM64},
 				Kind:     types.KindShared,
-				Mounts:   []string{"/Users/dev/code/api"},
+				Mounts:   shares("/Users/dev/code/api"),
 			},
 		},
 		{
@@ -94,7 +94,7 @@ func TestRenderInstanceConfig_Golden_REQ_1_2(t *testing.T) {
 				Name:     "avr-fedora-42-arm64",
 				Selector: types.EnvironmentSelector{Distro: types.DistroFedora, Version: "42", Arch: types.ArchARM64},
 				Kind:     types.KindShared,
-				Mounts:   []string{"/Users/dev/code/api"},
+				Mounts:   shares("/Users/dev/code/api"),
 			},
 		},
 		{
@@ -118,7 +118,7 @@ func TestRenderInstanceConfig_Golden_REQ_1_2(t *testing.T) {
 				Name:     "avr-prj-3fa9c2b1de",
 				Selector: types.EnvironmentSelector{Distro: types.DistroUbuntu, Version: "22.04", Arch: types.ArchARM64, Isolated: true},
 				Kind:     types.KindIsolated,
-				Mounts:   []string{"/Users/dev/code/api"},
+				Mounts:   shares("/Users/dev/code/api"),
 				CPUs:     2,
 				MemoryGB: 3,
 				DiskGB:   40,
@@ -217,7 +217,7 @@ func TestRenderInstanceConfig_SharesProjectsWritableAtIdenticalPaths_REQ_6_1(t *
 	out, err := renderInstanceConfig(provider.MachineSpec{
 		Name:     "avr-ubuntu-24.04-arm64",
 		Selector: types.EnvironmentSelector{Distro: types.DistroUbuntu, Version: "24.04", Arch: types.ArchARM64},
-		Mounts:   []string{"/Users/dev/code/api"},
+		Mounts:   shares("/Users/dev/code/api"),
 	}, testHost)
 	if err != nil {
 		t.Fatalf("renderInstanceConfig: %v", err)
@@ -238,7 +238,7 @@ func TestRenderInstanceConfig_SharesNothingButRegisteredProjects_PROP_5(t *testi
 	out, err := renderInstanceConfig(provider.MachineSpec{
 		Name:     "avr-ubuntu-24.04-arm64",
 		Selector: types.EnvironmentSelector{Distro: types.DistroUbuntu, Version: "24.04", Arch: types.ArchARM64},
-		Mounts:   []string{"/Users/dev/code/api"},
+		Mounts:   shares("/Users/dev/code/api"),
 	}, testHost)
 	if err != nil {
 		t.Fatalf("renderInstanceConfig: %v", err)
@@ -281,7 +281,7 @@ func TestRenderInstanceConfig_QuotesPathsThatWouldOtherwiseBeYAML(t *testing.T) 
 	out, err := renderInstanceConfig(provider.MachineSpec{
 		Name:     "avr-ubuntu-24.04-arm64",
 		Selector: types.EnvironmentSelector{Distro: types.DistroUbuntu, Version: "24.04", Arch: types.ArchARM64},
-		Mounts:   []string{hostile},
+		Mounts:   shares(hostile),
 	}, testHost)
 	if err != nil {
 		t.Fatalf("renderInstanceConfig: %v", err)
@@ -321,7 +321,7 @@ func TestRenderInstanceConfig_RelativeMountIsRefused(t *testing.T) {
 	_, err := renderInstanceConfig(provider.MachineSpec{
 		Name:     "avr-ubuntu-24.04-arm64",
 		Selector: types.EnvironmentSelector{Distro: types.DistroUbuntu, Version: "24.04", Arch: types.ArchARM64},
-		Mounts:   []string{"code/api"},
+		Mounts:   shares("code/api"),
 	}, testHost)
 	if err == nil {
 		t.Fatal("a relative directory was accepted, which cannot be shared at an identical absolute path")

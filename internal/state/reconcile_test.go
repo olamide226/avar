@@ -114,10 +114,11 @@ func ubuntuSelector() types.EnvironmentSelector {
 func backendMachine(name string, state types.MachineState) types.MachineStatus {
 	return types.MachineStatus{
 		Name:     name,
+		Provider: types.ProviderLima,
 		Selector: ubuntuSelector(),
 		Kind:     types.KindShared,
 		State:    state,
-		VMType:   "vz",
+		Runtime:  "vz",
 	}
 }
 
@@ -344,7 +345,7 @@ func TestReconcile_AdoptsHealthyOrphan_PROP_7(t *testing.T) {
 	project := mkdir(t, "code", "orphan-project")
 
 	orphan := backendMachine("avr-ubuntu-24.04-arm64", types.StateRunning)
-	orphan.Mounts = []string{project, "not/absolute"}
+	orphan.Mounts = []types.MountSpec{share(project), {HostPath: "not/absolute", GuestPath: "/not/absolute"}}
 	orphan.CPUs, orphan.MemoryGB, orphan.DiskGB = 4, 8, 100
 
 	before := time.Now().UTC()
@@ -371,11 +372,17 @@ func TestReconcile_AdoptsHealthyOrphan_PROP_7(t *testing.T) {
 	if rec.Kind != types.KindShared {
 		t.Errorf("adopted kind = %q, want %q", rec.Kind, types.KindShared)
 	}
-	if rec.VMType != "vz" {
-		t.Errorf("adopted vm type = %q, want the reported %q", rec.VMType, "vz")
+	if rec.Runtime != "vz" {
+		t.Errorf("adopted runtime = %q, want the reported %q", rec.Runtime, "vz")
 	}
-	if len(rec.Mounts) != 1 || rec.Mounts[0] != project {
-		t.Errorf("adopted mounts = %v, want only the absolute host path %s", rec.Mounts, project)
+	// The backend that listed the machine is the backend that owns it, which
+	// is the one thing about a machine a backend can always say for certain
+	// about itself (REQ-18.14).
+	if rec.Provider != types.ProviderLima {
+		t.Errorf("adopted provider = %q, want the listing backend %q", rec.Provider, types.ProviderLima)
+	}
+	if len(rec.Mounts) != 1 || rec.Mounts[0] != share(project) {
+		t.Errorf("adopted mounts = %v, want only the mapping the backend actually describes (%s)", rec.Mounts, share(project))
 	}
 
 	// Not recoverable, and therefore not fabricated: CreatedAt means "since
@@ -925,5 +932,30 @@ func TestReconcile_HonoursContextCancellation_REQ_17_5(t *testing.T) {
 
 	if _, err := st.Reconcile(ctx, backend); !errors.Is(err, context.Canceled) {
 		t.Errorf("Reconcile error = %v, want it to wrap context.Canceled", err)
+	}
+}
+
+// A backend that does not say which provider owns an unregistered environment
+// has not given avar enough to record: the record would name a machine no later
+// invocation could safely act on, so it is left alone instead (PROP-6).
+func TestReconcile_LeavesAnOrphanWhoseProviderIsUnknown_PROP_6(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	orphan := backendMachine("avr-ubuntu-24.04-arm64", types.StateRunning)
+	orphan.Provider = ""
+
+	result, err := st.Reconcile(context.Background(), newBackend(orphan))
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := changeSummary(result); !equalStrings(got, []string{orphan.Name + ":left"}) {
+		t.Fatalf("reported %v, want the machine left alone", got)
+	}
+	if names := recordNames(t, st); len(names) != 0 {
+		t.Errorf("records = %v, want nothing recorded from a listing avar cannot act on", names)
+	}
+	if reason := result.Changes[0].Reason; !strings.Contains(reason, "provider") {
+		t.Errorf("the reason does not say what was missing: %q", reason)
 	}
 }

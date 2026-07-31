@@ -32,9 +32,9 @@ mountType: {{ q .MountType }}
 {{- if .Mounts }}
 mounts:
 {{- range .Mounts }}
-- location: {{ q . }}
-  mountPoint: {{ q . }}
-  writable: true
+- location: {{ q .HostPath }}
+  mountPoint: {{ q .GuestPath }}
+  writable: {{ .Writable }}
 {{- end }}
 {{- else }}
 mounts: []

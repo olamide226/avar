@@ -26,6 +26,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -39,11 +41,28 @@ import (
 // a capability finds it. A backend is free to implement only some of them; the
 // test double implements all of them on purpose.
 var (
-	_ provider.Provider          = (*Fake)(nil)
-	_ provider.Snapshotter       = (*Fake)(nil)
-	_ provider.SSHConfigProvider = (*Fake)(nil)
-	_ provider.PortDiagnoser     = (*Fake)(nil)
+	_ provider.Provider             = (*Fake)(nil)
+	_ provider.Snapshotter          = (*Fake)(nil)
+	_ provider.EditorTargetProvider = (*Fake)(nil)
+	_ provider.PortDiagnoser        = (*Fake)(nil)
 )
+
+// ProviderID is the backend id the Fake reports. It is its own id rather than a
+// real backend's: a flow test that records a machine records it against the
+// provider that actually served it, and a test double claiming to be Lima would
+// make an assertion about provider identity prove nothing.
+const ProviderID = types.ProviderID("fake")
+
+// GuestProjectRoot is where the Fake maps a project inside the guest.
+//
+// It is deliberately *not* the identity mapping Lima uses. The Fake is what
+// command flows are proven against, and a double that shared a project at its
+// host path could not catch the one mistake this whole boundary exists to
+// prevent: a caller that assumes the host path is also the guest path, which is
+// true on Lima and false on WSL (REQ-18.5, PROP-1). A flow that passes the
+// Fake's guest path through to Shell works on both backends; one that passes a
+// host path fails here rather than on a Windows user's machine.
+const GuestProjectRoot = "/mnt/avr/projects"
 
 // Op names a provider operation in a recorded call sequence.
 type Op string
@@ -61,7 +80,7 @@ const (
 	OpSnapshot        Op = "Snapshot"
 	OpRestoreSnapshot Op = "RestoreSnapshot"
 	OpListSnapshots   Op = "ListSnapshots"
-	OpSSHConfig       Op = "SSHConfig"
+	OpEditorTarget    Op = "EditorTarget"
 	OpPortDiagnostics Op = "PortDiagnostics"
 )
 
@@ -78,7 +97,7 @@ type Call struct {
 	// that Env and Argv can be asserted verbatim.
 	Shell provider.ShellOpts
 	// Mounts is the desired set passed to SetMounts.
-	Mounts []string
+	Mounts []types.MountSpec
 	// Snapshot is the snapshot name passed to Snapshot or RestoreSnapshot.
 	Snapshot string
 	// ExitCode is what Shell returned.
@@ -100,7 +119,7 @@ func (c Call) String() string {
 	case OpShell:
 		fmt.Fprintf(&b, "%s, workdir=%s, argv=%v, tty=%t", c.Machine, c.Shell.Workdir, c.Shell.Argv, c.Shell.TTY)
 	case OpSetMounts:
-		fmt.Fprintf(&b, "%s, %v", c.Machine, c.Mounts)
+		fmt.Fprintf(&b, "%s, %v", c.Machine, types.MountHostPaths(c.Mounts))
 	case OpSnapshot, OpRestoreSnapshot:
 		fmt.Fprintf(&b, "%s, %s", c.Machine, c.Snapshot)
 	case OpStatus:
@@ -122,7 +141,7 @@ type machine struct {
 	selector  types.EnvironmentSelector
 	kind      types.MachineKind
 	state     types.MachineState
-	mounts    []string
+	mounts    []types.MountSpec
 	snapshots []provider.SnapshotInfo
 	cpus      int
 	memoryGB  float64
@@ -166,8 +185,8 @@ type Fake struct {
 	stdout   string
 	stderr   string
 
-	sshConfig map[string]string
-	portDiags map[string][]provider.PortDiagnostic
+	editorTargets map[string]provider.EditorTarget
+	portDiags     map[string][]provider.PortDiagnostic
 
 	snapshotSeq int
 }
@@ -175,11 +194,11 @@ type Fake struct {
 // New returns a Fake that owns no machines and fails nothing.
 func New() *Fake {
 	return &Fake{
-		machines:  make(map[string]*machine),
-		stickyErr: make(map[Op]error),
-		queuedErr: make(map[Op][]error),
-		sshConfig: make(map[string]string),
-		portDiags: make(map[string][]provider.PortDiagnostic),
+		machines:      make(map[string]*machine),
+		stickyErr:     make(map[Op]error),
+		queuedErr:     make(map[Op][]error),
+		editorTargets: make(map[string]provider.EditorTarget),
+		portDiags:     make(map[string][]provider.PortDiagnostic),
 	}
 }
 
@@ -285,11 +304,13 @@ func (f *Fake) SetSnapshots(name string, snaps []provider.SnapshotInfo) {
 	m.snapshots = append([]provider.SnapshotInfo(nil), snaps...)
 }
 
-// SetSSHConfig programs the stanza SSHConfig returns for a machine.
-func (f *Fake) SetSSHConfig(name, config string) {
+// SetEditorTarget programs the target EditorTarget returns for a machine, which
+// is how a test covers a backend that hands back SSH material as well as one
+// that does not. GuestPath is filled in from the call.
+func (f *Fake) SetEditorTarget(name string, target provider.EditorTarget) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sshConfig[name] = config
+	f.editorTargets[name] = target
 }
 
 // SetPortDiagnostics programs the port diagnostics reported for a machine.
@@ -367,15 +388,15 @@ func (f *Fake) MachineState(name string) types.MachineState {
 	return m.state
 }
 
-// Mounts reports a machine's currently shared directories.
-func (f *Fake) Mounts(name string) []string {
+// Mounts reports a machine's currently applied file shares.
+func (f *Fake) Mounts(name string) []types.MountSpec {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m, ok := f.machines[name]
 	if !ok {
 		return nil
 	}
-	return append([]string(nil), m.mounts...)
+	return append([]types.MountSpec(nil), m.mounts...)
 }
 
 // Restarts reports how many times the Fake cycled a machine, which is how a
@@ -406,6 +427,43 @@ func (f *Fake) Reset() {
 
 // --- Provider -------------------------------------------------------------
 
+// ID reports the Fake's own backend id.
+func (f *Fake) ID() types.ProviderID { return ProviderID }
+
+// MapProjectPath maps a project root to a deterministic guest root and appends
+// the working directory's relative suffix.
+//
+// It is not recorded as a call. The contract makes it a pure function —
+// deterministic, no mutation, no I/O — so there is nothing about it a flow test
+// could assert by counting invocations; what a flow has to get right is that
+// the guest path it eventually passes to Shell is the one the provider planned,
+// and that is asserted on the Shell call itself.
+func (f *Fake) MapProjectPath(projectID, hostRoot, hostCwd string) (types.MountSpec, string, error) {
+	if strings.TrimSpace(projectID) == "" {
+		return types.MountSpec{}, "", fmt.Errorf("mapping %s into the guest: no project identity was given", hostRoot)
+	}
+	if !filepath.IsAbs(hostRoot) || !filepath.IsAbs(hostCwd) {
+		return types.MountSpec{}, "", fmt.Errorf("mapping a project into the guest: the project root and the current directory must both be absolute (got %q and %q)", hostRoot, hostCwd)
+	}
+	root, cwd := filepath.Clean(hostRoot), filepath.Clean(hostCwd)
+
+	rel, err := filepath.Rel(root, cwd)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return types.MountSpec{}, "", fmt.Errorf("mapping %s into the guest: it is not inside the project directory %s", cwd, root)
+	}
+
+	guestRoot := path.Join(GuestProjectRoot, projectID)
+	guestCwd := guestRoot
+	if rel != "." {
+		guestCwd = path.Join(guestRoot, filepath.ToSlash(rel))
+	}
+	mount := types.MountSpec{ProjectID: projectID, HostPath: root, GuestPath: guestRoot, Writable: true}
+	if err := mount.Validate(); err != nil {
+		return types.MountSpec{}, "", fmt.Errorf("mapping %s into the guest: %w", root, err)
+	}
+	return mount, guestCwd, nil
+}
+
 // EnsureMachine creates the machine if absent, starts it if not running, and
 // does nothing at all when it is already running (REQ-1.2, REQ-1.3).
 func (f *Fake) EnsureMachine(ctx context.Context, spec provider.MachineSpec, progress types.ProgressSink) error {
@@ -423,13 +481,21 @@ func (f *Fake) ensureMachine(ctx context.Context, spec provider.MachineSpec, pro
 		return err
 	}
 
+	if spec.Provider != "" && spec.Provider != f.ID() {
+		return fmt.Errorf("creating machine %s: it is addressed to the %q backend, not %q", spec.Name, spec.Provider, f.ID())
+	}
+	mounts, err := types.NormalizeMounts(spec.Mounts)
+	if err != nil {
+		return fmt.Errorf("creating machine %s: %w", spec.Name, err)
+	}
+
 	m, exists := f.machines[spec.Name]
 	switch {
 	case !exists:
 		m = &machine{
 			selector: spec.Selector,
 			kind:     spec.Kind,
-			mounts:   sortedCopy(spec.Mounts),
+			mounts:   mounts,
 			cpus:     orInt(spec.CPUs, defaultCPUs),
 			memoryGB: orFloat(spec.MemoryGB, defaultMemoryGB),
 			diskGB:   orFloat(spec.DiskGB, defaultDiskGB),
@@ -504,37 +570,37 @@ func (f *Fake) shell(ctx context.Context, name string, opts provider.ShellOpts) 
 	return f.exitCode, nil
 }
 
-// AppliedMounts reports the machine's shared directories, sorted.
-func (f *Fake) AppliedMounts(ctx context.Context, name string) ([]string, error) {
+// AppliedMounts reports the machine's applied file shares, sorted.
+func (f *Fake) AppliedMounts(ctx context.Context, name string) ([]types.MountSpec, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	call := Call{Op: OpAppliedMounts, Machine: name}
-	var dirs []string
+	var mounts []types.MountSpec
 	if err := f.gate(ctx, OpAppliedMounts, name); err != nil {
 		call.Err = err
 	} else if m, err := f.owned(name); err != nil {
 		call.Err = err
 	} else {
-		dirs = append([]string(nil), m.mounts...)
+		mounts = append([]types.MountSpec(nil), m.mounts...)
 	}
 	f.calls = append(f.calls, call)
-	return dirs, call.Err
+	return mounts, call.Err
 }
 
 // SetMounts replaces the machine's shared directories, restarting it only when
 // the set actually changed (REQ-6.4, PROP-5).
-func (f *Fake) SetMounts(ctx context.Context, name string, dirs []string, progress types.ProgressSink) error {
+func (f *Fake) SetMounts(ctx context.Context, name string, mounts []types.MountSpec, progress types.ProgressSink) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	call := Call{Op: OpSetMounts, Machine: name, Mounts: append([]string(nil), dirs...)}
-	call.Err = f.setMounts(ctx, name, dirs, progress)
+	call := Call{Op: OpSetMounts, Machine: name, Mounts: append([]types.MountSpec(nil), mounts...)}
+	call.Err = f.setMounts(ctx, name, mounts, progress)
 	f.calls = append(f.calls, call)
 	return call.Err
 }
 
-func (f *Fake) setMounts(ctx context.Context, name string, dirs []string, progress types.ProgressSink) error {
+func (f *Fake) setMounts(ctx context.Context, name string, mounts []types.MountSpec, progress types.ProgressSink) error {
 	if err := f.gate(ctx, OpSetMounts, name); err != nil {
 		return err
 	}
@@ -542,15 +608,18 @@ func (f *Fake) setMounts(ctx context.Context, name string, dirs []string, progre
 	if err != nil {
 		return err
 	}
-	want := sortedCopy(dirs)
-	if equalStrings(m.mounts, want) {
+	want, err := types.NormalizeMounts(mounts)
+	if err != nil {
+		return fmt.Errorf("sharing directories with machine %s: %w", name, err)
+	}
+	if types.EqualMounts(m.mounts, want) {
 		// Nothing to apply, so nothing to restart and nothing to say.
 		return nil
 	}
 	f.emit(progress, types.ProgressEvent{
 		Kind:    types.ProgressMounting,
 		Machine: name,
-		Message: fmt.Sprintf("Adding %s to your Linux environment — one-time restart", strings.Join(added(m.mounts, want), ", ")),
+		Message: fmt.Sprintf("Adding %s to your Linux environment — one-time restart", strings.Join(types.MountHostPaths(added(m.mounts, want)), ", ")),
 	})
 	m.mounts = want
 	if m.state == types.StateRunning {
@@ -637,14 +706,15 @@ func (f *Fake) Status(ctx context.Context) ([]types.MachineStatus, error) {
 			m := f.machines[name]
 			out = append(out, types.MachineStatus{
 				Name:     name,
+				Provider: f.ID(),
 				Selector: m.selector,
 				Kind:     m.kind,
 				State:    m.state,
 				CPUs:     m.cpus,
 				MemoryGB: m.memoryGB,
 				DiskGB:   m.diskGB,
-				Mounts:   append([]string(nil), m.mounts...),
-				VMType:   vmType(m.selector),
+				Mounts:   append([]types.MountSpec(nil), m.mounts...),
+				Runtime:  runtimeOf(m.selector),
 			})
 		}
 	}
@@ -731,27 +801,32 @@ func (f *Fake) ListSnapshots(ctx context.Context, name string) ([]provider.Snaps
 	return out, call.Err
 }
 
-// --- SSHConfigProvider ----------------------------------------------------
+// --- EditorTargetProvider -------------------------------------------------
 
-// SSHConfig returns the programmed stanza, or a synthesised one, for a running
-// machine.
-func (f *Fake) SSHConfig(ctx context.Context, name string) (string, error) {
+// EditorTarget returns the programmed target, or a synthesised one, for a
+// running machine.
+//
+// The synthesised target carries no SSH material, so a flow tested against a
+// bare Fake is a flow that works on a backend an editor reaches without SSH
+// (REQ-18.10, PROP-17). A test that needs the SSH-bearing shape programs one.
+func (f *Fake) EditorTarget(ctx context.Context, name, guestPath string) (provider.EditorTarget, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	call := Call{Op: OpSSHConfig, Machine: name}
-	var cfg string
-	if err := f.gate(ctx, OpSSHConfig, name); err != nil {
+	call := Call{Op: OpEditorTarget, Machine: name}
+	var target provider.EditorTarget
+	if err := f.gate(ctx, OpEditorTarget, name); err != nil {
 		call.Err = err
 	} else if _, err := f.running(name); err != nil {
 		call.Err = err
-	} else if programmed, ok := f.sshConfig[name]; ok {
-		cfg = programmed
+	} else if programmed, ok := f.editorTargets[name]; ok {
+		target = programmed
+		target.GuestPath = guestPath
 	} else {
-		cfg = fmt.Sprintf("Host %s\n  HostName 127.0.0.1\n  Port 2222\n", name)
+		target = provider.EditorTarget{Authority: string(f.ID()) + "+" + name, GuestPath: guestPath}
 	}
 	f.calls = append(f.calls, call)
-	return cfg, call.Err
+	return target, call.Err
 }
 
 // --- PortDiagnoser --------------------------------------------------------
@@ -850,7 +925,7 @@ func (f *Fake) emit(sink types.ProgressSink, event types.ProgressEvent) {
 }
 
 func cloneSpec(spec provider.MachineSpec) provider.MachineSpec {
-	spec.Mounts = append([]string(nil), spec.Mounts...)
+	spec.Mounts = append([]types.MountSpec(nil), spec.Mounts...)
 	return spec
 }
 
@@ -868,37 +943,17 @@ func cloneShellOpts(opts provider.ShellOpts) provider.ShellOpts {
 	return opts
 }
 
-func sortedCopy(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := append([]string(nil), in...)
-	sort.Strings(out)
-	return out
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// added reports the entries of want that were not already present.
-func added(have, want []string) []string {
+// added reports the entries of want whose host directory was not already
+// shared.
+func added(have, want []types.MountSpec) []types.MountSpec {
 	present := make(map[string]struct{}, len(have))
-	for _, dir := range have {
-		present[dir] = struct{}{}
+	for _, m := range have {
+		present[m.HostPath] = struct{}{}
 	}
-	var out []string
-	for _, dir := range want {
-		if _, ok := present[dir]; !ok {
-			out = append(out, dir)
+	var out []types.MountSpec
+	for _, m := range want {
+		if _, ok := present[m.HostPath]; !ok {
+			out = append(out, m)
 		}
 	}
 	return out
@@ -913,10 +968,10 @@ func findSnapshot(snaps []provider.SnapshotInfo, name string) int {
 	return -1
 }
 
-// vmType stands in for the backend-opaque virtualization mode shown in status
-// output. The Fake reports whether the environment is emulated, which is the
-// only part of it avar reasons about.
-func vmType(selector types.EnvironmentSelector) string {
+// runtimeOf stands in for the backend-opaque runtime shown in status output.
+// The Fake reports whether the environment is emulated, which is the only part
+// of it avar reasons about.
+func runtimeOf(selector types.EnvironmentSelector) string {
 	if selector.Emulated() {
 		return "emulated"
 	}

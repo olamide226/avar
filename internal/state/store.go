@@ -216,6 +216,12 @@ type Tx struct {
 	machines map[string]types.MachineRecord
 	sessions []types.SessionRecord
 
+	// schema is what the directory said it was when the transaction opened, and
+	// schemaStale reports that schema.json does not state the current version —
+	// because it is absent, or because it names an older one.
+	schema      schemaRecord
+	schemaStale bool
+
 	projectsDirty bool
 	machinesDirty bool
 	sessionsDirty bool
@@ -227,12 +233,27 @@ func (s *Store) begin() (*Tx, error) {
 		projects: map[string]types.ProjectRecord{},
 		machines: map[string]types.MachineRecord{},
 	}
+
+	schema, recorded, err := s.readSchema()
+	if err != nil {
+		return nil, err
+	}
+	tx.schema = schema
+	tx.schemaStale = !recorded || schema.Version != SchemaVersion
+
 	if err := readJSON(s.path(projectsFile), &tx.projects); err != nil {
 		return nil, err
 	}
-	if err := readJSON(s.path(machinesFile), &tx.machines); err != nil {
+	machines, migrated, err := readMachines(s.path(machinesFile), schema.Version)
+	if err != nil {
 		return nil, err
 	}
+	tx.machines = machines
+	// Records converted on read are written back by this transaction, so the
+	// conversion happens once rather than on every invocation. It goes through
+	// the same atomic replace as any other write, so an interrupted migration
+	// leaves the previous file intact (REQ-17.5, PROP-7).
+	tx.machinesDirty = migrated
 	if err := readJSON(s.path(sessionsFile), &tx.sessions); err != nil {
 		return nil, err
 	}
@@ -256,6 +277,23 @@ func (s *Store) begin() (*Tx, error) {
 }
 
 func (t *Tx) flush() error {
+	// The version is stamped alongside the first write to a directory that does
+	// not already state it. A transaction that only read leaves the directory
+	// exactly as it found it, so reading avar's state never writes to it — and
+	// a migration always writes, because reading migrated records dirties the
+	// registry that has to be written back in the new shape.
+	if t.schemaStale && (t.projectsDirty || t.machinesDirty || t.sessionsDirty) {
+		schema := t.schema
+		if schema.Version != SchemaVersion {
+			schema.Migrations = append(schema.Migrations, migrationID(schema.Version, SchemaVersion))
+		}
+		if err := t.store.writeSchema(schema); err != nil {
+			return err
+		}
+		schema.Version = SchemaVersion
+		t.schema = schema
+		t.schemaStale = false
+	}
 	if t.projectsDirty {
 		if err := writeJSONAtomic(t.store.path(projectsFile), t.projects); err != nil {
 			return err
@@ -381,6 +419,13 @@ func (t *Tx) PutMachine(rec types.MachineRecord) error {
 	if err := types.ValidateMachineName(rec.Name); err != nil {
 		return fmt.Errorf("refusing to record a machine avar does not own: %w", err)
 	}
+	// A record that does not say which backend made it cannot be acted on: the
+	// same machine name means a Lima instance on one host and a WSL
+	// distribution on another, and "start this" is a different operation for
+	// each (REQ-18.1, REQ-18.14).
+	if err := types.ValidateProviderID(rec.Provider); err != nil {
+		return fmt.Errorf("record machine %s: %w", rec.Name, err)
+	}
 	switch rec.Kind {
 	case types.KindShared, types.KindIsolated, types.KindBase:
 	default:
@@ -395,7 +440,10 @@ func (t *Tx) PutMachine(rec types.MachineRecord) error {
 		return fmt.Errorf("record machine %s: %w", rec.Name, err)
 	}
 	if old, ok := t.machines[rec.Name]; ok {
-		mounts = union(old.Mounts, mounts)
+		mounts, err = union(old.Mounts, mounts)
+		if err != nil {
+			return fmt.Errorf("record machine %s: %w", rec.Name, err)
+		}
 		if rec.CreatedAt.IsZero() {
 			rec.CreatedAt = old.CreatedAt
 		}
@@ -410,27 +458,47 @@ func (t *Tx) PutMachine(rec types.MachineRecord) error {
 	return nil
 }
 
-// AddMount registers a project directory as a mount of a machine. Adding a
+// AddMount registers one project directory as a mount of a machine. Adding a
 // directory that is already registered is a no-op, so callers can register
 // unconditionally.
-func (t *Tx) AddMount(machine, dir string) error {
+//
+// mount is the mapping the provider planned (Provider.MapProjectPath): the
+// store records where a directory appears in the guest and never invents it,
+// because only the backend knows.
+//
+// The host path must already be canonical — the resolved absolute path a
+// project record carries — and is checked, not silently rewritten. Rewriting it
+// here would leave the guest path describing the path the caller *passed* while
+// the host path described a different directory, so the recorded pair would no
+// longer be a mapping of anything. Redundant separators are cleaned, so
+// registering a directory twice by two spellings still registers it once
+// (REQ-6.4, PROP-1).
+func (t *Tx) AddMount(machine string, mount types.MountSpec) error {
 	if err := types.ValidateMachineName(machine); err != nil {
 		return fmt.Errorf("register a mount: %w", err)
 	}
 	rec, ok := t.machines[machine]
 	if !ok {
-		return fmt.Errorf("register mount %s: avar has no record of machine %s", dir, machine)
+		return fmt.Errorf("register mount %s: avar has no record of machine %s", mount.HostPath, machine)
 	}
-	resolved, err := ResolveProjectPath(dir)
+	mount = types.CleanMount(mount)
+	resolved, err := ResolveProjectPath(mount.HostPath)
 	if err != nil {
 		return err
 	}
-	for _, m := range rec.Mounts {
-		if m == resolved {
-			return nil
-		}
+	if resolved != mount.HostPath {
+		return fmt.Errorf("register mount %s with machine %s: that directory is really %s; canonicalise a project path before asking a provider where it lands in the guest",
+			mount.HostPath, machine, resolved)
 	}
-	rec.Mounts = append(append([]string(nil), rec.Mounts...), resolved)
+
+	merged, err := union(rec.Mounts, []types.MountSpec{mount})
+	if err != nil {
+		return fmt.Errorf("register mount %s with machine %s: %w", mount.HostPath, machine, err)
+	}
+	if types.EqualMounts(rec.Mounts, merged) {
+		return nil
+	}
+	rec.Mounts = merged
 	t.machines[machine] = rec
 	t.machinesDirty = true
 	return nil
@@ -626,8 +694,8 @@ func (s *Store) PutMachine(rec types.MachineRecord) error {
 }
 
 // AddMount registers a project directory as a mount of a machine.
-func (s *Store) AddMount(machine, dir string) error {
-	return s.Update(func(tx *Tx) error { return tx.AddMount(machine, dir) })
+func (s *Store) AddMount(machine string, mount types.MountSpec) error {
+	return s.Update(func(tx *Tx) error { return tx.AddMount(machine, mount) })
 }
 
 // DeleteMachine drops a deleted machine's record and its sessions.
@@ -762,32 +830,52 @@ func syncDir(dir string) error {
 
 // --- Helpers --------------------------------------------------------------
 
-func checkMounts(mounts []string) ([]string, error) {
-	out := make([]string, 0, len(mounts))
-	for _, m := range mounts {
-		if !filepath.IsAbs(m) {
-			return nil, fmt.Errorf("mount %q must be an absolute host path", m)
+// checkMounts canonicalises and validates a record's mounts.
+//
+// Registration order is preserved rather than sorted: a record's mount list is
+// the history of which projects were registered with the machine, and reordering
+// it would rewrite that for no benefit. Canonical *ordering* is the providers'
+// business, since they are the ones comparing an applied set against a desired
+// one (types.NormalizeMounts).
+func checkMounts(mounts []types.MountSpec) ([]types.MountSpec, error) {
+	return union(nil, mounts)
+}
+
+// union merges added into existing, keeping existing order and appending what
+// is new. It is what makes a machine's mount list only grow: a caller writing
+// back a record it read earlier cannot unregister another project's directory
+// (design §4).
+//
+// A directory already registered keeps its place and takes the newer mapping,
+// so a provider that replans where a project appears in the guest is recorded
+// once rather than twice. Two directories claiming one guest path is refused
+// outright: the recorded set would then no longer describe what the guest can
+// actually reach, which is exactly what PROP-5 asserts it does.
+func union(existing, added []types.MountSpec) ([]types.MountSpec, error) {
+	out := make([]types.MountSpec, 0, len(existing)+len(added))
+	atHost := make(map[string]int, len(existing)+len(added))
+
+	for _, m := range append(append([]types.MountSpec(nil), existing...), added...) {
+		m = types.CleanMount(m)
+		if err := m.Validate(); err != nil {
+			return nil, err
 		}
-		out = append(out, filepath.Clean(m))
-	}
-	return dedupe(out), nil
-}
-
-func union(existing, added []string) []string {
-	return dedupe(append(append([]string(nil), existing...), added...))
-}
-
-func dedupe(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, v := range in {
-		if _, ok := seen[v]; ok {
+		if i, ok := atHost[m.HostPath]; ok {
+			out[i] = m
 			continue
 		}
-		seen[v] = struct{}{}
-		out = append(out, v)
+		atHost[m.HostPath] = len(out)
+		out = append(out, m)
 	}
-	return out
+
+	atGuest := make(map[string]string, len(out))
+	for _, m := range out {
+		if other, ok := atGuest[m.GuestPath]; ok {
+			return nil, fmt.Errorf("%s and %s both claim the guest path %s", other, m.HostPath, m.GuestPath)
+		}
+		atGuest[m.GuestPath] = m.HostPath
+	}
+	return out, nil
 }
 
 func copyProject(rec types.ProjectRecord) types.ProjectRecord {
@@ -799,6 +887,6 @@ func copyProject(rec types.ProjectRecord) types.ProjectRecord {
 }
 
 func copyMachine(rec types.MachineRecord) types.MachineRecord {
-	rec.Mounts = append([]string(nil), rec.Mounts...)
+	rec.Mounts = append([]types.MountSpec(nil), rec.Mounts...)
 	return rec
 }

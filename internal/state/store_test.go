@@ -41,15 +41,31 @@ func mkdir(t *testing.T, parts ...string) string {
 
 func sharedMachine(name string) types.MachineRecord {
 	return types.MachineRecord{
-		Name: name,
+		Name:     name,
+		Provider: types.ProviderLima,
 		Selector: types.EnvironmentSelector{
 			Distro:  types.DistroUbuntu,
 			Version: "24.04",
 			Arch:    types.ArchARM64,
 		},
-		Kind:   types.KindShared,
-		VMType: "vz",
+		Kind:    types.KindShared,
+		Runtime: "vz",
 	}
+}
+
+// share is the mount a Lima-style provider would have planned for a project
+// directory: the identity mapping, writable (REQ-6.1).
+func share(dir string) types.MountSpec {
+	return types.MountSpec{HostPath: dir, GuestPath: dir, Writable: true}
+}
+
+// shares is share for a whole set.
+func shares(dirs ...string) []types.MountSpec {
+	out := make([]types.MountSpec, 0, len(dirs))
+	for _, dir := range dirs {
+		out = append(out, share(dir))
+	}
+	return out
 }
 
 // deadPID returns the pid of a process that has certainly exited. Pid reuse
@@ -106,7 +122,7 @@ func TestStore_ProjectAndMachineRecordsRoundTrip_REQ_11_2(t *testing.T) {
 	}
 
 	rec := sharedMachine("avr-ubuntu-24.04-arm64")
-	rec.Mounts = []string{resolved}
+	rec.Mounts = shares(resolved)
 	if err := st.PutMachine(rec); err != nil {
 		t.Fatalf("PutMachine: %v", err)
 	}
@@ -129,11 +145,14 @@ func TestStore_ProjectAndMachineRecordsRoundTrip_REQ_11_2(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Machine(%s) = (%v, %t, %v), want the stored record", rec.Name, gotMachine, ok, err)
 	}
-	if gotMachine.Selector != rec.Selector || gotMachine.Kind != rec.Kind || gotMachine.VMType != rec.VMType {
-		t.Errorf("reloaded machine = %+v, want selector/kind/vmtype from %+v", gotMachine, rec)
+	if gotMachine.Selector != rec.Selector || gotMachine.Kind != rec.Kind || gotMachine.Runtime != rec.Runtime {
+		t.Errorf("reloaded machine = %+v, want selector/kind/runtime from %+v", gotMachine, rec)
 	}
-	if len(gotMachine.Mounts) != 1 || gotMachine.Mounts[0] != resolved {
-		t.Errorf("reloaded mounts = %v, want [%s]", gotMachine.Mounts, resolved)
+	if gotMachine.Provider != types.ProviderLima {
+		t.Errorf("reloaded provider = %q, want %q — a record has to say which backend can act on it", gotMachine.Provider, types.ProviderLima)
+	}
+	if len(gotMachine.Mounts) != 1 || gotMachine.Mounts[0] != share(resolved) {
+		t.Errorf("reloaded mounts = %v, want [%s]", gotMachine.Mounts, share(resolved))
 	}
 	if gotMachine.CreatedAt.IsZero() {
 		t.Error("PutMachine did not stamp CreatedAt")
@@ -237,7 +256,7 @@ func TestStore_AtomicWriteSurvivesInterruption_REQ_17_5(t *testing.T) {
 			rec.Kind = types.KindIsolated
 			rec.ProjectID = "0123456789"
 		}
-		rec.Mounts = []string{big, filepath.Join(big, "..")}
+		rec.Mounts = shares(big, filepath.Join(big, ".."))
 		if err := st.PutMachine(rec); err != nil {
 			t.Fatalf("PutMachine(%s): %v", name, err)
 		}
@@ -299,7 +318,7 @@ func TestStore_AtomicWriteSurvivesInterruption_REQ_17_5(t *testing.T) {
 					rec.Kind = types.KindIsolated
 					rec.ProjectID = "0123456789"
 				}
-				rec.Mounts = []string{big}
+				rec.Mounts = shares(big)
 				if err := tx.PutMachine(rec); err != nil {
 					return err
 				}
@@ -427,7 +446,7 @@ func TestStore_ConcurrentMutationsAllLand_REQ_17_5(t *testing.T) {
 	const workers = 12
 	dirs := make([]string, workers)
 	for i := range dirs {
-		dirs[i] = mkdir(t, "proj", string(rune('a'+i)))
+		dirs[i] = resolved(t, mkdir(t, "proj", string(rune('a'+i))))
 	}
 
 	var wg sync.WaitGroup
@@ -444,6 +463,7 @@ func TestStore_ConcurrentMutationsAllLand_REQ_17_5(t *testing.T) {
 			}
 			isolated := types.MachineRecord{
 				Name:      "avr-prj-" + strings.Repeat(string(rune('a'+i)), 4),
+				Provider:  types.ProviderLima,
 				Selector:  shared.Selector,
 				Kind:      types.KindIsolated,
 				ProjectID: "project-" + string(rune('a'+i)),
@@ -451,7 +471,7 @@ func TestStore_ConcurrentMutationsAllLand_REQ_17_5(t *testing.T) {
 			if err := st.PutMachine(isolated); err != nil {
 				errs <- err
 			}
-			if err := st.AddMount(shared.Name, dirs[i]); err != nil {
+			if err := st.AddMount(shared.Name, share(dirs[i])); err != nil {
 				errs <- err
 			}
 			if err := st.AddSession(types.SessionRecord{Machine: isolated.Name, PID: os.Getpid()}); err != nil {
@@ -588,7 +608,7 @@ func TestStore_RefusesMachinesOutsideItsNamespace_REQ_5_4(t *testing.T) {
 		if err := st.DeleteMachine(name); err == nil {
 			t.Errorf("DeleteMachine(%q) succeeded; avar must never delete a machine it does not own", name)
 		}
-		if err := st.AddMount(name, dir); err == nil {
+		if err := st.AddMount(name, share(dir)); err == nil {
 			t.Errorf("AddMount(%q) succeeded; avar must never modify a machine it does not own", name)
 		}
 		if _, _, err := st.Machine(name); err == nil {
@@ -640,20 +660,23 @@ func TestStore_MachineMountsOnlyGrow_REQ_6_4(t *testing.T) {
 	t.Parallel()
 
 	st := newTestStore(t)
-	first := mkdir(t, "one")
-	second := mkdir(t, "two")
+	// Canonical paths, because that is what a caller registers: a provider is
+	// asked where a project lands in the guest *after* the project path has
+	// been resolved, and the store checks rather than re-resolves.
+	first := resolved(t, mkdir(t, "one"))
+	second := resolved(t, mkdir(t, "two"))
 
 	rec := sharedMachine("avr-ubuntu-24.04-arm64")
-	rec.Mounts = []string{first}
+	rec.Mounts = shares(first)
 	if err := st.PutMachine(rec); err != nil {
 		t.Fatalf("PutMachine: %v", err)
 	}
-	if err := st.AddMount(rec.Name, second); err != nil {
+	if err := st.AddMount(rec.Name, share(second)); err != nil {
 		t.Fatalf("AddMount: %v", err)
 	}
 	// Registering the same directory twice, and via a different spelling, must
 	// not duplicate it.
-	if err := st.AddMount(rec.Name, second+string(os.PathSeparator)); err != nil {
+	if err := st.AddMount(rec.Name, share(second+string(os.PathSeparator))); err != nil {
 		t.Fatalf("AddMount again: %v", err)
 	}
 
@@ -666,33 +689,68 @@ func TestStore_MachineMountsOnlyGrow_REQ_6_4(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Machine: (%t, %v)", ok, err)
 	}
-	resolvedSecond, err := ResolveProjectPath(second)
-	if err != nil {
-		t.Fatalf("ResolveProjectPath: %v", err)
-	}
+	resolvedSecond := second
 	if len(got.Mounts) != 2 {
 		t.Fatalf("mounts = %v, want both project directories exactly once", got.Mounts)
 	}
-	if got.Mounts[1] != resolvedSecond {
+	if got.Mounts[1].HostPath != resolvedSecond {
 		t.Errorf("mounts = %v, want the second registration at the end", got.Mounts)
+	}
+	// The guest path travels with the mount: the store records where a project
+	// appears inside Linux and never invents it (REQ-18.5).
+	if got.Mounts[1].GuestPath != resolvedSecond || !got.Mounts[1].Writable {
+		t.Errorf("mounts = %v, want the mapping the provider planned", got.Mounts)
 	}
 
 	// A returned record is a copy: mutating it cannot reach into the store.
-	got.Mounts[0] = "/etc"
+	got.Mounts[0].HostPath = "/etc"
 	again, _, err := st.Machine(rec.Name)
 	if err != nil {
 		t.Fatalf("Machine: %v", err)
 	}
-	if again.Mounts[0] == "/etc" {
+	if again.Mounts[0].HostPath == "/etc" {
 		t.Error("mutating a returned record changed the stored one")
 	}
 
-	if err := st.AddMount("avr-unknown-machine", first); err == nil {
+	if err := st.AddMount("avr-unknown-machine", share(first)); err == nil {
 		t.Error("AddMount succeeded for a machine avar has no record of")
 	}
-	if err := st.AddMount(rec.Name, filepath.Join(first, "missing")); err == nil {
+	if err := st.AddMount(rec.Name, share(filepath.Join(first, "missing"))); err == nil {
 		t.Error("AddMount accepted a directory that does not exist")
 	}
+
+	// Two projects cannot be registered behind one guest path: the recorded set
+	// would no longer describe what the guest can reach (PROP-5).
+	collision := share(first)
+	collision.HostPath = second
+	collision.GuestPath = first
+	if err := st.AddMount(rec.Name, collision); err == nil {
+		t.Error("AddMount accepted two host directories claiming one guest path")
+	}
+
+	// A host path the caller never canonicalised is refused rather than
+	// silently rewritten: rewriting it would leave the guest path describing
+	// one directory and the host path another, so the pair would no longer map
+	// anything (PROP-1).
+	viaLink := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(first, viaLink); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := st.AddMount(rec.Name, share(viaLink)); err == nil {
+		t.Error("AddMount accepted a host path that is not the directory's canonical one")
+	}
+}
+
+// resolved is the canonical form of a path, which is what a caller has in hand
+// by the time it asks a provider to map a project.
+func resolved(t *testing.T, dir string) string {
+	t.Helper()
+
+	out, err := ResolveProjectPath(dir)
+	if err != nil {
+		t.Fatalf("ResolveProjectPath(%s): %v", dir, err)
+	}
+	return out
 }
 
 // The record is removed only once the machine is gone, and a retry of a
@@ -885,9 +943,24 @@ func TestStore_RefusesIncoherentRecords_REQ_1_6(t *testing.T) {
 	}
 
 	relativeMount := sharedMachine("avr-ubuntu-24.04-arm64")
-	relativeMount.Mounts = []string{"code/my-project"}
+	relativeMount.Mounts = []types.MountSpec{{HostPath: "code/my-project", GuestPath: "/code/my-project", Writable: true}}
 	if err := st.PutMachine(relativeMount); err == nil {
-		t.Error("PutMachine accepted a relative mount path")
+		t.Error("PutMachine accepted a relative host mount path")
+	}
+
+	relativeGuest := sharedMachine("avr-ubuntu-24.04-arm64")
+	relativeGuest.Mounts = []types.MountSpec{{HostPath: dir, GuestPath: "code/my-project", Writable: true}}
+	if err := st.PutMachine(relativeGuest); err == nil {
+		t.Error("PutMachine accepted a relative guest mount path")
+	}
+
+	// A record that does not say which backend made it cannot be acted on: the
+	// same name is a Lima instance on one host and a WSL distribution on
+	// another (REQ-18.1, REQ-18.14).
+	noProvider := sharedMachine("avr-ubuntu-24.04-arm64")
+	noProvider.Provider = ""
+	if err := st.PutMachine(noProvider); err == nil {
+		t.Error("PutMachine accepted a machine record that names no provider")
 	}
 
 	err := st.Update(func(tx *Tx) error {

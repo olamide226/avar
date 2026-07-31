@@ -41,7 +41,9 @@ const (
 // "I do not know" but not on a guess.
 //
 // Sessions is left at zero: live avar sessions are avar's own bookkeeping, not
-// something the backend can see.
+// something the backend can see. So is the project an isolated machine belongs
+// to, which is why types.MachineStatus has no field for it — see the note
+// there, and state.recordFor for what reconciliation does about it.
 func (p *Provider) Status(ctx context.Context) ([]types.MachineStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("listing the machines avar manages: %w", err)
@@ -65,14 +67,18 @@ func (p *Provider) Status(ctx context.Context) ([]types.MachineStatus, error) {
 			continue
 		}
 		status := types.MachineStatus{
-			Name:     inst.Name,
+			Name: inst.Name,
+			// The one thing a backend can always say about a machine it is
+			// listing is which backend it is. Everything else here is either
+			// Lima's own truth or avar's record.
+			Provider: p.ID(),
 			State:    inst.state(),
 			CPUs:     inst.CPUs,
 			MemoryGB: gibibytes(inst.Memory),
 			DiskGB:   gibibytes(inst.Disk),
 			DiskUsed: diskUsedGB(inst.Dir),
 			Mounts:   inst.mounts(),
-			VMType:   inst.VMType,
+			Runtime:  inst.VMType,
 		}
 		if record, known := records[inst.Name]; known {
 			status.Selector = record.Selector

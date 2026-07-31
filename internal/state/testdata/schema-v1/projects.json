@@ -1,0 +1,22 @@
+{
+  "3fa9c2b1d0e4a7c6b58f0d2e1a9c4b7d6e3f8a1c2b5d7e9f0a3c6b8d1e4f7a2c": {
+    "id": "3fa9c2b1d0e4a7c6b58f0d2e1a9c4b7d6e3f8a1c2b5d7e9f0a3c6b8d1e4f7a2c",
+    "path": "/Users/dev/code/secret-project",
+    "isolated": true,
+    "created_at": "2025-06-11T18:01:59.004512Z",
+    "last_used_at": "2025-07-02T08:33:12.771993Z"
+  },
+  "8b71d4c05e2f6a9d3c7b0e1f4a8d2c5b9e6f3a0d7c1b4e8f2a5d9c3b6e0f1a4d": {
+    "id": "8b71d4c05e2f6a9d3c7b0e1f4a8d2c5b9e6f3a0d7c1b4e8f2a5d9c3b6e0f1a4d",
+    "path": "/Users/dev/code/api",
+    "isolated": false,
+    "selector": {
+      "distro": "ubuntu",
+      "version": "24.04",
+      "arch": "arm64",
+      "isolated": false
+    },
+    "created_at": "2025-03-27T14:21:58.117340Z",
+    "last_used_at": "2025-07-14T16:05:44.230118Z"
+  }
+}

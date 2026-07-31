@@ -36,7 +36,18 @@ const testMachine = "avr-ubuntu-24.04-arm64"
 // ownedRecord is avar's record of the machine under test, which is the second
 // half of what ownership means (REQ-5.4, PROP-6).
 func ownedRecord(name string) types.MachineRecord {
-	return types.MachineRecord{Name: name, Selector: nativeSelector(), Kind: types.KindShared}
+	return types.MachineRecord{Name: name, Provider: types.ProviderLima, Selector: nativeSelector(), Kind: types.KindShared}
+}
+
+// shares builds the mount set Lima would be given for these project
+// directories: the identity mapping, writable, which is what MapProjectPath
+// produces on this backend (REQ-6.1).
+func shares(dirs ...string) []types.MountSpec {
+	out := make([]types.MountSpec, 0, len(dirs))
+	for _, dir := range dirs {
+		out = append(out, types.MountSpec{HostPath: dir, GuestPath: dir, Writable: true})
+	}
+	return out
 }
 
 func assertArgvs(t *testing.T, got, want []string) {
@@ -72,7 +83,7 @@ func TestEnsureMachine_ColdCreate_REQ_1_2(t *testing.T) {
 		Name:     testMachine,
 		Selector: nativeSelector(),
 		Kind:     types.KindShared,
-		Mounts:   []string{project},
+		Mounts:   shares(project),
 	}
 	if err := p.EnsureMachine(context.Background(), spec, sink); err != nil {
 		t.Fatalf("EnsureMachine: %v", err)
@@ -164,7 +175,7 @@ func TestEnsureMachine_WarmPathMakesNoExtraCalls_REQ_17_1(t *testing.T) {
 		// A different mount set than the machine has. EnsureMachine must still
 		// not reconfigure: registering a project is SetMounts' job, and doing
 		// it here would restart the machine on an ordinary warm invocation.
-		Mounts: []string{"/Users/dev/code/somewhere-else"},
+		Mounts: shares("/Users/dev/code/somewhere-else"),
 	}, sink)
 	if err != nil {
 		t.Fatalf("EnsureMachine: %v", err)
@@ -305,7 +316,7 @@ func TestEnsureMachine_UnverifiableMountAbandonsTheCreate_REQ_6_5(t *testing.T) 
 	p := newTestProvider(t, runner, newFakeRecords())
 
 	err := p.EnsureMachine(context.Background(), provider.MachineSpec{
-		Name: testMachine, Selector: nativeSelector(), Mounts: []string{project},
+		Name: testMachine, Selector: nativeSelector(), Mounts: shares(project),
 	}, types.DiscardProgress)
 	if err == nil {
 		t.Fatal("a machine whose project directory did not appear in the guest was accepted")
@@ -324,7 +335,7 @@ func TestEnsureMachine_MissingProjectDirectoryFailsBeforeProvisioning_REQ_6_5(t 
 
 	err := p.EnsureMachine(context.Background(), provider.MachineSpec{
 		Name: testMachine, Selector: nativeSelector(),
-		Mounts: []string{filepath.Join(t.TempDir(), "gone")},
+		Mounts: shares(filepath.Join(t.TempDir(), "gone")),
 	}, types.DiscardProgress)
 	if err == nil {
 		t.Fatal("a directory that does not exist was accepted as a project to share")

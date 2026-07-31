@@ -3,6 +3,8 @@ package lima
 import (
 	"reflect"
 	"testing"
+
+	"github.com/olamide226/avar/internal/types"
 )
 
 func TestParseInstances_ReadsJSONLines(t *testing.T) {
@@ -23,7 +25,10 @@ func TestParseInstances_ReadsJSONLines(t *testing.T) {
 	if got[0].Memory != 8589934592 {
 		t.Errorf("memory = %d bytes, want 8 GiB", got[0].Memory)
 	}
-	wantMounts := []string{"/Users/dev/code/api", "/Users/dev/code/web"}
+	wantMounts := []types.MountSpec{
+		{HostPath: "/Users/dev/code/api", GuestPath: "/Users/dev/code/api", Writable: true},
+		{HostPath: "/Users/dev/code/web", GuestPath: "/Users/dev/code/web", Writable: true},
+	}
 	if !reflect.DeepEqual(got[0].mounts(), wantMounts) {
 		t.Errorf("mounts = %v, want %v", got[0].mounts(), wantMounts)
 	}
@@ -63,11 +68,32 @@ func TestParseInstances_RejectsOutputItCannotRead(t *testing.T) {
 	}
 }
 
-func TestSortedUnique_IsStableAndDeduplicated(t *testing.T) {
-	if got := sortedUnique([]string{"/b", "/a", "/b"}); !reflect.DeepEqual(got, []string{"/a", "/b"}) {
-		t.Errorf("sortedUnique = %v", got)
+func TestSortedUniqueMounts_IsStableAndDeduplicated(t *testing.T) {
+	b := types.MountSpec{HostPath: "/b", GuestPath: "/b", Writable: true}
+	a := types.MountSpec{HostPath: "/a", GuestPath: "/a", Writable: true}
+	if got := sortedUniqueMounts([]types.MountSpec{b, a, b}); !reflect.DeepEqual(got, []types.MountSpec{a, b}) {
+		t.Errorf("sortedUniqueMounts = %v", got)
 	}
-	if got := sortedUnique(nil); got != nil {
-		t.Errorf("sortedUnique(nil) = %v, want nil so comparisons need not distinguish nil from empty", got)
+	if got := sortedUniqueMounts(nil); got != nil {
+		t.Errorf("sortedUniqueMounts(nil) = %v, want nil so comparisons need not distinguish nil from empty", got)
+	}
+}
+
+// Reading is more tolerant than writing: a hand-edited instance whose mount
+// point is not its location is reported as it stands, so that avar can see the
+// difference and replace the set rather than being unable to look.
+func TestInstanceMounts_ReportsTheGuestPathLimaActuallyHas(t *testing.T) {
+	inst := instance{Config: &instanceLimaConfig{Mounts: []instanceMount{
+		{Location: "/Users/dev/code/api", MountPoint: "/somewhere/else", Writable: true},
+		{Location: "/Users/dev/code/web"},
+		{MountPoint: "/no/location"},
+	}}}
+	want := []types.MountSpec{
+		{HostPath: "/Users/dev/code/api", GuestPath: "/somewhere/else", Writable: true},
+		// An omitted mountPoint is Lima's own default: the location itself.
+		{HostPath: "/Users/dev/code/web", GuestPath: "/Users/dev/code/web"},
+	}
+	if got := inst.mounts(); !reflect.DeepEqual(got, want) {
+		t.Errorf("mounts = %v, want %v", got, want)
 	}
 }

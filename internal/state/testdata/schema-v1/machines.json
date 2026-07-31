@@ -1,0 +1,61 @@
+{
+  "avr-base-ubuntu-24.04-arm64": {
+    "name": "avr-base-ubuntu-24.04-arm64",
+    "selector": {
+      "distro": "ubuntu",
+      "version": "24.04",
+      "arch": "arm64",
+      "isolated": false
+    },
+    "kind": "base",
+    "mounts": [],
+    "created_at": "2025-05-02T09:14:51.220118Z"
+  },
+  "avr-prj-3fa9c2b1d0-ubuntu-24.04-arm64": {
+    "name": "avr-prj-3fa9c2b1d0-ubuntu-24.04-arm64",
+    "selector": {
+      "distro": "ubuntu",
+      "version": "24.04",
+      "arch": "arm64",
+      "isolated": true
+    },
+    "kind": "isolated",
+    "project_id": "3fa9c2b1d0e4a7c6b58f0d2e1a9c4b7d6e3f8a1c2b5d7e9f0a3c6b8d1e4f7a2c",
+    "mounts": [
+      "/Users/dev/code/secret-project"
+    ],
+    "created_at": "2025-06-11T18:02:07.881204Z",
+    "vm_type": "vz"
+  },
+  "avr-ubuntu-24.04-amd64": {
+    "name": "avr-ubuntu-24.04-amd64",
+    "selector": {
+      "distro": "ubuntu",
+      "version": "24.04",
+      "arch": "amd64",
+      "isolated": false
+    },
+    "kind": "shared",
+    "mounts": [
+      "/Users/dev/code/legacy"
+    ],
+    "created_at": "2025-04-18T11:47:33.109882Z",
+    "vm_type": "qemu"
+  },
+  "avr-ubuntu-24.04-arm64": {
+    "name": "avr-ubuntu-24.04-arm64",
+    "selector": {
+      "distro": "ubuntu",
+      "version": "24.04",
+      "arch": "arm64",
+      "isolated": false
+    },
+    "kind": "shared",
+    "mounts": [
+      "/Users/dev/code/api",
+      "/Users/dev/code/web"
+    ],
+    "created_at": "2025-03-27T14:22:05.463091Z",
+    "vm_type": "vz"
+  }
+}

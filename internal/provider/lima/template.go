@@ -69,8 +69,11 @@ type instanceConfig struct {
 	Memory        string
 	Disk          string
 	MountType     string
-	// Mounts are absolute host directories, shared at the identical guest path.
-	Mounts []string
+	// Mounts are the file shares the machine is created with. On Lima each
+	// one's guest path equals its host path (REQ-6.1); the template renders
+	// both fields all the same, so the generated configuration says what avar
+	// planned rather than restating an assumption.
+	Mounts []types.MountSpec
 	// Rosetta enables Apple's x86_64 translation inside a native arm64 guest.
 	Rosetta bool
 }

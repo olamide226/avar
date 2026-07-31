@@ -263,6 +263,10 @@ type MachineSpec struct {
     DeriveFrom string                     // optional pristine base to copy (Req 11.1); a hint, not a requirement
 }
 
+// MountSpec is shared vocabulary and lives in internal/types (§3.0, §4): the
+// state store persists it and the resolver reads it, so it cannot live in
+// internal/provider. It is reproduced here because the signatures above are
+// unreadable without it; the declaration itself is types.MountSpec.
 type MountSpec struct {
     ProjectID string
     HostPath  string // canonical host path

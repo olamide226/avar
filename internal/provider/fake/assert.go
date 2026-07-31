@@ -2,6 +2,7 @@ package fake
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/olamide226/avar/internal/types"
@@ -86,13 +87,35 @@ func (f *Fake) AssertMachineState(t TB, name string, want types.MachineState) {
 	}
 }
 
-// AssertMounts fails unless the machine shares exactly the given directories.
-// Order is irrelevant.
+// AssertMounts fails unless the machine shares exactly the given host
+// directories. Order is irrelevant.
+//
+// It asserts on host paths because that is what a flow test is about: which of
+// the user's projects the machine can reach. Where each one lands inside the
+// guest is the provider's answer, and asserting it here would restate
+// MapProjectPath rather than check the flow — AssertMountSpecs is for the tests
+// that are genuinely about the mapping.
 func (f *Fake) AssertMounts(t TB, name string, want ...string) {
 	t.Helper()
-	got := f.Mounts(name)
-	if !equalStrings(got, sortedCopy(want)) {
-		t.Fatalf("machine %s: mounts are %v, want %v", name, got, want)
+	got := types.MountHostPaths(f.Mounts(name))
+	sorted := append([]string(nil), want...)
+	sort.Strings(sorted)
+	if !equalStrings(got, sorted) {
+		t.Fatalf("machine %s: mounts are %v, want %v", name, got, sorted)
+	}
+}
+
+// AssertMountSpecs fails unless the machine has exactly these shares, host path
+// and guest path both.
+func (f *Fake) AssertMountSpecs(t TB, name string, want ...types.MountSpec) {
+	t.Helper()
+	normalized, err := types.NormalizeMounts(want)
+	if err != nil {
+		t.Fatalf("machine %s: the expected mount set is not a valid one: %v", name, err)
+		return
+	}
+	if got := f.Mounts(name); !types.EqualMounts(got, normalized) {
+		t.Fatalf("machine %s: mounts are %v, want %v", name, got, normalized)
 	}
 }
 
@@ -139,6 +162,18 @@ func (f *Fake) Transcript() string {
 		fmt.Fprintf(&b, "  %d. %s\n", i+1, c)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func equalOps(a, b []Op) bool {

@@ -10,17 +10,27 @@
 //
 // The operations are split by capability rather than gathered into one large
 // interface. Provider is the core set every backend must be able to do at all;
-// Snapshotter, SSHConfigProvider and PortDiagnoser describe abilities a backend
-// either genuinely has or genuinely lacks. A caller that needs a capability
-// type-asserts for it and tells the user plainly when the backend does not
-// offer it, instead of every backend being forced to declare methods it can
-// only stub out.
+// Snapshotter, EditorTargetProvider and PortDiagnoser describe abilities a
+// backend either genuinely has or genuinely lacks. A caller that needs a
+// capability type-asserts for it and tells the user plainly when the backend
+// does not offer it, instead of every backend being forced to declare methods
+// it can only stub out.
 //
 // Vocabulary comes from the glossary: a Machine is one Linux environment avar
 // manages, a Selector is the (distro, version, arch, isolation) choice that
 // determines which machine a command targets, and a Project is a host
-// directory. Package types owns those shared definitions; this package owns
-// only the descriptions of backend operations.
+// directory. Package types owns those shared definitions — including
+// types.ProviderID and types.MountSpec, which the state store persists and the
+// resolver reads; this package owns only the descriptions of backend
+// operations (design §3.0).
+//
+// Two assumptions that Lima's world makes invisible are named here rather than
+// left implicit, because the second backend Requirement 18 specifies breaks
+// both. A host directory does not necessarily appear at the same path inside
+// the guest, so mappings are planned by MapProjectPath and travel as
+// types.MountSpec values; and an editor does not necessarily reach a guest over
+// SSH, so EditorTargetProvider describes a transport-neutral target rather than
+// an SSH stanza (REQ-18.5, REQ-18.10, PROP-1, PROP-17).
 package provider
 
 import (
@@ -78,6 +88,38 @@ var (
 //   - Errors name what was being attempted, wrap the underlying cause with %w,
 //     and where the user can act, say what to do next.
 type Provider interface {
+	// ID reports which backend this is. It is a constant of the
+	// implementation, not a configured value, and it is what a machine record
+	// is stamped with so that a record always says which backend can act on it
+	// (REQ-18.1, REQ-18.14).
+	ID() types.ProviderID
+
+	// MapProjectPath converts a canonical host project root and a host working
+	// directory beneath it into the mount the backend must apply and the guest
+	// directory Shell must be given.
+	//
+	// This is where the difference between backends lives that everything else
+	// is written to be unaware of. Lima shares a project at the identical
+	// absolute path, so its mapping is the identity: guestCwd is hostCwd and
+	// the MountSpec's two paths are equal. WSL cannot do that — a Windows path
+	// is not a Linux path — so it maps the project root to a deterministic
+	// guest root and appends the relative suffix (REQ-6.1, REQ-18.5, PROP-1,
+	// PROP-14). A caller that did this arithmetic itself would be assuming one
+	// backend's answer.
+	//
+	// It is a pure function of its arguments: deterministic, with no external
+	// mutation, no filesystem access and no subprocess. It plans a mapping; it
+	// does not apply one. Applying is SetMounts.
+	//
+	// projectID is the Project_Identity the mount serves and is required: a
+	// backend that derives the guest path from it cannot invent one, and the
+	// resulting MountSpec records why the directory is shared. hostRoot and
+	// hostCwd must both be absolute host paths and hostCwd must lie within
+	// hostRoot; a hostCwd outside it is rejected rather than mapped, because a
+	// guest path escaping its own project mount is precisely what mount
+	// confinement forbids (REQ-9.3, PROP-5).
+	MapProjectPath(projectID, hostRoot, hostCwd string) (mount types.MountSpec, guestCwd string, err error)
+
 	// EnsureMachine brings the machine described by spec into a running state,
 	// creating it first if it does not exist.
 	//
@@ -142,29 +184,34 @@ type Provider interface {
 	// anything it printed would interleave with the guest's own output.
 	Shell(ctx context.Context, machine string, opts ShellOpts) (exitCode int, err error)
 
-	// AppliedMounts reports the host directories currently shared into the
-	// machine, in a stable order.
+	// AppliedMounts reports the file shares the machine currently has, in a
+	// stable order.
 	//
 	// It is a read-only query: it changes nothing, emits no progress, and does
 	// not require the machine to be running. The result is what the backend
 	// has actually applied, not what avar's records expect — comparing the two
 	// is how a caller decides whether the current project still needs
 	// registering (REQ-6.4).
-	AppliedMounts(ctx context.Context, machine string) ([]string, error)
+	//
+	// The result describes both halves of each share, because on some backends
+	// they differ. types.MountSpec.ProjectID is empty: a backend knows which
+	// directories it shares, never which project a directory belongs to.
+	AppliedMounts(ctx context.Context, machine string) ([]types.MountSpec, error)
 
-	// SetMounts makes dirs the machine's set of shared host directories,
-	// replacing whatever was there.
+	// SetMounts makes mounts the machine's set of file shares, replacing
+	// whatever was there.
 	//
-	// dirs is the complete desired set, not an addition: every entry is an
-	// absolute host directory, shared writable at the identical path inside
-	// the guest (REQ-6.1), and anything absent from dirs stops being shared.
-	// Replace-not-append is what makes mount confinement checkable — the guest
-	// can reach exactly the project roots avar registered to that machine and
-	// nothing else, never the home directory and never an unregistered sibling
-	// (REQ-6.3, REQ-9.3, REQ-9.4, PROP-5). Callers therefore pass the existing
-	// set plus the new project.
+	// mounts is the complete desired set, not an addition: every entry maps an
+	// absolute host directory to the guest path the backend planned for it in
+	// MapProjectPath (REQ-6.1, REQ-18.5), and anything absent from mounts stops
+	// being shared. Replace-not-append is what makes mount confinement
+	// checkable — the guest can reach exactly the project roots avar registered
+	// to that machine, at exactly the paths avar planned, and nothing else:
+	// never the home directory, never a whole drive, never an unregistered
+	// sibling (REQ-6.3, REQ-9.3, REQ-9.4, PROP-5). Callers therefore pass the
+	// existing set plus the new project.
 	//
-	// It is idempotent: when dirs already equals the applied set, SetMounts
+	// It is idempotent: when mounts already equals the applied set, SetMounts
 	// changes nothing, emits no progress, and in particular does not restart
 	// the machine — returning to a known project has to stay instant
 	// (REQ-17.1).
@@ -173,11 +220,12 @@ type Provider interface {
 	// SetMounts performs that restart inside the call and explains the
 	// one-time delay first through a types.ProgressMounting event, so the user
 	// knows why an otherwise instant command took ten seconds (REQ-6.4). On a
-	// nil return the machine is running again and every entry in dirs is
-	// readable and writable in the guest; implementations verify that rather
-	// than assume it, because dropping the user into a shell at an empty path
-	// is worse than failing outright (REQ-6.5).
-	SetMounts(ctx context.Context, machine string, dirs []string, progress types.ProgressSink) error
+	// nil return the machine is running again and every entry in mounts is
+	// present at its guest path — and writable there if the spec says so;
+	// implementations verify that rather than assume it, because dropping the
+	// user into a shell at an empty path is worse than failing outright
+	// (REQ-6.5).
+	SetMounts(ctx context.Context, machine string, mounts []types.MountSpec, progress types.ProgressSink) error
 
 	// Stop shuts the machine down cleanly, releasing its memory (REQ-5.2), and
 	// reports it with a types.ProgressStopping event.
@@ -256,23 +304,31 @@ type Snapshotter interface {
 	ListSnapshots(ctx context.Context, machine string) ([]SnapshotInfo, error)
 }
 
-// SSHConfigProvider is implemented by backends that can describe how to reach
-// a machine over SSH, which is what editor integration needs (REQ-13.1).
+// EditorTargetProvider is implemented by backends that can describe how an
+// editor reaches a machine's guest filesystem, which is what `avr code` needs
+// (REQ-13.1, REQ-18.10).
 //
 // It is separate from Provider because a backend may execute commands in a
-// guest through a transport that has no SSH endpoint to hand out at all, in
-// which case `avr code` must be able to say so rather than receive a
-// half-truth.
-type SSHConfigProvider interface {
-	// SSHConfig returns an OpenSSH client configuration stanza that reaches
-	// the machine, suitable for writing into avar's own SSH configuration file
-	// (REQ-13.3).
+// guest through a transport an editor cannot attach to at all, in which case
+// `avr code` must be able to say so rather than receive a half-truth.
+//
+// It describes a target rather than an SSH stanza because SSH is one backend's
+// answer, not the question. Lima's machines are reached over SSH and hand back
+// a stanza avar writes into its own configuration; a WSL distribution is
+// reached through VS Code's own WSL authority and has no SSH endpoint to offer
+// (design §3.9). Both are expressible as an EditorTarget, so the launcher runs
+// `code --remote <authority> <path>` without knowing which backend answered —
+// which is the whole of PROP-17 and the reason `cmd/code.go` needs no
+// backend-specific branch.
+type EditorTargetProvider interface {
+	// EditorTarget describes how to open guestPath on the machine in an editor
+	// that supports remote authorities.
 	//
-	// The machine must be running, since the stanza describes a live endpoint;
-	// otherwise ErrMachineNotRunning. The returned text is data, not a file
-	// path, and the caller owns where it lands — implementations never write
-	// to the user's SSH configuration.
-	SSHConfig(ctx context.Context, machine string) (string, error)
+	// The machine must be running, since the target describes a live endpoint;
+	// otherwise ErrMachineNotRunning. Any configuration in the result is data,
+	// not a file path, and the caller owns where it lands — implementations
+	// never write to the user's SSH configuration (REQ-13.3).
+	EditorTarget(ctx context.Context, machine, guestPath string) (EditorTarget, error)
 }
 
 // PortDiagnoser is implemented by backends that can explain the state of
@@ -302,6 +358,13 @@ type MachineSpec struct {
 	// (REQ-1.5).
 	Name string
 
+	// Provider names the backend the spec is addressed to, as the resolver
+	// recorded it. An implementation whose own ID differs refuses the spec
+	// rather than building something the caller did not ask for; an empty
+	// value is a spec addressed to whichever backend receives it, which is
+	// what avar's own tests and single-backend callers pass.
+	Provider types.ProviderID
+
 	// Selector is the environment this machine provides. The backend maps it
 	// to a concrete OS image, and where Selector.Emulated() is true, to
 	// whatever CPU emulation it has (REQ-4.1, REQ-4.2, REQ-4.6).
@@ -312,10 +375,10 @@ type MachineSpec struct {
 	// it can be derived from cheaply later.
 	Kind types.MachineKind
 
-	// Mounts are the host project directories to share at identical guest
-	// paths when the machine is created. Registering further projects later
-	// goes through Provider.SetMounts.
-	Mounts []string
+	// Mounts are the file shares to apply when the machine is created, as
+	// planned by MapProjectPath. Registering further projects later goes
+	// through Provider.SetMounts.
+	Mounts []types.MountSpec
 
 	// CPUs, MemoryGB and DiskGB size a machine that is being created and are
 	// ignored for one that already exists. Zero means "the backend's
@@ -338,10 +401,12 @@ type MachineSpec struct {
 
 // ShellOpts describes one guest execution.
 type ShellOpts struct {
-	// Workdir is the guest directory the process starts in. avar always sets
-	// it to the host's current directory, which the identical-path mount makes
-	// meaningful on both sides of the boundary (REQ-1.1, REQ-2.1, REQ-6.6,
-	// PROP-1).
+	// Workdir is the guest directory the process starts in. It is a guest path
+	// — the one MapProjectPath returned for the host directory avr was run
+	// from — and never a raw host path: on Lima the two are the same string,
+	// and on a backend where they are not, passing a host path here would
+	// start the process in a directory that does not exist (REQ-1.1, REQ-2.1,
+	// REQ-6.6, REQ-18.5, PROP-1).
 	Workdir string
 
 	// Argv is the command to run, already split into arguments; nothing on the
@@ -388,6 +453,32 @@ type ShellOpts struct {
 	// guest for this one execution and no longer, and is never set by default
 	// (REQ-9.2, REQ-12.3, REQ-12.4). Phase 2.
 	ForwardSSHAgent bool
+}
+
+// EditorTarget is how an editor reaches one directory inside one machine
+// (REQ-13.1, REQ-18.10).
+//
+// It is deliberately expressed as an authority plus a path — the two things
+// `code --remote <authority> <path>` needs — rather than as a transport. That
+// is what lets an SSH-reached Lima machine and a WSL distribution be the same
+// kind of answer, so the launcher never switches on the backend (PROP-17).
+type EditorTarget struct {
+	// Authority is the editor's remote authority: an avar-owned SSH authority
+	// such as "ssh-remote+avr-ubuntu-24.04-arm64" for a backend reached over
+	// SSH, or "wsl+<distribution>" for a WSL distribution.
+	Authority string
+
+	// GuestPath is the directory to open, as seen from inside the guest.
+	GuestPath string
+
+	// SSHConfig is the OpenSSH client configuration stanza the caller must
+	// have in place for Authority to resolve, for backends that are reached
+	// over SSH. It is data, not a path: the caller writes it into avar's own
+	// configuration file, and implementations never touch the user's
+	// (REQ-13.3). It is empty for a backend whose authority needs no SSH
+	// material at all, which is how a caller knows there is nothing to write
+	// rather than having to ask which backend answered.
+	SSHConfig string
 }
 
 // SnapshotInfo is one captured machine state, as `avr snapshot` lists it

@@ -197,6 +197,7 @@ func TestLockHelperProcess_RecordsAMachine(t *testing.T) {
 	}
 	rec := types.MachineRecord{
 		Name:     name,
+		Provider: types.ProviderLima,
 		Selector: types.EnvironmentSelector{Distro: types.DistroUbuntu, Version: "24.04", Arch: types.ArchARM64},
 		Kind:     types.KindShared,
 	}
