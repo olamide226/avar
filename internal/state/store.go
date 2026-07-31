@@ -216,6 +216,12 @@ type Tx struct {
 	machines map[string]types.MachineRecord
 	sessions []types.SessionRecord
 
+	// schema is what the directory said it was when the transaction opened, and
+	// schemaStale reports that schema.json does not state the current version —
+	// because it is absent, or because it names an older one.
+	schema      schemaRecord
+	schemaStale bool
+
 	projectsDirty bool
 	machinesDirty bool
 	sessionsDirty bool
@@ -227,12 +233,27 @@ func (s *Store) begin() (*Tx, error) {
 		projects: map[string]types.ProjectRecord{},
 		machines: map[string]types.MachineRecord{},
 	}
+
+	schema, recorded, err := s.readSchema()
+	if err != nil {
+		return nil, err
+	}
+	tx.schema = schema
+	tx.schemaStale = !recorded || schema.Version != SchemaVersion
+
 	if err := readJSON(s.path(projectsFile), &tx.projects); err != nil {
 		return nil, err
 	}
-	if err := readJSON(s.path(machinesFile), &tx.machines); err != nil {
+	machines, migrated, err := readMachines(s.path(machinesFile), schema.Version)
+	if err != nil {
 		return nil, err
 	}
+	tx.machines = machines
+	// Records converted on read are written back by this transaction, so the
+	// conversion happens once rather than on every invocation. It goes through
+	// the same atomic replace as any other write, so an interrupted migration
+	// leaves the previous file intact (REQ-17.5, PROP-7).
+	tx.machinesDirty = migrated
 	if err := readJSON(s.path(sessionsFile), &tx.sessions); err != nil {
 		return nil, err
 	}
@@ -256,6 +277,23 @@ func (s *Store) begin() (*Tx, error) {
 }
 
 func (t *Tx) flush() error {
+	// The version is stamped alongside the first write to a directory that does
+	// not already state it. A transaction that only read leaves the directory
+	// exactly as it found it, so reading avar's state never writes to it — and
+	// a migration always writes, because reading migrated records dirties the
+	// registry that has to be written back in the new shape.
+	if t.schemaStale && (t.projectsDirty || t.machinesDirty || t.sessionsDirty) {
+		schema := t.schema
+		if schema.Version != SchemaVersion {
+			schema.Migrations = append(schema.Migrations, migrationID(schema.Version, SchemaVersion))
+		}
+		if err := t.store.writeSchema(schema); err != nil {
+			return err
+		}
+		schema.Version = SchemaVersion
+		t.schema = schema
+		t.schemaStale = false
+	}
 	if t.projectsDirty {
 		if err := writeJSONAtomic(t.store.path(projectsFile), t.projects); err != nil {
 			return err
