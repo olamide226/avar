@@ -74,10 +74,16 @@ func TestStatus_ReportsStateResourcesAndMounts_REQ_5_1(t *testing.T) {
 	if running.DiskGB != 100 {
 		t.Errorf("disk = %v GiB, want 100", running.DiskGB)
 	}
-	if running.VMType != "vz" {
-		t.Errorf("vmType = %q, want vz", running.VMType)
+	if running.Runtime != "vz" {
+		t.Errorf("runtime = %q, want vz", running.Runtime)
 	}
-	wantMounts := []string{"/Users/dev/code/api", "/Users/dev/code/web"}
+	// The backend a listing came from is the one thing every entry can always
+	// say for itself, and it is what a record adopted from this listing is
+	// stamped with (REQ-18.14).
+	if running.Provider != types.ProviderLima {
+		t.Errorf("provider = %q, want %q", running.Provider, types.ProviderLima)
+	}
+	wantMounts := shares("/Users/dev/code/api", "/Users/dev/code/web")
 	if !reflect.DeepEqual(running.Mounts, wantMounts) {
 		t.Errorf("mounts = %v, want %v", running.Mounts, wantMounts)
 	}

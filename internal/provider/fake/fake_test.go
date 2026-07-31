@@ -26,6 +26,21 @@ func ubuntuSelector() types.EnvironmentSelector {
 	}
 }
 
+// shares builds the mount set a caller would have obtained from
+// Fake.MapProjectPath for these project directories.
+func shares(t *testing.T, f *Fake, dirs ...string) []types.MountSpec {
+	t.Helper()
+	out := make([]types.MountSpec, 0, len(dirs))
+	for _, dir := range dirs {
+		mount, _, err := f.MapProjectPath("id-"+strings.TrimPrefix(strings.ReplaceAll(dir, "/", "-"), "-"), dir, dir)
+		if err != nil {
+			t.Fatalf("MapProjectPath(%q): %v", dir, err)
+		}
+		out = append(out, mount)
+	}
+	return out
+}
+
 func ubuntuSpec() provider.MachineSpec {
 	return provider.MachineSpec{
 		Name:     ubuntuMachine,
@@ -64,7 +79,7 @@ func TestFake_RecordsOrderedCallSequenceWithArguments_REQ_17_3(t *testing.T) {
 	if _, err := f.AppliedMounts(ctx, ubuntuMachine); err != nil {
 		t.Fatalf("AppliedMounts: %v", err)
 	}
-	if err := f.SetMounts(ctx, ubuntuMachine, []string{"/Users/dev/code/api"}, types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
 	if _, err := f.Shell(ctx, ubuntuMachine, provider.ShellOpts{
@@ -82,8 +97,8 @@ func TestFake_RecordsOrderedCallSequenceWithArguments_REQ_17_3(t *testing.T) {
 	}
 
 	mounts := f.AssertCalled(t, OpSetMounts)
-	if !equalStrings(mounts.Mounts, []string{"/Users/dev/code/api"}) {
-		t.Errorf("SetMounts recorded dirs %v", mounts.Mounts)
+	if !equalStrings(types.MountHostPaths(mounts.Mounts), []string{"/Users/dev/code/api"}) {
+		t.Errorf("SetMounts recorded mounts %v", mounts.Mounts)
 	}
 
 	shell := f.AssertCalled(t, OpShell)
@@ -396,14 +411,14 @@ func TestFake_StateIsCoherentAcrossASequence_REQ_5_2(t *testing.T) {
 	}
 	f.AssertMachineState(t, ubuntuMachine, types.StateRunning)
 
-	if err := f.SetMounts(ctx, ubuntuMachine, []string{"/Users/dev/code/api"}, types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
 	applied, err := f.AppliedMounts(ctx, ubuntuMachine)
 	if err != nil {
 		t.Fatalf("AppliedMounts: %v", err)
 	}
-	if !equalStrings(applied, []string{"/Users/dev/code/api"}) {
+	if !types.EqualMounts(applied, shares(t, f, "/Users/dev/code/api")) {
 		t.Fatalf("AppliedMounts = %v", applied)
 	}
 
@@ -414,8 +429,11 @@ func TestFake_StateIsCoherentAcrossASequence_REQ_5_2(t *testing.T) {
 	if len(statuses) != 1 || statuses[0].Name != ubuntuMachine || statuses[0].State != types.StateRunning {
 		t.Fatalf("Status = %+v", statuses)
 	}
-	if !equalStrings(statuses[0].Mounts, []string{"/Users/dev/code/api"}) {
+	if !types.EqualMounts(statuses[0].Mounts, shares(t, f, "/Users/dev/code/api")) {
 		t.Errorf("Status mounts = %v", statuses[0].Mounts)
+	}
+	if statuses[0].Provider != f.ID() {
+		t.Errorf("Status provider = %q, want %q", statuses[0].Provider, f.ID())
 	}
 	if statuses[0].CPUs == 0 || statuses[0].MemoryGB == 0 {
 		t.Errorf("Status reported no resources: %+v", statuses[0])
@@ -473,21 +491,21 @@ func TestFake_SetMountsRestartsOnlyWhenTheSetChanges_REQ_6_4(t *testing.T) {
 		t.Fatalf("EnsureMachine: %v", err)
 	}
 
-	if err := f.SetMounts(ctx, ubuntuMachine, []string{"/Users/dev/code/api"}, types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
 		t.Fatalf("first SetMounts: %v", err)
 	}
 	f.AssertRestarts(t, ubuntuMachine, 1)
 	f.AssertProgressKinds(t, types.ProgressCreating, types.ProgressMounting)
 
 	// Same set, in a different order: no change, no restart, no message.
-	if err := f.SetMounts(ctx, ubuntuMachine, []string{"/Users/dev/code/api"}, types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
 		t.Fatalf("repeat SetMounts: %v", err)
 	}
 	f.AssertRestarts(t, ubuntuMachine, 1)
 	f.AssertProgressKinds(t, types.ProgressCreating, types.ProgressMounting)
 
 	// Adding a project restarts once more and replaces the set.
-	if err := f.SetMounts(ctx, ubuntuMachine, []string{"/Users/dev/code/web", "/Users/dev/code/api"}, types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/web", "/Users/dev/code/api"), types.DiscardProgress); err != nil {
 		t.Fatalf("second SetMounts: %v", err)
 	}
 	f.AssertRestarts(t, ubuntuMachine, 2)
@@ -505,10 +523,10 @@ func TestFake_SetMountsReplacesRatherThanAccumulates_PROP_5(t *testing.T) {
 	if err := f.EnsureMachine(ctx, ubuntuSpec(), types.DiscardProgress); err != nil {
 		t.Fatalf("EnsureMachine: %v", err)
 	}
-	if err := f.SetMounts(ctx, ubuntuMachine, []string{"/Users/dev/code/api", "/Users/dev/code/web"}, types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api", "/Users/dev/code/web"), types.DiscardProgress); err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
-	if err := f.SetMounts(ctx, ubuntuMachine, []string{"/Users/dev/code/api"}, types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
 	f.AssertMounts(t, ubuntuMachine, "/Users/dev/code/api")
@@ -519,10 +537,10 @@ func TestFake_SetMountsReplacesRatherThanAccumulates_PROP_5(t *testing.T) {
 func TestFake_EnsureMachineAppliesSpecMountsAtCreate_REQ_6_1(t *testing.T) {
 	t.Parallel()
 
-	spec := ubuntuSpec()
-	spec.Mounts = []string{"/Users/dev/code/api"}
-
 	f := New()
+	spec := ubuntuSpec()
+	spec.Mounts = shares(t, f, "/Users/dev/code/api")
+
 	if err := f.EnsureMachine(context.Background(), spec, types.DiscardProgress); err != nil {
 		t.Fatalf("EnsureMachine: %v", err)
 	}
@@ -554,7 +572,7 @@ func TestFake_RefusesMachinesAvarDoesNotOwn_REQ_5_4_PROP_6(t *testing.T) {
 			return err
 		},
 		OpSetMounts: func(f *Fake) error {
-			return f.SetMounts(ctx, foreign, []string{"/tmp"}, types.DiscardProgress)
+			return f.SetMounts(ctx, foreign, shares(t, f, "/tmp"), types.DiscardProgress)
 		},
 		OpStop: func(f *Fake) error {
 			return f.Stop(ctx, foreign, types.DiscardProgress)
@@ -572,8 +590,8 @@ func TestFake_RefusesMachinesAvarDoesNotOwn_REQ_5_4_PROP_6(t *testing.T) {
 			_, err := f.ListSnapshots(ctx, foreign)
 			return err
 		},
-		OpSSHConfig: func(f *Fake) error {
-			_, err := f.SSHConfig(ctx, foreign)
+		OpEditorTarget: func(f *Fake) error {
+			_, err := f.EditorTarget(ctx, foreign, "/tmp")
 			return err
 		},
 		OpPortDiagnostics: func(f *Fake) error {
@@ -703,27 +721,53 @@ func TestFake_SnapshotRoundTrip_REQ_10_1_REQ_10_2_REQ_10_4(t *testing.T) {
 	}
 }
 
-// TestFake_SSHConfigRequiresARunningMachine_REQ_13_1 mirrors the contract: the
-// stanza describes a live endpoint, so `avr code` must ensure the machine first.
-func TestFake_SSHConfigRequiresARunningMachine_REQ_13_1(t *testing.T) {
+// TestFake_EditorTargetRequiresARunningMachine_REQ_13_1 mirrors the contract:
+// the target describes a live endpoint, so `avr code` must ensure the machine
+// first.
+func TestFake_EditorTargetRequiresARunningMachine_REQ_13_1(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	f := New()
 	f.AddMachine(ubuntuMachine, ubuntuSelector(), types.KindShared, types.StateStopped)
 
-	if _, err := f.SSHConfig(ctx, ubuntuMachine); !errors.Is(err, provider.ErrMachineNotRunning) {
-		t.Fatalf("SSHConfig on a stopped machine: got %v, want ErrMachineNotRunning", err)
+	if _, err := f.EditorTarget(ctx, ubuntuMachine, "/work"); !errors.Is(err, provider.ErrMachineNotRunning) {
+		t.Fatalf("EditorTarget on a stopped machine: got %v, want ErrMachineNotRunning", err)
 	}
 
 	f.SetMachineState(ubuntuMachine, types.StateRunning)
-	f.SetSSHConfig(ubuntuMachine, "Host avr-x\n  HostName 127.0.0.1\n")
-	cfg, err := f.SSHConfig(ctx, ubuntuMachine)
+	target, err := f.EditorTarget(ctx, ubuntuMachine, "/work")
 	if err != nil {
-		t.Fatalf("SSHConfig: %v", err)
+		t.Fatalf("EditorTarget: %v", err)
 	}
-	if !strings.HasPrefix(cfg, "Host ") {
-		t.Errorf("SSHConfig returned %q", cfg)
+	if target.Authority == "" {
+		t.Error("an editor target with no authority cannot be opened")
+	}
+	if target.GuestPath != "/work" {
+		t.Errorf("target guest path = %q, want the path asked for", target.GuestPath)
+	}
+	// A backend an editor reaches without SSH hands back no SSH material, and
+	// that is how the caller knows there is nothing to write (REQ-18.10,
+	// PROP-17).
+	if target.SSHConfig != "" {
+		t.Errorf("the default target carries SSH material a WSL-style backend would not have: %q", target.SSHConfig)
+	}
+
+	// A backend that is reached over SSH says so with a stanza, in the same
+	// shape, so the launcher needs no branch of its own (REQ-13.3).
+	f.SetEditorTarget(ubuntuMachine, provider.EditorTarget{
+		Authority: "ssh-remote+" + ubuntuMachine,
+		SSHConfig: "Host " + ubuntuMachine + "\n  HostName 127.0.0.1\n",
+	})
+	target, err = f.EditorTarget(ctx, ubuntuMachine, "/work")
+	if err != nil {
+		t.Fatalf("EditorTarget: %v", err)
+	}
+	if !strings.HasPrefix(target.Authority, "ssh-remote+") || !strings.HasPrefix(target.SSHConfig, "Host ") {
+		t.Errorf("programmed SSH target came back as %+v", target)
+	}
+	if target.GuestPath != "/work" {
+		t.Errorf("a programmed target must still open the path asked for, got %q", target.GuestPath)
 	}
 }
 
@@ -792,7 +836,7 @@ func TestFake_IsSafeForConcurrentUse_REQ_17_5(t *testing.T) {
 			spec := ubuntuSpec()
 			spec.Name = name
 			_ = f.EnsureMachine(ctx, spec, types.DiscardProgress)
-			_ = f.SetMounts(ctx, name, []string{fmt.Sprintf("/Users/dev/p%d", i)}, types.DiscardProgress)
+			_ = f.SetMounts(ctx, name, shares(t, f, fmt.Sprintf("/Users/dev/p%d", i)), types.DiscardProgress)
 			_, _ = f.Shell(ctx, name, provider.ShellOpts{Argv: []string{"true"}})
 			_, _ = f.Status(ctx)
 			_, _ = f.AppliedMounts(ctx, name)
@@ -875,7 +919,7 @@ func TestFake_AssertionHelpers(t *testing.T) {
 	t.Run("AssertOpsInOrder ignores calls in between", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
-		if err := f.SetMounts(ctx, ubuntuMachine, []string{"/Users/dev/code/api"}, types.DiscardProgress); err != nil {
+		if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
 			t.Fatalf("SetMounts: %v", err)
 		}
 		tb := &recordingTB{}
@@ -977,5 +1021,73 @@ func TestFake_ResetKeepsMachinesAndClearsTheRecording(t *testing.T) {
 	}
 	if code != 0 {
 		t.Errorf("Reset left the programmed exit code %d in place", code)
+	}
+}
+
+// The Fake's mapping is deliberately not the identity: a flow proven against it
+// is a flow that does not assume the host path is also the guest path, which is
+// the assumption Requirement 18 breaks (REQ-18.5, PROP-1).
+func TestFake_MapProjectPath_IsNotTheIdentityMapping_REQ_18_5(t *testing.T) {
+	t.Parallel()
+
+	f := New()
+	mount, guestCwd, err := f.MapProjectPath("3fa9c2b1d0", "/Users/dev/code/app", "/Users/dev/code/app/api")
+	if err != nil {
+		t.Fatalf("MapProjectPath: %v", err)
+	}
+	if mount.HostPath == mount.GuestPath {
+		t.Error("the test double maps a project to its own host path, so no flow test can catch a caller that assumes it")
+	}
+	if mount.GuestPath != GuestProjectRoot+"/3fa9c2b1d0" {
+		t.Errorf("guest root = %q", mount.GuestPath)
+	}
+	// The relative suffix is preserved, which is what makes a subdirectory land
+	// in the matching subdirectory (REQ-6.6, PROP-1).
+	if guestCwd != GuestProjectRoot+"/3fa9c2b1d0/api" {
+		t.Errorf("guest cwd = %q", guestCwd)
+	}
+	if !mount.Writable {
+		t.Error("a project is shared writable")
+	}
+	if mount.ProjectID != "3fa9c2b1d0" {
+		t.Errorf("project id = %q", mount.ProjectID)
+	}
+}
+
+func TestFake_MapProjectPath_RefusesWhatItCannotMap(t *testing.T) {
+	t.Parallel()
+
+	f := New()
+	cases := map[string][3]string{
+		"cwd outside the project": {"abc", "/Users/dev/code/app", "/Users/dev/code/other"},
+		"cwd is a sibling prefix": {"abc", "/Users/dev/code/app", "/Users/dev/code/application"},
+		"relative project root":   {"abc", "code/app", "/Users/dev/code/app"},
+		"no project identity":     {"", "/Users/dev/code/app", "/Users/dev/code/app"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := f.MapProjectPath(args[0], args[1], args[2]); err == nil {
+				t.Fatalf("MapProjectPath(%q, %q, %q) was accepted", args[0], args[1], args[2])
+			}
+		})
+	}
+}
+
+// A spec addressed to another backend is refused rather than built, so a
+// mis-routed invocation fails loudly instead of creating something the caller
+// did not ask for (REQ-18.1).
+func TestFake_EnsureMachineRefusesASpecForAnotherBackend_REQ_18_1(t *testing.T) {
+	t.Parallel()
+
+	f := New()
+	spec := ubuntuSpec()
+	spec.Provider = types.ProviderLima
+	if err := f.EnsureMachine(context.Background(), spec, types.DiscardProgress); err == nil {
+		t.Fatal("a spec addressed to another backend was built anyway")
+	}
+
+	spec.Provider = f.ID()
+	if err := f.EnsureMachine(context.Background(), spec, types.DiscardProgress); err != nil {
+		t.Fatalf("a spec addressed to this backend: %v", err)
 	}
 }

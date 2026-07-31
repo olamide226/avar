@@ -26,7 +26,7 @@ func TestAppliedMounts_ReportsWhatLimaHasApplied_REQ_6_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppliedMounts: %v", err)
 	}
-	want := []string{"/Users/dev/code/api", "/Users/dev/code/web"}
+	want := shares("/Users/dev/code/api", "/Users/dev/code/web")
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("AppliedMounts = %v, want %v", got, want)
 	}
@@ -43,7 +43,7 @@ func TestAppliedMounts_WorksOnAStoppedMachine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppliedMounts: %v", err)
 	}
-	if !reflect.DeepEqual(got, []string{"/Users/dev/code/api"}) {
+	if !reflect.DeepEqual(got, shares("/Users/dev/code/api")) {
 		t.Errorf("AppliedMounts = %v", got)
 	}
 }
@@ -58,7 +58,7 @@ func TestSetMounts_UnchangedSetChangesNothing_REQ_17_1(t *testing.T) {
 	// Deliberately in a different order and with a redundant trailing slash:
 	// the same set, expressed differently, is still the same set.
 	err := p.SetMounts(context.Background(), "avr-ubuntu-24.04-arm64",
-		[]string{"/Users/dev/code/web/", "/Users/dev/code/api"}, sink)
+		shares("/Users/dev/code/web/", "/Users/dev/code/api"), sink)
 	if err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestSetMounts_RestartsOnceAndVerifies_REQ_6_4(t *testing.T) {
 	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
 	sink := &recordingSink{}
 
-	dirs := []string{"/Users/dev/code/api", "/Users/dev/code/web", project}
+	dirs := shares("/Users/dev/code/api", "/Users/dev/code/web", project)
 	if err := p.SetMounts(context.Background(), "avr-ubuntu-24.04-arm64", dirs, sink); err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestSetMounts_RestartsOnceAndVerifies_REQ_6_4(t *testing.T) {
 	want := []string{
 		"limactl list --json",
 		"limactl stop avr-ubuntu-24.04-arm64",
-		"limactl edit avr-ubuntu-24.04-arm64 --set " + mountsExpression(sortedUnique(dirs)) + " --tty=false",
+		"limactl edit avr-ubuntu-24.04-arm64 --set " + mountsExpression(mustNormalize(t, dirs)) + " --tty=false",
 		"limactl start --tty=false avr-ubuntu-24.04-arm64",
 		"limactl shell --workdir / avr-ubuntu-24.04-arm64 -- test -d /Users/dev/code/api",
 		"limactl shell --workdir / avr-ubuntu-24.04-arm64 -- test -w /Users/dev/code/api",
@@ -120,7 +120,7 @@ func TestSetMounts_LeavesAStoppedMachineStopped(t *testing.T) {
 	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-fedora-42-amd64")))
 
 	err := p.SetMounts(context.Background(), "avr-fedora-42-amd64",
-		[]string{"/Users/dev/code/api", project}, types.DiscardProgress)
+		shares("/Users/dev/code/api", project), types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestSetMounts_MountThatDoesNotAppearInTheGuestIsAnError_REQ_6_5(t *testing.
 	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
 
 	err := p.SetMounts(context.Background(), "avr-ubuntu-24.04-arm64",
-		[]string{"/Users/dev/code/api", "/Users/dev/code/web", project}, types.DiscardProgress)
+		shares("/Users/dev/code/api", "/Users/dev/code/web", project), types.DiscardProgress)
 	if err == nil {
 		t.Fatal("a mount that never appeared in the guest was reported as applied")
 	}
@@ -154,7 +154,7 @@ func TestSetMounts_MissingHostDirectoryFailsBeforeAnyRestart_REQ_6_5(t *testing.
 	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
 
 	err := p.SetMounts(context.Background(), "avr-ubuntu-24.04-arm64",
-		[]string{"/Users/dev/code/api", "/Users/dev/code/web", missing}, types.DiscardProgress)
+		shares("/Users/dev/code/api", "/Users/dev/code/web", missing), types.DiscardProgress)
 	if err == nil {
 		t.Fatal("a directory that does not exist was accepted")
 	}
@@ -171,7 +171,7 @@ func TestSetMounts_ReplacesRatherThanAppends_PROP_5(t *testing.T) {
 	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
 
 	err := p.SetMounts(context.Background(), "avr-ubuntu-24.04-arm64",
-		[]string{"/Users/dev/code/api"}, types.DiscardProgress)
+		shares("/Users/dev/code/api"), types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestSetMounts_UnknownMachineIsNotFound(t *testing.T) {
 	runner := newFakeRunner().listing(fixture(t, "list-empty.json"))
 	p := newTestProvider(t, runner, newFakeRecords(ownedRecord(testMachine)))
 
-	err := p.SetMounts(context.Background(), testMachine, []string{"/Users/dev/code/api"}, types.DiscardProgress)
+	err := p.SetMounts(context.Background(), testMachine, shares("/Users/dev/code/api"), types.DiscardProgress)
 	if !errors.Is(err, provider.ErrMachineNotFound) {
 		t.Fatalf("want ErrMachineNotFound, got %v", err)
 	}
@@ -204,7 +204,7 @@ func TestMountsExpression_QuotesPathsAsData(t *testing.T) {
 	// A directory name is user data and reaches yq as part of an expression.
 	// It has to be a quoted scalar there, or a bracket in a directory name
 	// could restructure the expression.
-	got := mountsExpression([]string{`/Users/dev/we"ird]`})
+	got := mountsExpression(shares(`/Users/dev/we"ird]`))
 	want := `.mounts = [{"location": "/Users/dev/we\"ird]", "mountPoint": "/Users/dev/we\"ird]", "writable": true}]`
 	if got != want {
 		t.Errorf("mountsExpression =\n%s\nwant\n%s", got, want)
@@ -212,7 +212,7 @@ func TestMountsExpression_QuotesPathsAsData(t *testing.T) {
 }
 
 func TestMountsExpression_SharesEveryDirectoryWritableAtItsOwnPath_REQ_6_1(t *testing.T) {
-	got := mountsExpression([]string{"/Users/dev/code/api", "/Users/dev/code/web"})
+	got := mountsExpression(shares("/Users/dev/code/api", "/Users/dev/code/web"))
 	for _, want := range []string{
 		`{"location": "/Users/dev/code/api", "mountPoint": "/Users/dev/code/api", "writable": true}`,
 		`{"location": "/Users/dev/code/web", "mountPoint": "/Users/dev/code/web", "writable": true}`,
@@ -230,11 +230,11 @@ func TestMountsExpression_EmptySetSharesNothing(t *testing.T) {
 }
 
 func TestNormalizeMounts_CanonicalisesTheDesiredSet(t *testing.T) {
-	got, err := normalizeMounts([]string{"/b/../b/two/", "/a/one", "/a/one"})
+	got, err := normalizeMounts(shares("/b/../b/two/", "/a/one", "/a/one"))
 	if err != nil {
 		t.Fatalf("normalizeMounts: %v", err)
 	}
-	want := []string{"/a/one", "/b/two"}
+	want := shares("/a/one", "/b/two")
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("normalizeMounts = %v, want %v", got, want)
 	}
@@ -245,10 +245,21 @@ func TestNormalizeMounts_RefusesRelativePaths(t *testing.T) {
 	// relative path has no meaning — and resolving it against avar's own
 	// working directory could share the wrong tree.
 	for _, dir := range []string{"code/api", "", "./api", "~/code"} {
-		if _, err := normalizeMounts([]string{dir}); err == nil {
+		if _, err := normalizeMounts(shares(dir)); err == nil {
 			t.Errorf("normalizeMounts(%q) was accepted", dir)
 		}
 	}
+}
+
+// mustNormalize is the canonical form of a desired set, for a test that has to
+// name the exact yq expression avar writes.
+func mustNormalize(t *testing.T, mounts []types.MountSpec) []types.MountSpec {
+	t.Helper()
+	out, err := normalizeMounts(mounts)
+	if err != nil {
+		t.Fatalf("normalizeMounts: %v", err)
+	}
+	return out
 }
 
 func TestMountingMessage_ExplainsTheDelayOnlyWhenThereIsOne(t *testing.T) {
@@ -273,8 +284,98 @@ func TestSetMounts_DoesNotRecheckDirectoriesItAlreadyShares(t *testing.T) {
 	// /Users/dev/code/api and /Users/dev/code/web do not exist on this
 	// machine, and are exactly what the fixture says Lima already shares.
 	err := p.SetMounts(context.Background(), "avr-ubuntu-24.04-arm64",
-		[]string{"/Users/dev/code/api", "/Users/dev/code/web", project}, types.DiscardProgress)
+		shares("/Users/dev/code/api", "/Users/dev/code/web", project), types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("SetMounts: %v", err)
+	}
+}
+
+// The guest path travels with the mount rather than being re-derived, so a
+// backend whose guest paths differ from its host paths — the whole reason
+// MountSpec exists — is applied as planned instead of being quietly rewritten
+// to Lima's identity mapping (REQ-18.5).
+func TestMountsExpression_AppliesThePlannedGuestPath_REQ_18_5(t *testing.T) {
+	got := mountsExpression([]types.MountSpec{
+		{HostPath: "/Users/dev/code/api", GuestPath: "/mnt/avr/projects/3fa9c2b1d0", Writable: true},
+	})
+	want := `.mounts = [{"location": "/Users/dev/code/api", "mountPoint": "/mnt/avr/projects/3fa9c2b1d0", "writable": true}]`
+	if got != want {
+		t.Errorf("mountsExpression =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// MapProjectPath is Lima's identity mapping, and saying so in a test is what
+// keeps it honest: the guest sees the project at the path the user typed, and a
+// subdirectory lands in the matching subdirectory (REQ-6.1, REQ-6.6, PROP-1).
+func TestMapProjectPath_IsTheIdentityMapping_REQ_6_1(t *testing.T) {
+	p := newTestProvider(t, newFakeRunner(), newFakeRecords())
+
+	mount, guestCwd, err := p.MapProjectPath("3fa9c2b1d0", "/Users/dev/code/app", "/Users/dev/code/app/api")
+	if err != nil {
+		t.Fatalf("MapProjectPath: %v", err)
+	}
+	want := types.MountSpec{
+		ProjectID: "3fa9c2b1d0",
+		HostPath:  "/Users/dev/code/app",
+		GuestPath: "/Users/dev/code/app",
+		Writable:  true,
+	}
+	if mount != want {
+		t.Errorf("mount = %+v, want %+v", mount, want)
+	}
+	if guestCwd != "/Users/dev/code/app/api" {
+		t.Errorf("guest cwd = %q, want the host directory itself", guestCwd)
+	}
+
+	// The project root itself, and a spelling that needs cleaning.
+	if _, guestCwd, err = p.MapProjectPath("abc", "/Users/dev/code/app/", "/Users/dev/code/app/./"); err != nil {
+		t.Fatalf("MapProjectPath: %v", err)
+	}
+	if guestCwd != "/Users/dev/code/app" {
+		t.Errorf("guest cwd = %q, want the cleaned project root", guestCwd)
+	}
+}
+
+func TestMapProjectPath_RefusesWhatItCannotMap(t *testing.T) {
+	p := newTestProvider(t, newFakeRunner(), newFakeRecords())
+
+	cases := map[string][3]string{
+		// A working directory outside the project is shared by nothing:
+		// mapping it would hand the guest a path it cannot reach (PROP-5).
+		"cwd outside the project": {"abc", "/Users/dev/code/app", "/Users/dev/code/other"},
+		"cwd is a sibling prefix": {"abc", "/Users/dev/code/app", "/Users/dev/code/application"},
+		"cwd escapes upwards":     {"abc", "/Users/dev/code/app", "/Users/dev"},
+		"relative project root":   {"abc", "code/app", "/Users/dev/code/app"},
+		"relative cwd":            {"abc", "/Users/dev/code/app", "app/api"},
+		"no project identity":     {"", "/Users/dev/code/app", "/Users/dev/code/app"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := p.MapProjectPath(args[0], args[1], args[2]); err == nil {
+				t.Fatalf("MapProjectPath(%q, %q, %q) was accepted", args[0], args[1], args[2])
+			}
+		})
+	}
+}
+
+// It plans a mapping; it does not apply one. Nothing about it may reach limactl
+// or the filesystem, which is what lets the command layer call it before any
+// machine exists.
+func TestMapProjectPath_TouchesNothing(t *testing.T) {
+	runner := newFakeRunner()
+	p := newTestProvider(t, runner, newFakeRecords())
+
+	if _, _, err := p.MapProjectPath("abc", "/Users/dev/code/app", "/Users/dev/code/app"); err != nil {
+		t.Fatalf("MapProjectPath: %v", err)
+	}
+	if argvs := runner.limactlArgvs(); len(argvs) != 0 {
+		t.Errorf("MapProjectPath ran %v; it is a pure function of its arguments", argvs)
+	}
+}
+
+func TestProviderID_IsLima_REQ_18_14(t *testing.T) {
+	p := newTestProvider(t, newFakeRunner(), newFakeRecords())
+	if got := p.ID(); got != types.ProviderLima {
+		t.Errorf("ID() = %q, want %q", got, types.ProviderLima)
 	}
 }

@@ -99,21 +99,66 @@ func (i instance) state() types.MachineState {
 // running reports whether the instance is up and usable.
 func (i instance) running() bool { return i.state() == types.StateRunning }
 
-// mounts reports the host directories the instance currently shares, sorted and
-// deduplicated so that comparing them against a desired set is a plain equality
-// check.
-func (i instance) mounts() []string {
+// mounts reports the file shares the instance currently has, in the same
+// canonical order a desired set is put into, so that comparing the two is a
+// plain equality check.
+//
+// Reading is deliberately more tolerant than writing. A share Lima reports
+// without a location is dropped and a set that contradicts itself is reported
+// as it stands, rather than the whole listing failing: this is how avar
+// discovers what a backend actually has, and a caller that finds something it
+// did not expect replaces the set (SetMounts) instead of being unable to look.
+//
+// The guest path is Lima's mountPoint rather than an assumption. avar always
+// sets it equal to the location (REQ-6.1), so reading it back is how a
+// hand-edited instance shows up as a set that differs from the desired one.
+func (i instance) mounts() []types.MountSpec {
 	if i.Config == nil {
 		return nil
 	}
-	dirs := make([]string, 0, len(i.Config.Mounts))
+	out := make([]types.MountSpec, 0, len(i.Config.Mounts))
 	for _, m := range i.Config.Mounts {
 		if m.Location == "" {
 			continue
 		}
-		dirs = append(dirs, m.Location)
+		guest := m.MountPoint
+		if guest == "" {
+			// Lima defaults an omitted mountPoint to the location itself.
+			guest = m.Location
+		}
+		out = append(out, types.CleanMount(types.MountSpec{
+			HostPath:  m.Location,
+			GuestPath: guest,
+			Writable:  m.Writable,
+		}))
 	}
-	return sortedUnique(dirs)
+	return sortedUniqueMounts(out)
+}
+
+// sortedUniqueMounts orders a set of shares by host path then guest path and
+// drops exact duplicates, which is the canonical form types.NormalizeMounts
+// also produces — without its refusal to accept a contradictory set, because
+// this side is reading rather than writing.
+func sortedUniqueMounts(in []types.MountSpec) []types.MountSpec {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[types.MountSpec]struct{}, len(in))
+	out := make([]types.MountSpec, 0, len(in))
+	for _, m := range in {
+		if _, ok := seen[m]; ok {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].HostPath != out[j].HostPath {
+			return out[i].HostPath < out[j].HostPath
+		}
+		return out[i].GuestPath < out[j].GuestPath
+	})
+	return out
 }
 
 // view is one invocation's picture of what Lima has.

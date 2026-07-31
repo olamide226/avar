@@ -142,6 +142,9 @@ func (p *Provider) EnsureMachine(ctx context.Context, spec provider.MachineSpec,
 	if err := p.gate(ctx, spec.Name, ownershipPrefix); err != nil {
 		return err
 	}
+	if err := p.checkAddressedToMe(spec); err != nil {
+		return err
+	}
 
 	v := p.newView()
 	inst, exists, err := v.lookup(ctx, spec.Name)
@@ -188,6 +191,22 @@ func (p *Provider) start(ctx context.Context, spec provider.MachineSpec, progres
 	return nil
 }
 
+// checkAddressedToMe refuses a spec the resolver addressed to another backend.
+//
+// It cannot happen while avar has one backend, and it is cheap insurance for
+// when it has two: a spec carries the provider the resolver chose from the host
+// platform, and building a Lima machine from a spec that asked for a WSL
+// distribution would produce something the caller never requested. An empty
+// Provider means "whichever backend receives this", which is what a
+// single-backend caller passes.
+func (p *Provider) checkAddressedToMe(spec provider.MachineSpec) error {
+	if spec.Provider == "" || spec.Provider == p.ID() {
+		return nil
+	}
+	return fmt.Errorf("creating your %s environment: this machine is recorded against the %q backend and avar is running the %q backend on this host",
+		spec.Selector.Label(), spec.Provider, p.ID())
+}
+
 // create provisions a machine from a generated configuration and starts it.
 //
 // Nothing half-created survives a failure: a create that fails, or that is
@@ -199,11 +218,11 @@ func (p *Provider) create(ctx context.Context, spec provider.MachineSpec, progre
 	// Pre-flight the mounts before provisioning: a project directory that is
 	// not there is worth a clear error now rather than a machine that boots
 	// with a missing share (REQ-6.5).
-	dirs, err := normalizeMounts(spec.Mounts)
+	mounts, err := normalizeMounts(spec.Mounts)
 	if err != nil {
 		return fmt.Errorf("creating your %s environment: %w", spec.Selector.Label(), err)
 	}
-	if err := checkHostDirs(dirs); err != nil {
+	if err := checkHostDirs(mounts); err != nil {
 		return fmt.Errorf("creating your %s environment: %w", spec.Selector.Label(), err)
 	}
 
@@ -255,7 +274,7 @@ func (p *Provider) create(ctx context.Context, spec provider.MachineSpec, progre
 	if runErr == nil {
 		// The machine is up. Prove the shares actually landed rather than
 		// trusting that Lima's exit code covered them (REQ-6.5).
-		if err := p.verifyMounts(ctx, spec.Name, dirs); err != nil {
+		if err := p.verifyMounts(ctx, spec.Name, mounts); err != nil {
 			return p.abandonCreate(ctx, spec, logPath, err)
 		}
 		return nil
