@@ -62,7 +62,7 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: 1.1, 1.4, 1.7, 2.1, 2.2, 2.3, 2.4, 3.1, 3.2, 3.3, 3.4, 9.1, 17.1_
   - _writes: internal/provider/lima/shell.go, internal/envpolicy/policy.go, internal/envpolicy/policy_test.go, cmd/shell.go, e2e/shell_test.go_
 
-- [ ] 9. Implement mount management
+- [x] 9. Implement mount management  _(PR #29)_
   - Project registration on first use; read applied mounts from `limactl list --json`; `limactl edit --set` + explained restart when adding a project (ProgressSink message); subdirectory reuse of existing mounts; pre-flight stat + in-guest mount verification, hard error instead of wrong-path shell; live-session restart prompt (abort when non-interactive)
   - FakeProvider flow tests for Property 5 (mount confinement); e2e: new project one-time restart, second visit instant, file visible both directions
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 9.3, 9.4_
@@ -73,18 +73,18 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 7.2_
   - _writes: cmd/status.go, cmd/stop.go, internal/provider/lima/portdiag.go, cmd/status_test.go_
 
-- [ ] 29. Call the reconciler on startup
+- [x] 29. Call the reconciler on startup  _(PR #26)_
   - `internal/state.Reconcile` is built and tested (task 13, PR #9) but **nothing calls it**. Every `avr` invocation should reconcile before resolving, so a machine left by a killed provision is adopted or cleaned up instead of persisting. Found while debugging task 8: a failed run left a running machine with no record and no automatic repair.
   - Decide where it runs (likely `cmd/app.go` before the first provider use), what it prints when it acts, and how it stays cheap on the warm path — design §3.3 requires the consistent case to do no writes
   - _Requirements: 1.6, 17.5_
   - _writes: cmd/app.go, cmd/reconcile.go, cmd/reconcile_test.go_
 
-- [ ] 11. Wire `--arch` / `--distro` end to end
+- [x] 11. Wire `--arch` / `--distro` end to end  _(PR #28)_
   - New-environment provision notice (4.7); one-time amd64 emulation warning on Apple Silicon (4.6); package persistence per environment verified in e2e (install pkg in ubuntu-arm64, absent in fedora-arm64)
   - _Requirements: 4.1–4.7_
   - _writes: cmd/root.go, internal/resolve/resolver.go, e2e/matrix_test.go_
 
-- [ ] 12. Port forwarding verification (e2e)
+- [x] 12. Port forwarding verification (e2e)  _(PR #27)_
   - Guest server on :3000 reachable at host localhost:3000; listener released after guest close; occupied-host-port conflict surfaces in `avr status`
   - _Requirements: 7.1, 7.2, 7.3_
   - _writes: e2e/ports_test.go_
