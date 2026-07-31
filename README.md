@@ -29,8 +29,8 @@ Still to come before the MVP is complete: mount-change handling, `--arch`/`--dis
 wiring, snapshots and reset, project isolation, and `avr code`.
 
 avar is built spec-first: see [`.kiro/specs/avar-cli/`](.kiro/specs/avar-cli/) for
-the requirements, design, and phased plan, [`CLAUDE.md`](CLAUDE.md) for the working
-agreement, and [`HANDOFF.md`](HANDOFF.md) for current state and open work.
+the requirements, design, and phased plan, and [`CLAUDE.md`](CLAUDE.md) for the
+working agreement.
 
 ## How it works
 
