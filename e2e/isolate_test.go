@@ -9,11 +9,28 @@ import (
 	"testing"
 )
 
+// isolatedProject is project() plus the cleanup that makes the suite
+// repeatable: an isolated project owns a machine, and without removing it every
+// run of `make e2e` leaves another VM behind. Twenty-four accumulated before
+// this existed, which was enough to make the host thrash and unrelated tests
+// fail on stop timeouts.
+func isolatedProject(t *testing.T, name string) string {
+	t.Helper()
+
+	dir := project(t, name)
+	t.Cleanup(func() {
+		// Best effort: the test may have already turned isolation off, and a
+		// cleanup that fails must not mask the failure being reported.
+		_, _, _ = avr(t, dir, nil, "isolate", "off", "--yes")
+	})
+	return dir
+}
+
 // TestIsolate_CreatesAnIsolatedMachine_REQ_11_1 proves that `avr --isolate`
 // creates a machine dedicated to the current project. The machine name carries
 // the project identity prefix ("avr-prj-").
 func TestIsolate_CreatesAnIsolatedMachine_REQ_11_1(t *testing.T) {
-	dir := t.TempDir()
+	dir := isolatedProject(t, "iso-"+t.Name())
 
 	stdout, stderr, code := avr(t, dir, nil, "--isolate", "hostname")
 	if code != 0 {
@@ -32,7 +49,7 @@ func TestIsolate_CreatesAnIsolatedMachine_REQ_11_1(t *testing.T) {
 // is isolated, subsequent bare `avr` invocations still target the isolated
 // machine — no --isolate flag is needed.
 func TestIsolate_RememberedOnSecondInvocation_REQ_11_2(t *testing.T) {
-	dir := t.TempDir()
+	dir := isolatedProject(t, "iso-"+t.Name())
 
 	// First invocation with --isolate marks the project and creates the
 	// machine.
@@ -54,7 +71,7 @@ func TestIsolate_RememberedOnSecondInvocation_REQ_11_2(t *testing.T) {
 // the same project reuses the already-existing isolated machine — it does not
 // create a second one.
 func TestIsolate_ReusesExistingMachine(t *testing.T) {
-	dir := t.TempDir()
+	dir := isolatedProject(t, "iso-"+t.Name())
 
 	// Create marker file in the isolated machine.
 	marker := "isolated-marker-" + t.Name()
@@ -79,8 +96,8 @@ func TestIsolate_ReusesExistingMachine(t *testing.T) {
 // This is the whole point of isolation: each project's environment is
 // independent.
 func TestIsolate_FilesAreIsolatedFromShared_REQ_11_1(t *testing.T) {
-	dir := t.TempDir()
-	otherDir := t.TempDir()
+	dir := isolatedProject(t, "iso-"+t.Name())
+	otherDir := isolatedProject(t, "iso-other-"+t.Name())
 
 	// Write a file in the isolated machine.
 	isolatedMarker := "isolated-file-" + t.Name()
@@ -123,7 +140,7 @@ func TestIsolate_FilesAreIsolatedFromShared_REQ_11_1(t *testing.T) {
 // the project's isolation default so that subsequent bare `avr` invocations
 // target the shared machine again.
 func TestIsolate_OffClearsDefault_REQ_11_3(t *testing.T) {
-	dir := t.TempDir()
+	dir := isolatedProject(t, "iso-"+t.Name())
 
 	// First, isolate the project.
 	_, stderr, code := avr(t, dir, nil, "--isolate", "true")
@@ -152,7 +169,7 @@ func TestIsolate_OffClearsDefault_REQ_11_3(t *testing.T) {
 // TestIsolate_ShowReportsStatus proves that `avr isolate` without arguments
 // reports whether the current project is isolated.
 func TestIsolate_ShowReportsStatus(t *testing.T) {
-	dir := t.TempDir()
+	dir := isolatedProject(t, "iso-"+t.Name())
 
 	// Before isolation, `avr isolate` should report the project is not
 	// isolated.
@@ -190,7 +207,7 @@ func TestIsolate_ShowReportsStatus(t *testing.T) {
 // project as isolated without creating a machine. The machine is created on
 // the next bare `avr`.
 func TestIsolate_OnTurnsOnIsolation(t *testing.T) {
-	dir := t.TempDir()
+	dir := isolatedProject(t, "iso-"+t.Name())
 
 	// Create the project first.
 	_, _, code := avr(t, dir, nil, "true")
@@ -218,7 +235,7 @@ func TestIsolate_OnTurnsOnIsolation(t *testing.T) {
 // TestIsolate_FilePersistenceAcrossInvocations proves that files written in an
 // isolated machine survive across multiple avr invocations.
 func TestIsolate_FilePersistenceAcrossInvocations(t *testing.T) {
-	dir := t.TempDir()
+	dir := isolatedProject(t, "iso-"+t.Name())
 
 	sentinel := filepath.Join(dir, "host-sentinel")
 	if err := os.WriteFile(sentinel, []byte("from-host\n"), 0o644); err != nil {
