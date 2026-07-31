@@ -23,6 +23,9 @@
 package envpolicy
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -78,6 +81,17 @@ type Input struct {
 	// host that offers nothing, which is a legitimate input rather than an
 	// error: the result is then avar's own defaults.
 	Host map[string]string
+
+	// Forwarded carries the values of --env flags: either "NAME", which
+	// forwards the host variable of that name as-is (and is silently absent
+	// when the host has no such variable), or "NAME=value", which sets that
+	// variable to that value in the guest (REQ-12.1). A nil slice is the
+	// same as an empty one.
+	Forwarded []string
+
+	// EnvFile carries variables loaded from --env-file, as name → value
+	// (REQ-12.2). A nil map is the same as an empty one.
+	EnvFile map[string]string
 }
 
 // Compose returns the environment for one guest execution.
@@ -87,8 +101,22 @@ type Input struct {
 // (provider.ShellOpts.Env). TERM is always present, because a session without
 // one renders badly enough to look like a bug (REQ-3.2); everything else is
 // present only if the host had it.
+//
+// The allowlist is applied from most permissive to most specific:
+//
+//  1. The base allowlist — TERM, LANG, and LC_* variables — crosses
+//     unconditionally (REQ-9.1).
+//  2. --env-file contents are applied next, adding or overriding the base
+//     (REQ-12.2).
+//  3. --env flags are applied last, overriding everything that came before
+//     (REQ-12.1).
+//
+// A --env NAME without a value forwards the host variable only when the host
+// actually has it; otherwise the name is silently absent from the result,
+// because the policy has nothing to forward. A --env NAME=VALUE sets it
+// regardless of the host.
 func Compose(in Input) map[string]string {
-	out := make(map[string]string, len(baseAllowlist))
+	out := make(map[string]string, len(baseAllowlist)+len(in.EnvFile)+len(in.Forwarded))
 	for name, value := range in.Host {
 		if !allowed(name) {
 			continue
@@ -96,6 +124,29 @@ func Compose(in Input) map[string]string {
 		out[name] = value
 	}
 	out[termName] = terminalType(in.Host[termName])
+
+	// Apply --env-file contents (REQ-12.2).
+	for name, value := range in.EnvFile {
+		if name == "" || strings.Contains(name, "=") {
+			continue
+		}
+		out[name] = value
+	}
+
+	// Apply --env flags, each of which overrides anything already set (REQ-12.1).
+	for _, raw := range in.Forwarded {
+		name, value, hasValue := strings.Cut(raw, "=")
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if hasValue {
+			out[name] = value
+		} else if hostVal, ok := in.Host[name]; ok {
+			out[name] = hostVal
+		}
+	}
+
 	return out
 }
 
@@ -154,4 +205,39 @@ func HostEnviron() map[string]string {
 		out[name] = value
 	}
 	return out
+}
+
+// ParseDotEnv reads a .env-style file of the form KEY=value (one per line)
+// and returns the name → value mapping. Lines that are empty or start with '#'
+// are comments. Leading whitespace is stripped; inline comments after the value
+// are not recognised, so a hash in a value is treated as part of the value.
+//
+// A malformed line — one with no "=" — is an error so that a mistyped file is
+// surfaced before any machine work begins (REQ-12.2). Duplicate keys are
+// permitted: the last occurrence wins, matching the behaviour of a shell
+// sourcing the same file.
+func ParseDotEnv(r io.Reader) (map[string]string, error) {
+	out := make(map[string]string)
+	scanner := bufio.NewScanner(r)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("parse env file at line %d: %q is not a KEY=value line", lineNo, line)
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, fmt.Errorf("parse env file at line %d: %q has an empty variable name", lineNo, line)
+		}
+		out[name] = strings.TrimSpace(value)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read env file: %w", err)
+	}
+	return out, nil
 }

@@ -87,6 +87,19 @@ type Invocation struct {
 	// tokens.
 	Guest []string
 
+	// Env holds the raw values of --env flags: either "NAME" (forward from host)
+	// or "NAME=value" (set explicitly). Each flag adds one entry; the flag is
+	// repeatable (REQ-12.1).
+	Env []string
+
+	// EnvFile is the value of --env-file: a path to a file whose KEY=value lines
+	// are forwarded to the guest, one line per variable (REQ-12.2).
+	EnvFile string
+
+	// SSHAgent requests that the host SSH agent socket be forwarded into the guest
+	// for this invocation only (REQ-12.3).
+	SSHAgent bool
+
 	// Help and Version record an avar-position --help/-h or --version/-v.
 	// After the mode-deciding token those flags belong to the guest command
 	// or to the subcommand, so they never set these fields.
@@ -143,8 +156,6 @@ type flagSpec struct {
 }
 
 // avarFlags are the flags avar consumes before the mode-deciding token.
-// Phase 2's forwarding flags (--env NAME, repeatable; --env-file PATH;
-// --ssh-agent) are each one further row.
 var avarFlags = []flagSpec{
 	{
 		names: []string{"--arch"},
@@ -184,6 +195,30 @@ var avarFlags = []flagSpec{
 		kind:  flagBool,
 		apply: func(inv *Invocation, value string) error {
 			inv.Selector.Shared = value == "true"
+			return nil
+		},
+	},
+	{
+		names: []string{"--env"},
+		kind:  flagValue,
+		apply: func(inv *Invocation, value string) error {
+			inv.Env = append(inv.Env, value)
+			return nil
+		},
+	},
+	{
+		names: []string{"--env-file"},
+		kind:  flagValue,
+		apply: func(inv *Invocation, value string) error {
+			inv.EnvFile = value
+			return nil
+		},
+	},
+	{
+		names: []string{"--ssh-agent"},
+		kind:  flagBool,
+		apply: func(inv *Invocation, value string) error {
+			inv.SSHAgent = value == "true"
 			return nil
 		},
 	},
