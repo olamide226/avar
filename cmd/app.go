@@ -37,6 +37,13 @@ type App struct {
 	storeErr error
 	prov     provider.Provider
 	provErr  error
+
+	// buildBackend replaces backend construction when set: flow tests hand
+	// the App an in-process provider through it, so the whole of Provider —
+	// including the crash recovery that follows a successful build — runs
+	// against a fake without going near a real one. Nil means the host's
+	// real backend.
+	buildBackend func(ctx context.Context) (provider.Provider, error)
 }
 
 // newApp returns an App writing to the real streams.
@@ -59,48 +66,78 @@ func (a *App) Store() (*state.Store, error) {
 
 // Provider returns the backend for this host, ensuring its dependencies first.
 //
-// Host routing happens before the dependency check so that an unsupported host
-// is told so plainly, rather than being sent to install Lima and discovering
-// the same thing more slowly (REQ-18.1, REQ-17.6).
+// A backend the App builds itself is reconciled against avar's records before
+// it is handed out (see reconcile.go), so every command acts on records that
+// already agree with the backend (REQ-17.5). Placing recovery here, on the
+// path that first obtains the backend, is what keeps it lazy — `avr --help`
+// never probes for one — and exactly once per invocation. A test that seeds
+// prov directly marks this Once done and so skips construction and recovery
+// alike; a test that wants recovery injects buildBackend instead.
 func (a *App) Provider(ctx context.Context) (provider.Provider, error) {
 	a.once.provider.Do(func() {
-		id, err := provider.HostProviderID()
+		p, err := a.backend(ctx)
 		if err != nil {
 			a.provErr = err
 			return
 		}
 
+		// Construction already opened the store — the real backend takes it
+		// as Records — so this returns the cached handle and cannot newly
+		// fail; the check is here for the compiler, not for a real condition.
 		store, err := a.Store()
 		if err != nil {
 			a.provErr = err
 			return
 		}
 
-		switch id {
-		case types.ProviderLima:
-			limactl, err := deps.EnsureLima(ctx, a.Err)
-			if err != nil {
-				a.provErr = err
-				return
-			}
-			p, err := lima.New(lima.Options{
-				Lima:    limactl,
-				Runner:  deps.NewRunner(),
-				Records: store,
-				LogsDir: store.LogsDir(),
-			})
-			if err != nil {
-				a.provErr = fmt.Errorf("prepare the Lima backend: %w", err)
-				return
-			}
-			a.prov = p
-		default:
-			// Unreachable while HostProviderID is the only source of id, and
-			// deliberately loud if a future host is routed without a backend.
-			a.provErr = fmt.Errorf("internal error: no backend built for provider %q", id)
-		}
+		reconcile(ctx, a, store, p)
+		a.prov = p
 	})
 	return a.prov, a.provErr
+}
+
+// backend builds the backend for this host. Construction is the only thing
+// that varies by host: everything above Provider is written against the
+// provider.Provider contract and never against a concrete backend (REQ-17.3).
+func (a *App) backend(ctx context.Context) (provider.Provider, error) {
+	if a.buildBackend != nil {
+		return a.buildBackend(ctx)
+	}
+
+	// Host routing happens before the dependency check so that an unsupported
+	// host is told so plainly, rather than being sent to install Lima and
+	// discovering the same thing more slowly (REQ-18.1, REQ-17.6).
+	id, err := provider.HostProviderID()
+	if err != nil {
+		return nil, err
+	}
+
+	store, err := a.Store()
+	if err != nil {
+		return nil, err
+	}
+
+	switch id {
+	case types.ProviderLima:
+		limactl, err := deps.EnsureLima(ctx, a.Err)
+		if err != nil {
+			return nil, err
+		}
+		p, err := lima.New(lima.Options{
+			Lima:    limactl,
+			Runner:  deps.NewRunner(),
+			Records: store,
+			LogsDir: store.LogsDir(),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("prepare the Lima backend: %w", err)
+		}
+		return p, nil
+	default:
+		// Unreachable while HostProviderID is the only source of id, and
+		// deliberately loud if a future host is routed without a backend.
+		return nil, fmt.Errorf("internal error: no backend built for provider %q", id)
+	}
 }
 
 // Resolve maps the current directory and the invocation's selector flags onto
