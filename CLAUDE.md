@@ -123,6 +123,11 @@ make e2e      # real-Lima end-to-end (macOS + Lima required)
   claim gets checked against the diff. Every correction to `design.md` so far came
   out of exactly that review. If a bookkeeping commit does reach `main` directly,
   do not rewrite published history to hide it — say so in the next PR.
+- Run **`make hooks`** once per clone. It points `core.hooksPath` at `.githooks`,
+  whose `pre-push` hook refuses direct pushes to `main` — the rule above enforced
+  rather than remembered. Linked worktrees share the repository config, so one
+  install covers them. `AVR_ALLOW_MAIN_PUSH=1` overrides it for a genuine
+  emergency; disclose any use in the next PR.
 - Branch names: `feat/<area>-<short-description>`, `fix/<area>-<short-description>`,
   `chore/…`, `docs/…`. One task (or one coherent sub-task group) per branch.
 - Conventional commits: `feat(resolve): map each selector to its own machine`.
