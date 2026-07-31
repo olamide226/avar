@@ -2,7 +2,6 @@ package deps
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -43,7 +42,7 @@ func (execRunner) Output(ctx context.Context, name string, args ...string) ([]by
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
-			return out, fmt.Errorf("%w: %s", err, truncate(string(bytes.TrimSpace(exitErr.Stderr)), 200))
+			return out, fmt.Errorf("%w: %s", err, stderrExcerpt(string(exitErr.Stderr), 400))
 		}
 		return out, err
 	}
@@ -118,4 +117,40 @@ func isExecutableFile(path string) bool {
 		return false
 	}
 	return info.Mode().Perm()&0o111 != 0
+}
+
+// stderrExcerpt reduces a failed command's stderr to the part that explains why
+// it failed.
+//
+// It keeps the end rather than the beginning, and prefers a line the tool
+// itself marked fatal. A tool writes its progress first and the reason it
+// stopped last, so keeping the head of a long stderr keeps the part that says
+// least. That is not hypothetical: `limactl start` failing with "the virtual
+// machine failed to start" was reported by avar as "Using the existing
+// instance", which is the first thing it printed and describes nothing. Several
+// real failures could not be diagnosed from avar's own error at all, and the
+// cause was found only by reading Lima's log by hand.
+func stderrExcerpt(stderr string, max int) string {
+	stderr = strings.TrimSpace(stderr)
+	if stderr == "" {
+		return ""
+	}
+
+	// A tool that labels its fatal line has already said which one matters.
+	lines := strings.Split(stderr, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], "level=fatal") || strings.Contains(lines[i], "level=error") {
+			return tailOf(strings.TrimSpace(lines[i]), max)
+		}
+	}
+	return tailOf(stderr, max)
+}
+
+// tailOf keeps the last max characters of s, marking that something precedes
+// them.
+func tailOf(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return "…" + s[len(s)-max:]
 }
