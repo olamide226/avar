@@ -326,11 +326,34 @@ func (p *Provider) Stop(ctx context.Context, machine string, progress types.Prog
 		Machine: machine,
 		Message: fmt.Sprintf("Stopping %s", machine),
 	})
-	if _, err := p.run(ctx, "stop", machine); err != nil {
-		return fmt.Errorf("stopping machine %s: %w; "+
-			"if it will not stop cleanly, `limactl stop --force %s` will end it", machine, err, machine)
+	if _, err := p.run(ctx, "stop", machine); err == nil {
+		return nil
+	} else if forceErr := p.forceStop(ctx, machine, progress); forceErr != nil {
+		return fmt.Errorf("stopping machine %s: %w (it did not stop cleanly, and ending it outright also failed: %v)", machine, err, forceErr)
 	}
 	return nil
+}
+
+// forceStop ends a machine whose graceful shutdown failed.
+//
+// A guest that will not shut down cleanly is otherwise unrecoverable through
+// avar: the user asked for the machine to stop, and telling them to go and run
+// a backend command themselves is exactly the model avar exists to hide
+// (REQ-1.5). Escalating is safe in a way it would not be for a general-purpose
+// VM manager, because the only state that matters lives in the project
+// directory, which is a share on the host and is never inside the guest's disk
+// (PROP-10).
+//
+// It is announced rather than silent: an unclean stop can lose work in progress
+// inside the guest, and the user should know that is what happened.
+func (p *Provider) forceStop(ctx context.Context, machine string, progress types.ProgressSink) error {
+	progress.Progress(types.ProgressEvent{
+		Kind:    types.ProgressWarning,
+		Machine: machine,
+		Message: fmt.Sprintf("%s did not shut down cleanly; ending it. Unsaved work inside it may be lost — your project files on this Mac are not affected.", machine),
+	})
+	_, err := p.run(ctx, "stop", "--force", machine)
+	return err
 }
 
 // Delete destroys the machine and everything inside it. Host project files are
