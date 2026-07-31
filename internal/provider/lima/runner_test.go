@@ -74,6 +74,9 @@ type fakeRunner struct {
 	// sysctlErr fails the memory probe.
 	sysctlErr error
 
+	// snapshotListOut is what `limactl snapshot list` returns.
+	snapshotListOut []byte
+
 	// configWritten is the instance configuration avar pointed limactl at,
 	// read at the moment limactl was invoked. It is captured here because the
 	// file lives in a temporary directory that avar removes on return, and the
@@ -97,7 +100,9 @@ func (r *fakeRunner) listing(outputs ...[]byte) *fakeRunner {
 	return r
 }
 
-// failOn programs a limactl subcommand to fail.
+// failOn programs a limactl subcommand to fail. A compound key like
+// "snapshot create" fails only that specific limactl action; a short key like
+// "snapshot" fails every limactl call whose first argument is that subcommand.
 func (r *fakeRunner) failOn(subcommand string, err error) *fakeRunner {
 	r.errs[subcommand] = err
 	return r
@@ -117,13 +122,28 @@ func (r *fakeRunner) Output(ctx context.Context, name string, args ...string) ([
 	if len(args) == 0 {
 		return nil, nil
 	}
-	if err := r.errs[args[0]]; err != nil {
+	if err := r.lookupErr(args); err != nil {
 		return nil, err
 	}
 	if args[0] == "list" {
 		return r.nextListing(), nil
 	}
+	if args[0] == "snapshot" && len(args) > 1 && args[1] == "list" {
+		return r.snapshotListOut, nil
+	}
 	return nil, nil
+}
+
+// lookupErr checks for a programmed error. A compound key like
+// "snapshot create" takes precedence over a plain subcommand key.
+func (r *fakeRunner) lookupErr(args []string) error {
+	if len(args) > 1 {
+		compound := args[0] + " " + args[1]
+		if err, ok := r.errs[compound]; ok {
+			return err
+		}
+	}
+	return r.errs[args[0]]
 }
 
 func (r *fakeRunner) Stream(ctx context.Context, w io.Writer, name string, args ...string) error {
