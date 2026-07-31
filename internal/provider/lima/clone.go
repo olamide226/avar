@@ -154,9 +154,15 @@ func (p *Provider) ensureBase(ctx context.Context, spec provider.MachineSpec, ba
 	}
 
 	// Provision the base as a bare machine: same (distro, arch) image, no
-	// mounts, no project.  KindBase tells the backend this machine is for
-	// cloning only, and the store records it so that reconciliation does not
-	// treat it as an orphan.
+	// mounts, no project. KindBase tells the backend this machine exists only
+	// to be cloned.
+	//
+	// Nothing records it here, and that is deliberate rather than an omission:
+	// the provider holds read-only access to avar's records precisely so that
+	// a backend cannot invent ownership for itself (design §4). The base is
+	// adopted by reconciliation on the next invocation, which is what gives it
+	// the record PROP-6 wants — see TestReconcile_AdoptsAnUnrecordedBaseMachine.
+	// Until then it is held by its name prefix, which only avar creates.
 	baseSpec := spec
 	baseSpec.Name = base
 	baseSpec.Kind = types.KindBase
