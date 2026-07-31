@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/envpolicy"
@@ -190,10 +191,13 @@ func ensureMounted(ctx context.Context, app *App, p provider.Provider, machine s
 		return "", err
 	}
 
-	result, err := mounts.Ensure(ctx, p, machine, mount, guestCwd, sessions, progress)
+	lastUsed := projectRecency(app)
+
+	result, err := mounts.Ensure(ctx, p, machine, mount, guestCwd, sessions, lastUsed, progress)
 	if err != nil {
 		return "", err
 	}
+	reportUnshared(app, result.Unshared)
 	if result.SessionConflict {
 		if !stdinIsTerminal() {
 			return "", fmt.Errorf("sharing %s with your Linux environment would restart it while %d other sessions are attached to it; run in an interactive terminal, or close the other sessions, and try again",
@@ -203,12 +207,52 @@ func ensureMounted(ctx context.Context, app *App, p provider.Provider, machine s
 			return "", Exit(130, nil)
 		}
 		// Retry without sessions — the prompt was accepted.
-		result, err = mounts.Ensure(ctx, p, machine, mount, guestCwd, 0, progress)
+		result, err = mounts.Ensure(ctx, p, machine, mount, guestCwd, 0, lastUsed, progress)
 		if err != nil {
 			return "", err
 		}
+		reportUnshared(app, result.Unshared)
 	}
 	return result.GuestCwd, nil
+}
+
+// projectRecency maps each registered project's host path to when it was last
+// entered, which is what decides the order projects are unshared in when a
+// machine is at its mount limit.
+//
+// A failure to read yields no recency rather than an error: the cap still
+// applies, projects are simply dropped in whatever order the backend reports,
+// and a shell the user asked for is not worth refusing over the ordering of an
+// eviction they will not notice.
+func projectRecency(app *App) map[string]time.Time {
+	store, err := app.Store()
+	if err != nil {
+		return nil
+	}
+	projects, err := store.Projects()
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]time.Time, len(projects))
+	for _, p := range projects {
+		out[p.Path] = p.LastUsedAt
+	}
+	return out
+}
+
+// reportUnshared tells the user which projects stopped being shared, because a
+// directory silently vanishing from the guest would look like avar losing their
+// files rather than making room.
+func reportUnshared(app *App, unshared []string) {
+	if len(unshared) == 0 {
+		return
+	}
+	fmt.Fprintf(app.Err, "avr: this environment shares as many project directories as it can hold, so %s made room:\n",
+		pluralize(len(unshared), "the least recently used one", "the least recently used ones"))
+	for _, path := range unshared {
+		fmt.Fprintf(app.Err, "       %s\n", path)
+	}
+	fmt.Fprintf(app.Err, "     Nothing was deleted. Run avr in one of them again to share it back.\n")
 }
 
 // liveSessions returns the number of other live avr sessions attached to the
