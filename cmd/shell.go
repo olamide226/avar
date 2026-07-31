@@ -33,6 +33,14 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 		return err
 	}
 
+	// --env-file is parsed before any machine work so that a missing or
+	// malformed file fails the invocation before taking a slow path
+	// (REQ-12.2).
+	envFile, err := loadEnvFile(inv.EnvFile)
+	if err != nil {
+		return fmt.Errorf("--env-file %s: %w", inv.EnvFile, err)
+	}
+
 	p, err := app.Provider(ctx)
 	if err != nil {
 		return err
@@ -59,8 +67,13 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 	code, err := p.Shell(ctx, target.MachineName, provider.ShellOpts{
 		Workdir: guestCwd,
 		Argv:    inv.Guest,
-		Env:     envpolicy.Compose(envpolicy.Input{Host: envpolicy.HostEnviron()}),
-		TTY:     stdinIsTerminal(),
+		Env: envpolicy.Compose(envpolicy.Input{
+			Host:      envpolicy.HostEnviron(),
+			Forwarded: inv.Env,
+			EnvFile:   envFile,
+		}),
+		TTY:             stdinIsTerminal(),
+		ForwardSSHAgent: inv.SSHAgent,
 	})
 	if err != nil {
 		return err
@@ -219,6 +232,22 @@ func stdinIsTerminal() bool {
 		return false
 	}
 	return stat.Mode()&os.ModeCharDevice != 0
+}
+
+// loadEnvFile opens the file at path and parses it as envpolicy.ParseDotEnv
+// would. An empty path is a no-op that returns a nil map. A non-empty path that
+// names a missing file or one that cannot be parsed fails before any machine
+// work, as REQ-12.2 requires.
+func loadEnvFile(path string) (map[string]string, error) {
+	if path == "" {
+		return nil, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open env file: %w", err)
+	}
+	defer f.Close()
+	return envpolicy.ParseDotEnv(f)
 }
 
 // progressTo renders progress events for a human.

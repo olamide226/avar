@@ -97,6 +97,9 @@ func NewRootCommand(version string, inv cli.Invocation, app *App) *cobra.Command
 	flags.String("distro", "", "guest distribution: ubuntu, debian or fedora, optionally :version")
 	flags.Bool("isolate", false, "use a machine dedicated to this project")
 	flags.Bool("shared", false, "use the machine shared by every project, just this once")
+	flags.StringSlice("env", nil, "forward host env var to Linux: NAME or NAME=value (repeatable)")
+	flags.String("env-file", "", "file of KEY=value lines to forward into Linux (.env format)")
+	flags.Bool("ssh-agent", false, "forward the host SSH agent socket into Linux for this session")
 	flags.BoolP("help", "h", false, "show how to use avr")
 	flags.BoolP("version", "v", false, "show the avr version")
 

@@ -169,6 +169,196 @@ func (environment) Generate(rand *rand.Rand, size int) reflect.Value {
 	return reflect.ValueOf(out)
 }
 
+// --env NAME forwards a host variable that the allowlist would otherwise
+// block (REQ-12.1).
+func TestCompose_ExplicitForwarding_REQ_12_1(t *testing.T) {
+	host := map[string]string{
+		"TERM":      "xterm-kitty",
+		"LANG":      "en_GB.UTF-8",
+		"AWS_KEY":   "secret123",
+		"GITHUB":    "token456",
+		"NODE_ENV":  "development",
+	}
+
+	got := Compose(Input{
+		Host:      host,
+		Forwarded: []string{"AWS_KEY", "NODE_ENV=production"},
+	})
+
+	// The base allowlist still crosses.
+	if got["TERM"] != "xterm-kitty" {
+		t.Errorf("TERM = %q, want %q", got["TERM"], "xterm-kitty")
+	}
+	if got["LANG"] != "en_GB.UTF-8" {
+		t.Errorf("LANG = %q, want %q", got["LANG"], "en_GB.UTF-8")
+	}
+
+	// AWS_KEY was forwarded by name.
+	if got["AWS_KEY"] != "secret123" {
+		t.Errorf("AWS_KEY = %q, want %q", got["AWS_KEY"], "secret123")
+	}
+
+	// GITHUB was not forwarded — it must be absent.
+	if _, present := got["GITHUB"]; present {
+		t.Error("GITHUB crossed without an explicit --env grant")
+	}
+
+	// NODE_ENV was set explicitly, overriding the host value.
+	if got["NODE_ENV"] != "production" {
+		t.Errorf("NODE_ENV = %q, want %q", got["NODE_ENV"], "production")
+	}
+
+	// LS_COLORS is not in the host, so a bare --env LS_COLORS adds nothing.
+	if _, present := got["LS_COLORS"]; present {
+		t.Error("LS_COLORS should not appear: it was forwarded by name but the host has none")
+	}
+}
+
+func TestCompose_ExplicitForwardingWithEnvFile_REQ_12_2(t *testing.T) {
+	host := map[string]string{
+		"TERM":     "xterm-256color",
+		"SECRET_X": "from-host",
+	}
+
+	got := Compose(Input{
+		Host: host,
+		EnvFile: map[string]string{
+			"VAR_A": "from-env-file",
+			"VAR_B": "also-from-file",
+		},
+		Forwarded: []string{"VAR_A=overridden"},
+	})
+
+	// --env-file contributes.
+	if got["VAR_A"] != "overridden" {
+		t.Errorf("VAR_A = %q, want %q: --env should override --env-file", got["VAR_A"], "overridden")
+	}
+	if got["VAR_B"] != "also-from-file" {
+		t.Errorf("VAR_B = %q, want %q", got["VAR_B"], "also-from-file")
+	}
+	// The base still crosses.
+	if got["TERM"] != "xterm-256color" {
+		t.Errorf("TERM = %q, want %q", got["TERM"], "xterm-256color")
+	}
+	// Nothing else leaks.
+	if _, present := got["SECRET_X"]; present {
+		t.Error("SECRET_X crossed without an explicit grant")
+	}
+}
+
+// PROP-4 extended: nothing crosses unless it is in the base allowlist or
+// explicitly granted by --env or --env-file.
+func TestCompose_NoVariableLeaksUnlessExplicitlyForwarded_REQ_12_1_PROP_4(t *testing.T) {
+	host := map[string]string{
+		"TERM":      "xterm-256color",
+		"AWS_TOKEN": "super-secret",
+		"DB_PASS":   "password123",
+	}
+
+	got := Compose(Input{
+		Host:      host,
+		Forwarded: []string{"DB_PASS"},
+	})
+
+	// DB_PASS was explicitly forwarded.
+	if got["DB_PASS"] != "password123" {
+		t.Errorf("DB_PASS = %q, want %q", got["DB_PASS"], "password123")
+	}
+
+	// AWS_TOKEN was not forwarded — it must not leak.
+	if _, present := got["AWS_TOKEN"]; present {
+		t.Error("AWS_TOKEN leaked into the guest without an explicit --env grant")
+	}
+}
+
+// --env NAME for a variable the host does not have adds nothing.
+func TestCompose_ForwardingAnAbsentHostVariableIsSilent_REQ_12_1(t *testing.T) {
+	got := Compose(Input{
+		Host:      map[string]string{"TERM": "xterm-256color"},
+		Forwarded: []string{"NOT_SET"},
+	})
+
+	if _, present := got["NOT_SET"]; present {
+		t.Errorf("NOT_SET should not appear: it was forwarded but the host has no such variable")
+	}
+	if got["TERM"] != "xterm-256color" {
+		t.Errorf("TERM = %q, want %q", got["TERM"], "xterm-256color")
+	}
+}
+
+func TestParseDotEnv_REQ_12_2(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		want    map[string]string
+		wantErr bool
+	}{
+		{
+			name:  "simple key=value",
+			input: "FOO=bar\n",
+			want:  map[string]string{"FOO": "bar"},
+		},
+		{
+			name:  "multiple variables",
+			input: "A=1\nB=2\n",
+			want:  map[string]string{"A": "1", "B": "2"},
+		},
+		{
+			name:  "empty lines and comments are skipped",
+			input: "\n# comment\nKEY=val\n  # indented comment\n",
+			want:  map[string]string{"KEY": "val"},
+		},
+		{
+			name:  "later value wins on duplicate",
+			input: "X=first\nX=second\n",
+			want:  map[string]string{"X": "second"},
+		},
+		{
+			name:  "values can contain equals signs",
+			input: "TOKEN=a=b=c\n",
+			want:  map[string]string{"TOKEN": "a=b=c"},
+		},
+		{
+			name:  "leading and trailing whitespace stripped",
+			input: "  NAME  =  value  \n",
+			want:  map[string]string{"NAME": "value"},
+		},
+		{
+			name:  "inline comments after value are part of the value",
+			input: "URL=https://example.com#fragment\n",
+			want:  map[string]string{"URL": "https://example.com#fragment"},
+		},
+		{
+			name:    "line with no equals sign is an error",
+			input:   "not-a-variable\n",
+			wantErr: true,
+		},
+		{
+			name:    "empty variable name is an error",
+			input:   "=value\n",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseDotEnv(strings.NewReader(tc.input))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ParseDotEnv(%q) = %v, want error", tc.input, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseDotEnv(%q) returned unexpected error: %v", tc.input, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ParseDotEnv(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHostEnviron_DropsMalformedEntries(t *testing.T) {
 	t.Setenv("AVR_TEST_ENVPOLICY", "value=with=equals")
 

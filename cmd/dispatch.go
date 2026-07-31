@@ -55,9 +55,7 @@ func registerGuest(h Handler) {
 // real, so an early build answers specifically instead of failing blankly.
 // Entries disappear as the commands land.
 var pendingSubcommand = map[string]string{
-	"reset":    "task 16 (REQ-10.3)",
 	"isolate":  "task 17 (REQ-11.3)",
-	"code":     "task 19 (REQ-13.1)",
 	"internal": "task 20 (REQ-5.5)",
 }
 

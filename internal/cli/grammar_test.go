@@ -58,6 +58,15 @@ func assertInvocation(t *testing.T, argv []string, got, want Invocation) {
 	if got.Version != want.Version {
 		t.Errorf("Parse(%q).Version = %t, want %t", argv, got.Version, want.Version)
 	}
+	if !slices.Equal(got.Env, want.Env) {
+		t.Errorf("Parse(%q).Env = %q, want %q", argv, got.Env, want.Env)
+	}
+	if got.EnvFile != want.EnvFile {
+		t.Errorf("Parse(%q).EnvFile = %q, want %q", argv, got.EnvFile, want.EnvFile)
+	}
+	if got.SSHAgent != want.SSHAgent {
+		t.Errorf("Parse(%q).SSHAgent = %t, want %t", argv, got.SSHAgent, want.SSHAgent)
+	}
 }
 
 // The first non-selector-flag token decides the mode, and everything from it
@@ -450,6 +459,85 @@ func TestIsSubcommand_RejectsNonSubcommands(t *testing.T) {
 			t.Errorf("IsSubcommand(%q) = true, want false", name)
 		}
 	}
+}
+
+// Forwarding flags: --env (repeatable), --env-file, --ssh-agent.
+// They are consumed in avar position, before the mode-deciding token,
+// and are passed through to the invocation unchanged (REQ-12.1, REQ-12.2, REQ-12.3).
+func TestParse_EnvForwardingFlags_REQ_12_1_12_2_12_3(t *testing.T) {
+	t.Parallel()
+
+	runParseCases(t, []parseCase{
+		{
+			name: "a single --env with NAME",
+			argv: []string{"--env", "SECRET"},
+			want: Invocation{Mode: ModeShell, Env: []string{"SECRET"}},
+		},
+		{
+			name: "a single --env with NAME=value",
+			argv: []string{"--env", "NODE_ENV=production"},
+			want: Invocation{Mode: ModeShell, Env: []string{"NODE_ENV=production"}},
+		},
+		{
+			name: "repeatable --env accumulates values",
+			argv: []string{"--env", "FOO", "--env", "BAR=baz"},
+			want: Invocation{Mode: ModeShell, Env: []string{"FOO", "BAR=baz"}},
+		},
+		{
+			name: "--env with equals form",
+			argv: []string{"--env=NODE_ENV=production"},
+			want: Invocation{Mode: ModeShell, Env: []string{"NODE_ENV=production"}},
+		},
+		{
+			name: "--env-file forwards a path",
+			argv: []string{"--env-file", ".env.prod"},
+			want: Invocation{Mode: ModeShell, EnvFile: ".env.prod"},
+		},
+		{
+			name: "--env-file with equals form",
+			argv: []string{"--env-file=.env"},
+			want: Invocation{Mode: ModeShell, EnvFile: ".env"},
+		},
+		{
+			name: "--ssh-agent sets the boolean",
+			argv: []string{"--ssh-agent"},
+			want: Invocation{Mode: ModeShell, SSHAgent: true},
+		},
+		{
+			name: "--ssh-agent=false is accepted",
+			argv: []string{"--ssh-agent=false"},
+			want: Invocation{Mode: ModeShell, SSHAgent: false},
+		},
+		{
+			name: "forwarding flags with a guest command",
+			argv: []string{"--env", "NODE_ENV=staging", "--ssh-agent", "npm", "test"},
+			want: Invocation{
+				Mode:     ModeGuestCommand,
+				Guest:    []string{"npm", "test"},
+				Env:      []string{"NODE_ENV=staging"},
+				SSHAgent: true,
+			},
+		},
+		{
+			name: "forwarding flags with selector flags",
+			argv: []string{"--arch", "amd64", "--env", "CC=gcc", "--env-file", ".env"},
+			want: Invocation{
+				Mode:    ModeShell,
+				Selector: Selector{Arch: types.ArchAMD64},
+				Env:     []string{"CC=gcc"},
+				EnvFile: ".env",
+			},
+		},
+		{
+			name: "forwarding flags with a subcommand",
+			argv: []string{"--ssh-agent", "status"},
+			want: Invocation{
+				Mode:       ModeSubcommand,
+				Subcommand: "status",
+				SSHAgent:   true,
+			},
+		},
+	})
 }
 
 func TestMode_String(t *testing.T) {
