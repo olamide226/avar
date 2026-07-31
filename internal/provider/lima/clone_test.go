@@ -187,25 +187,26 @@ func TestCreateFromBase_ClonesAndStarts_REQ_11_1(t *testing.T) {
 	}
 
 	argvs := runner.limactlArgvs()
-	// Sequence: list (ensureBase), clone, start (streamed), shell (verify mount -d), shell (verify mount -w)
+	// Sequence: list (ensureBase), clone, edit (add mounts), shell (verify mount -d), shell (verify mount -w)
 	if len(argvs) < 4 {
-		t.Fatalf("want at least 4 calls (list + clone + start + shell...), got %d: %v", len(argvs), argvs)
+		t.Fatalf("want at least 4 limactl calls (list + clone + edit + shell...), got %d: %v", len(argvs), argvs)
 	}
 	if argvs[0] != "limactl list --json" {
 		t.Errorf("first call is not the listing: %v", argvs)
 	}
-	wantClone := "limactl clone " + testBaseMachine + " --name " + testIsolatedMachine
+	wantClone := "limactl clone " + testBaseMachine + " " + testIsolatedMachine
 	if argvs[1] != wantClone {
 		t.Errorf("clone call: want %q, got %q", wantClone, argvs[1])
 	}
+	// The third call is the edit that adds project mounts.
+	if !strings.HasPrefix(argvs[2], "limactl edit "+testIsolatedMachine+" --set .mounts = ") {
+		t.Errorf("edit call: want limactl edit %s --set .mounts = [...], got %q", testIsolatedMachine, argvs[2])
+	}
 
-	// The third call is the streamed start (not in limactlArgvs since it's
-	// streamed through runner.Stream, which IS recorded — let me check).
-	// Actually, Stream records invocations too.
-	// Let me check full argvs instead.
+	// The streamed start call is the fourth total call (not in limactlArgvs).
 	fullArgvs := runner.argvs()
-	if len(fullArgvs) < 4 {
-		t.Fatalf("want at least 4 total calls, got %d: %v", len(fullArgvs), fullArgvs)
+	if len(fullArgvs) < 5 {
+		t.Fatalf("want at least 5 total calls (list + clone + edit + start + shell...), got %d: %v", len(fullArgvs), fullArgvs)
 	}
 
 	// Check the progress events: should have a Creating event naming the
@@ -246,9 +247,9 @@ func TestEnsureMachine_IsolatedCreatesViaClone_REQ_11_1(t *testing.T) {
 
 	argvs := runner.limactlArgvs()
 	// We expect: list (ensureMachine), list (ensureBase), start (create base),
-	// stop (base), clone, start (streamed), shell (verify), shell (verify).
-	if len(argvs) < 5 {
-		t.Fatalf("want at least 5 limactl calls, got %d: %v", len(argvs), argvs)
+	// stop (base), clone, edit (add mounts), start (streamed), shell (verify), shell (verify).
+	if len(argvs) < 6 {
+		t.Fatalf("want at least 6 limactl calls, got %d: %v", len(argvs), argvs)
 	}
 	if argvs[0] != "limactl list --json" {
 		t.Errorf("first call is not listing: %v", argvs)
@@ -257,16 +258,22 @@ func TestEnsureMachine_IsolatedCreatesViaClone_REQ_11_1(t *testing.T) {
 		t.Errorf("second call is not listing (base check): %v", argvs)
 	}
 
-	// Find the clone call.
+	// Find the clone and edit calls.
 	foundClone := false
+	foundEdit := false
 	for _, a := range argvs {
 		if strings.HasPrefix(a, "limactl clone") {
 			foundClone = true
-			break
+		}
+		if strings.HasPrefix(a, "limactl edit") {
+			foundEdit = true
 		}
 	}
 	if !foundClone {
 		t.Errorf("no clone call in argvs: %v", argvs)
+	}
+	if !foundEdit {
+		t.Errorf("no edit call in argvs: %v", argvs)
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 // creates a machine dedicated to the current project. The machine name carries
 // the project identity prefix ("avr-prj-").
 func TestIsolate_CreatesAnIsolatedMachine_REQ_11_1(t *testing.T) {
-	dir := project(t, "iso-create")
+	dir := t.TempDir()
 
 	stdout, stderr, code := avr(t, dir, nil, "--isolate", "hostname")
 	if code != 0 {
@@ -32,7 +32,7 @@ func TestIsolate_CreatesAnIsolatedMachine_REQ_11_1(t *testing.T) {
 // is isolated, subsequent bare `avr` invocations still target the isolated
 // machine — no --isolate flag is needed.
 func TestIsolate_RememberedOnSecondInvocation_REQ_11_2(t *testing.T) {
-	dir := project(t, "iso-remember")
+	dir := t.TempDir()
 
 	// First invocation with --isolate marks the project and creates the
 	// machine.
@@ -54,7 +54,7 @@ func TestIsolate_RememberedOnSecondInvocation_REQ_11_2(t *testing.T) {
 // the same project reuses the already-existing isolated machine — it does not
 // create a second one.
 func TestIsolate_ReusesExistingMachine(t *testing.T) {
-	dir := project(t, "iso-reuse")
+	dir := t.TempDir()
 
 	// Create marker file in the isolated machine.
 	marker := "isolated-marker-" + t.Name()
@@ -79,8 +79,8 @@ func TestIsolate_ReusesExistingMachine(t *testing.T) {
 // This is the whole point of isolation: each project's environment is
 // independent.
 func TestIsolate_FilesAreIsolatedFromShared_REQ_11_1(t *testing.T) {
-	dir := project(t, "iso-boundary")
-	otherDir := project(t, "iso-boundary-shared")
+	dir := t.TempDir()
+	otherDir := t.TempDir()
 
 	// Write a file in the isolated machine.
 	isolatedMarker := "isolated-file-" + t.Name()
@@ -123,7 +123,7 @@ func TestIsolate_FilesAreIsolatedFromShared_REQ_11_1(t *testing.T) {
 // the project's isolation default so that subsequent bare `avr` invocations
 // target the shared machine again.
 func TestIsolate_OffClearsDefault_REQ_11_3(t *testing.T) {
-	dir := project(t, "iso-off")
+	dir := t.TempDir()
 
 	// First, isolate the project.
 	_, stderr, code := avr(t, dir, nil, "--isolate", "true")
@@ -152,7 +152,7 @@ func TestIsolate_OffClearsDefault_REQ_11_3(t *testing.T) {
 // TestIsolate_ShowReportsStatus proves that `avr isolate` without arguments
 // reports whether the current project is isolated.
 func TestIsolate_ShowReportsStatus(t *testing.T) {
-	dir := project(t, "iso-show")
+	dir := t.TempDir()
 
 	// Before isolation, `avr isolate` should report the project is not
 	// isolated.
@@ -190,7 +190,7 @@ func TestIsolate_ShowReportsStatus(t *testing.T) {
 // project as isolated without creating a machine. The machine is created on
 // the next bare `avr`.
 func TestIsolate_OnTurnsOnIsolation(t *testing.T) {
-	dir := project(t, "iso-on")
+	dir := t.TempDir()
 
 	// Create the project first.
 	_, _, code := avr(t, dir, nil, "true")
@@ -218,7 +218,7 @@ func TestIsolate_OnTurnsOnIsolation(t *testing.T) {
 // TestIsolate_FilePersistenceAcrossInvocations proves that files written in an
 // isolated machine survive across multiple avr invocations.
 func TestIsolate_FilePersistenceAcrossInvocations(t *testing.T) {
-	dir := project(t, "iso-persist")
+	dir := t.TempDir()
 
 	sentinel := filepath.Join(dir, "host-sentinel")
 	if err := os.WriteFile(sentinel, []byte("from-host\n"), 0o644); err != nil {

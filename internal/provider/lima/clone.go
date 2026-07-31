@@ -94,13 +94,25 @@ func (p *Provider) createFromBase(ctx context.Context, spec provider.MachineSpec
 	// Step 1: clone the base into the target.
 	// "limactl clone <source> --name <target>" copies the disk image, which is
 	// fast for a stopped machine (coordination doc §Environment facts).
-	if _, err := p.run(ctx, "clone", base, "--name", spec.Name); err != nil {
+	if _, err := p.run(ctx, "clone", base, spec.Name); err != nil {
 		return p.abandonCreate(ctx, spec, logPath,
 			fmt.Errorf("cloning the %s environment from the base machine %s: %w",
 				spec.Selector.Label(), base, err))
 	}
 
-	// Step 2: start the clone.
+	// Step 2: add the project mounts to the clone's configuration. The base
+	// machine was provisioned without any project shares, so the clone
+	// inherits an empty mount list.  The edit happens while the clone is
+	// still stopped — no restart is needed.
+	if len(mounts) > 0 {
+		if _, err := p.run(ctx, "edit", spec.Name, "--set", mountsExpression(mounts), "--tty=false"); err != nil {
+			return p.abandonCreate(ctx, spec, logPath,
+				fmt.Errorf("configuring shared directories for the cloned %s environment: %w",
+					spec.Selector.Label(), err))
+		}
+	}
+
+	// Step 3: start the clone.
 	startLog := io.MultiWriter(logFile, &progressLines{machine: spec.Name, sink: progress})
 	if err := p.runner.Stream(ctx, startLog, p.limactl, "start", "--tty=false", spec.Name); err != nil {
 		return p.abandonCreate(ctx, spec, logPath,
@@ -108,7 +120,7 @@ func (p *Provider) createFromBase(ctx context.Context, spec provider.MachineSpec
 				spec.Selector.Label(), spec.Name, err))
 	}
 
-	// Step 3: prove the shares landed (REQ-6.5).
+	// Step 4: prove the shares landed (REQ-6.5).
 	if err := p.verifyMounts(ctx, spec.Name, mounts); err != nil {
 		return p.abandonCreate(ctx, spec, logPath, err)
 	}
