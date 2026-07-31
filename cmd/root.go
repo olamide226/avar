@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/olamide226/avar/internal/cli"
+	"github.com/olamide226/avar/internal/resolve"
 	"github.com/spf13/cobra"
 )
 
@@ -148,6 +149,11 @@ func Execute(ctx context.Context, version string, args []string) int {
 			fmt.Fprintf(os.Stderr, "avr: %v\n", exit.Err)
 		}
 		return exit.Code
+	}
+
+	if errors.Is(err, resolve.ErrUnsupportedEnvironment) {
+		fmt.Fprintf(os.Stderr, "avr: %v\n", err)
+		return exitUsage
 	}
 
 	fmt.Fprintf(os.Stderr, "avr: %v\n", err)
