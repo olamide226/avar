@@ -10,6 +10,12 @@ coverage.out
 # Local agent worktrees and machine-local Claude Code settings
 .claude/
 
+# Scratch space that travels with the checkout but is never committed:
+# agent briefs, handoff notes, throwaway scripts. Anything here is by
+# definition a moment in time, which is precisely why it does not belong in
+# the history.
+/tmp/
+
 # Editor and OS noise
 .DS_Store
 .idea/
