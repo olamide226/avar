@@ -123,38 +123,38 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
 
 ## Phase 2 — MVP completion: lifecycle, isolation, editor, forwarding
 
-- [ ] 15. Implement snapshots and restore
+- [x] 15. Implement snapshots and restore  _(PR #34)_
   - `avr snapshot <name>` / bare `avr snapshot` list with timestamps / `avr restore <name>`; stop-if-needed-then-resume orchestration; unknown name lists available
   - _Requirements: 10.1, 10.2, 10.4_
   - _writes: cmd/snapshot.go, internal/provider/lima/snapshot.go, internal/provider/lima/snapshot_test.go, e2e/snapshot_test.go_
 
-- [ ] 16. Implement `avr reset`
+- [x] 16. Implement `avr reset`  _(PR #32)_
   - Delete + re-provision from template/base; interactive confirmation with explicit destruction summary, `--yes` bypass; e2e asserts host project files untouched (Property 10)
   - _Requirements: 10.3_
   - _writes: cmd/reset.go, e2e/reset_test.go_
 
-- [ ] 17. Implement project isolation
-  - [ ] 17.1 Base-machine + clone fast path
+- [x] 17. Implement project isolation  _(PR #36)_
+  - [x] 17.1 Base-machine + clone fast path  _(PR #36)_
     - Pristine stopped `avr-base-*` per used (distro, arch); `limactl clone` for isolated create; full-provision fallback
     - _Requirements: 11.1_
     - _writes: internal/provider/lima/clone.go, internal/provider/lima/clone_test.go_
-  - [ ] 17.2 `--isolate` / `--shared` / `avr isolate off` flows
+  - [x] 17.2 `--isolate` / `--shared` / `avr isolate off` flows  _(PR #36)_
     - Remembered default in ProjectRecord (no repo file); per-invocation `--shared` override; `isolate off` clears default and offers machine deletion; isolated machine mounts only its project; reset scopes to the project machine
     - FakeProvider flow tests (Properties 5, 10); e2e isolation smoke test
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5_
     - _writes: cmd/isolate.go, internal/resolve/resolver.go, e2e/isolate_test.go_
 
-- [ ] 18. Implement explicit env/credential forwarding
+- [x] 18. Implement explicit env/credential forwarding  _(PR #31, #38)_
   - Repeatable `--env NAME[=V]`, `--env-file` (pre-flight validation), `--ssh-agent` session-scoped socket forwarding; optional persistent `forward_env` allowlist in config.toml; property tests that nothing outside grants leaks (Property 4)
   - _Requirements: 12.1, 12.2, 12.3, 12.4, 9.2_
   - _writes: internal/envpolicy/policy.go, internal/envpolicy/policy_test.go, cmd/root.go_
 
-- [ ] 19. Implement `avr code`
+- [x] 19. Implement `avr code`  _(PR #33, #38)_
   - avar-owned `~/.avr/ssh/config` from `limactl show-ssh`; one-time approved `Include` line in user ssh config; launch `code --remote ssh-remote+avr-<machine> <path>`; missing-`code` guidance; honors selector flags
   - _Requirements: 13.1, 13.2, 13.3, 13.4_
   - _writes: cmd/code.go, internal/editor/vscode.go, internal/editor/sshconfig.go, internal/editor/sshconfig_test.go_
 
-- [ ] 20. Implement session tracking and idle auto-stop
+- [x] 20. Implement session tracking and idle auto-stop  _(PR #35)_
   - `sessions.json` attach/detach records with stale-pid pruning; `avr internal idle-check`; launchd agent install with one-time notice; config.toml `idle_timeout` (default 2h, "0" disables); never stops machines with live sessions (Property 11)
   - _Requirements: 5.5_
   - _writes: internal/session/session.go, internal/session/idle.go, cmd/internal_idle.go, internal/session/session_test.go_

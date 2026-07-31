@@ -21,12 +21,28 @@ between sessions, and any port you listen on reachable at `localhost` on macOS.
 
 ## Status
 
-Early development, and the core loop works: `avr` and `avr <command>` open the
-current directory in a real Linux VM, with the project mounted live at the same
-path and the guest's exit code becoming avar's. Warm invocations measure ~205 ms.
+The MVP is feature-complete. `avr` and `avr <command>` open the current directory
+in a real Linux VM, with the project mounted live at the same path and the guest's
+exit code becoming avar's. Warm invocations measure ~205 ms.
 
-Still to come before the MVP is complete: mount-change handling, `--arch`/`--distro`
-wiring, snapshots and reset, project isolation, and `avr code`.
+```bash
+avr                         # interactive shell, current directory
+avr npm test                # one command in Linux
+avr --arch amd64            # x86_64 instead
+avr --distro fedora         # Fedora instead
+avr --isolate               # a machine dedicated to this project
+avr --env AWS_PROFILE       # forward one variable
+avr --ssh-agent git push    # lend the guest your SSH agent for one command
+avr snapshot before-upgrade # save this environment's state
+avr restore before-upgrade  # and go back to it
+avr reset                   # start over from a clean OS
+avr code                    # open the project in VS Code, running in Linux
+avr status                  # what exists, what it costs, what is forwarded
+avr stop --all              # stop everything
+```
+
+Post-MVP: Linux-native workspace mode, `.avr.toml` and `avr init`, `avr ports`
+and `avr open`, more editors, a second backend, and Windows via WSL 2.
 
 avar is built spec-first: see [`.kiro/specs/avar-cli/`](.kiro/specs/avar-cli/) for
 the requirements, design, and phased plan, and [`CLAUDE.md`](CLAUDE.md) for the

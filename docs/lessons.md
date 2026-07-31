@@ -116,6 +116,33 @@ also cannot see that a helper it needs is being written next door, and it will n
 looking for one in a package its task never mentions. When splitting work, name the
 shared helpers each task must use — or expect to spend the review consolidating them.
 
+### A test suite that leaks resources eventually fails tests it has nothing to do with
+
+The e2e suite created a machine per isolated project and deleted none. Twenty-four
+accumulated across parallel agent runs. The first symptom was not "too many VMs" — it
+was an unrelated test failing because `limactl stop` timed out, on a host too busy to
+shut a machine down. Time went into the stop path before the cause was visible.
+
+A suite that allocates something expensive must free it in `t.Cleanup`, and if the
+product has no unattended way to free it, that is a missing feature rather than a
+reason for the test to skip cleanup: `avr isolate off` could only delete behind an
+interactive prompt, so nothing in CI could ever have cleaned up after itself.
+
+### Verify against the tool, then verify the verification
+
+`limactl shell` has no agent-forwarding flag but documents `$SSH` as a way to
+substitute the ssh command, so `SSH="ssh -A"` looked like the answer and was tested
+directly rather than assumed. It did nothing: Lima keeps a persistent `ControlMaster`,
+the connection was already open, and agent forwarding is negotiated only when the
+master is established. `-A` on a later invocation is silently ignored. The working
+form disables multiplexing as well.
+
+The lesson is not "test against the real tool" — that already happened. It is that a
+mechanism can be correctly documented, correctly invoked, and still defeated by
+unrelated state the documentation never mentions. When something plausible does not
+work, find out why before trying the next plausible thing; the reason here was the
+whole answer.
+
 ### `--ssh-agent` was accepted, plumbed, and did nothing
 
 `ShellOpts.ForwardSSHAgent` was set from the flag and read by no backend. `avr
