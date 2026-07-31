@@ -16,6 +16,7 @@ import (
 	"github.com/olamide226/avar/internal/mounts"
 	"github.com/olamide226/avar/internal/provider"
 	"github.com/olamide226/avar/internal/resolve"
+	"github.com/olamide226/avar/internal/session"
 	"github.com/olamide226/avar/internal/types"
 )
 
@@ -64,6 +65,13 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 		return err
 	}
 
+	// Record this process as a live session on the machine so that idle
+	// auto-stop never shuts it down while somebody is using it (REQ-5.5,
+	// Property 11). Detach is deferred rather than placed after Shell
+	// because a panic in Shell must also clean up the session record.
+	detach := attachSession(app, target.MachineName)
+	defer detach()
+
 	code, err := p.Shell(ctx, target.MachineName, provider.ShellOpts{
 		Workdir: guestCwd,
 		Argv:    inv.Guest,
@@ -84,6 +92,20 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 		return Exit(code, nil)
 	}
 	return nil
+}
+
+// attachSession records a live session on machine for this process and
+// returns a cleanup function that detaches it.
+func attachSession(app *App, machine string) func() {
+	store, err := app.Store()
+	if err != nil {
+		return func() {}
+	}
+	pid := session.ThisPID()
+	if err := session.Attach(store, machine, pid); err != nil {
+		return func() {}
+	}
+	return func() { session.Detach(store, machine, pid) }
 }
 
 // prepareEnvironment brings the target machine up and makes the project
@@ -130,14 +152,22 @@ func recordMachine(app *App, target resolve.ResolvedTarget, mount types.MountSpe
 	if err != nil {
 		return err
 	}
-	return store.PutMachine(types.MachineRecord{
+	if err := store.PutMachine(types.MachineRecord{
 		Name:      target.MachineName,
 		Provider:  target.Provider,
 		Selector:  target.Selector,
 		Kind:      target.Kind,
 		ProjectID: isolatedProjectID(target),
 		Mounts:    []types.MountSpec{mount},
-	})
+	}); err != nil {
+		return err
+	}
+
+	// The first time a new machine is created, install the per-user launchd
+	// agent that runs idle-check periodically. It is a one-time notice; the
+	// agent is a no-op if already present.
+	ensureLaunchdAgent(app)
+	return nil
 }
 
 // isolatedProjectID names the project an isolated machine serves, which the

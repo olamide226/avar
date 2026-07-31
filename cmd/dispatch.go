@@ -56,7 +56,6 @@ func registerGuest(h Handler) {
 // Entries disappear as the commands land.
 var pendingSubcommand = map[string]string{
 	"isolate":  "task 17 (REQ-11.3)",
-	"internal": "task 20 (REQ-5.5)",
 }
 
 // dispatch routes a parsed invocation to its registered handler.
