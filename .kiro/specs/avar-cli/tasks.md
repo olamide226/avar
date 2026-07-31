@@ -109,7 +109,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 17.3, 18.14, 6.1, 18.5_
   - _writes: internal/types/*, internal/provider/provider.go, internal/provider/fake/*, internal/provider/lima/*, internal/resolve/*, internal/state/*_
 
-- [ ] 28. Route provider selection by host platform
+- [x] 28. Route provider selection by host platform  _(PR #17)_
   - `darwin` selects LimaProvider; unsupported hosts fail before any dependency work with a clear message; no user-visible provider flag
   - Keeps Windows-specific branching out of `cmd/` from the start (REQ-18.1, REQ-18.14)
   - _Requirements: 18.1, 18.14, 17.6_
