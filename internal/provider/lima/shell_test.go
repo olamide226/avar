@@ -36,7 +36,7 @@ func TestShellArgv_OneShotCommand_REQ_2_1(t *testing.T) {
 
 	want := []string{
 		"shell", "--workdir", "/Users/dev/code/app/api", shellMachine, "--",
-		"env", "LANG=en_GB.UTF-8", "TERM=xterm-256color", "--", "npm", "test",
+		"env", "--", "LANG=en_GB.UTF-8", "TERM=xterm-256color", "npm", "test",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("shellArgv:\nwant: %v\ngot:  %v", want, got)
@@ -80,7 +80,7 @@ func TestShellArgv_SeparatesEnvironmentFromACommandBeginningWithADash(t *testing
 		Env:     map[string]string{"TERM": "xterm-256color"},
 	})
 
-	want := []string{"shell", "--workdir", "/w", shellMachine, "--", "env", "TERM=xterm-256color", "--", "--help"}
+	want := []string{"shell", "--workdir", "/w", shellMachine, "--", "env", "--", "TERM=xterm-256color", "--help"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("shellArgv:\nwant: %v\ngot:  %v", want, got)
 	}

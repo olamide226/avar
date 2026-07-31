@@ -188,21 +188,27 @@ func shellArgv(machine string, opts provider.ShellOpts) []string {
 
 // guestArgv prefixes the guest command with the policy environment.
 //
-// `env NAME=value -- command args...` is how one execution gets exactly the
+// `env -- NAME=value command args...` is how one execution gets exactly the
 // variables policy allows and nothing else: the assignments are arguments to a
-// program rather than syntax, and the second "--" keeps a guest command that
-// begins with a dash from being read as an option of env.
+// program rather than syntax, so no shell parses them.
+//
+// The "--" comes before the assignments, not after. env stops reading options
+// at its first non-option argument, so a "--" placed after the assignments is
+// not an option terminator at all — it is the command name, and env fails with
+// "env: '--': No such file or directory". Placed first it does the job it is
+// there for: `avr -- env --version` runs the guest's env with --version
+// instead of printing this env's own version. Both forms verified against the
+// guest's GNU coreutils 9.4.
 //
 // The interactive form has no equivalent, because Lima builds `exec <shell> -l`
 // with nowhere to put a prefix. There the policy's terminal type reaches the
 // guest through ssh's pseudo-terminal request instead — see transportEnv.
 func guestArgv(opts provider.ShellOpts) []string {
 	argv := make([]string, 0, len(opts.Env)+len(opts.Argv)+2)
-	argv = append(argv, guestEnvCommand)
+	argv = append(argv, guestEnvCommand, "--")
 	for _, name := range sortedNames(opts.Env) {
 		argv = append(argv, name+"="+opts.Env[name])
 	}
-	argv = append(argv, "--")
 	return append(argv, opts.Argv...)
 }
 

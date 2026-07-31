@@ -42,7 +42,7 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 	// before attaching rather than in main.
 	setupCtx, stopSetup := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 
-	guestCwd, err := prepareEnvironment(setupCtx, p, target, progressTo(app.Err))
+	guestCwd, err := prepareEnvironment(setupCtx, app, p, target, progressTo(app.Err))
 	stopSetup()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -73,7 +73,7 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 // prepareEnvironment brings the target machine up and makes the project
 // visible inside it, returning the mount and the directory the guest should
 // start in.
-func prepareEnvironment(ctx context.Context, p provider.Provider, target resolve.ResolvedTarget, progress types.ProgressSink) (string, error) {
+func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, target resolve.ResolvedTarget, progress types.ProgressSink) (string, error) {
 	mount, guestCwd, err := p.MapProjectPath(target.Project.ID, target.Project.Path, target.HostCwd)
 	if err != nil {
 		return "", err
@@ -89,6 +89,16 @@ func prepareEnvironment(ctx context.Context, p provider.Provider, target resolve
 		return "", err
 	}
 
+	// The record is written only now, because the backend has confirmed the
+	// machine started (design §4). Until it exists avar treats the machine as
+	// one it does not own, which is what makes an interrupted create safe to
+	// clean up — and it is why this cannot be folded into EnsureMachine: the
+	// provider is given read-only access to avar's records precisely so a
+	// backend cannot invent ownership for itself.
+	if err := recordMachine(app, target, mount); err != nil {
+		return "", err
+	}
+
 	// Registering the project is task 9's subject; this is the smallest
 	// correct version of it, kept here so the shell path works end to end.
 	// Task 9 replaces it with internal/mounts, which also handles the
@@ -98,6 +108,32 @@ func prepareEnvironment(ctx context.Context, p provider.Provider, target resolve
 	}
 
 	return guestCwd, nil
+}
+
+// recordMachine writes avar's own record of a machine the backend has just
+// confirmed is running.
+func recordMachine(app *App, target resolve.ResolvedTarget, mount types.MountSpec) error {
+	store, err := app.Store()
+	if err != nil {
+		return err
+	}
+	return store.PutMachine(types.MachineRecord{
+		Name:      target.MachineName,
+		Provider:  target.Provider,
+		Selector:  target.Selector,
+		Kind:      target.Kind,
+		ProjectID: isolatedProjectID(target),
+		Mounts:    []types.MountSpec{mount},
+	})
+}
+
+// isolatedProjectID names the project an isolated machine serves, which the
+// store requires and a shared machine must not carry.
+func isolatedProjectID(target resolve.ResolvedTarget) string {
+	if target.Kind == types.KindIsolated {
+		return target.Project.ID
+	}
+	return ""
 }
 
 // ensureMounted adds the project to the machine's shares if it is not already
