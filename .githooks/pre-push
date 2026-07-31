@@ -1,0 +1,40 @@
+#!/bin/sh
+# Refuse to push directly to main.
+#
+# CLAUDE.md requires all work — including spec bookkeeping — to arrive by pull
+# request. That rule was broken once by a commit that went straight to main, so
+# it is enforced here rather than left to discipline. GitHub branch protection
+# would be the better place for this, but it needs a paid plan for private
+# repositories.
+#
+# Install with: make hooks
+#
+# Genuine emergency override (say so in the next PR):
+#   AVR_ALLOW_MAIN_PUSH=1 git push origin main
+
+protected='refs/heads/main'
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+	[ "$remote_ref" = "$protected" ] || continue
+
+	if [ "${AVR_ALLOW_MAIN_PUSH:-}" = "1" ]; then
+		echo "pre-push: pushing directly to main because AVR_ALLOW_MAIN_PUSH=1." >&2
+		echo "pre-push: disclose this in the next pull request." >&2
+		exit 0
+	fi
+
+	echo "pre-push: refusing to push directly to $protected." >&2
+	echo >&2
+	echo "  avar takes all changes through a pull request, including ones that only" >&2
+	echo "  tick a checkbox in .kiro/specs/avar-cli/tasks.md — a ticked checkbox is a" >&2
+	echo "  claim that a requirement is satisfied, and the pull request is where that" >&2
+	echo "  claim is checked against the diff." >&2
+	echo >&2
+	echo "  Put the work on a branch instead:" >&2
+	echo "      git switch -c docs/<what-changed>" >&2
+	echo "      git push -u origin HEAD && gh pr create" >&2
+	echo >&2
+	exit 1
+done
+
+exit 0
