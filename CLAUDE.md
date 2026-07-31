@@ -47,6 +47,19 @@ a comment is justified only where the code looks wrong without it — a delibera
 non-obvious constraint the criterion imposes. Do not annotate ordinary code with the
 requirement that motivated it; the PR and the tests carry that.
 
+## Lessons
+
+[`docs/lessons.md`](docs/lessons.md) records mistakes that changed how we work here —
+a passing test that asserted a broken command, a correctness property that covered
+only half its design, a feature built and never wired up. Read it before starting;
+most entries describe a trap that is easy to walk into twice.
+
+**Keep it current.** When a mistake teaches something structural, add it in the same
+PR that fixes the mistake. The bar is deliberately high: exploration that went
+nowhere, a wrong first guess later corrected, or a build that failed once are the
+ordinary cost of working and do not belong there. An entry earns its place only if
+repeating it would cost real time or ship a real defect.
+
 ## Engineering standards
 
 **Design.** Follow the interfaces in `design.md` §3. The `Provider` interface is a
