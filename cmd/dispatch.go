@@ -54,11 +54,7 @@ func registerGuest(h Handler) {
 // pendingSubcommand names the task that makes each unregistered subcommand
 // real, so an early build answers specifically instead of failing blankly.
 // Entries disappear as the commands land.
-var pendingSubcommand = map[string]string{
-	"snapshot": "task 15 (REQ-10.1)",
-	"restore":  "task 15 (REQ-10.2)",
-	"internal": "task 20 (REQ-5.5)",
-}
+var pendingSubcommand = map[string]string{}
 
 // dispatch routes a parsed invocation to its registered handler.
 func dispatch(ctx context.Context, app *App, inv cli.Invocation) error {
