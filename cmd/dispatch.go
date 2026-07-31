@@ -59,7 +59,6 @@ var pendingSubcommand = map[string]string{
 	"restore":  "task 15 (REQ-10.2)",
 	"reset":    "task 16 (REQ-10.3)",
 	"isolate":  "task 17 (REQ-11.3)",
-	"code":     "task 19 (REQ-13.1)",
 	"internal": "task 20 (REQ-5.5)",
 }
 
