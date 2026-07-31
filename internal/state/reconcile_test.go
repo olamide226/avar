@@ -959,3 +959,44 @@ func TestReconcile_LeavesAnOrphanWhoseProviderIsUnknown_PROP_6(t *testing.T) {
 		t.Errorf("the reason does not say what was missing: %q", reason)
 	}
 }
+
+// Base machines are provisioned by the backend as part of creating an isolated
+// environment, and the provider cannot write records — that access is
+// deliberately read-only so a backend cannot invent ownership for itself. A
+// base therefore has no record until reconciliation adopts it, and this is the
+// test that the adoption happens.
+//
+// Without it, every isolated create would find an unrecorded base, and avar
+// would be operating on a machine held only by its name prefix rather than by
+// prefix and record (PROP-6).
+func TestReconcile_AdoptsAnUnrecordedBaseMachine_PROP_6(t *testing.T) {
+	t.Parallel()
+
+	st := newTestStore(t)
+	base := backendMachine("avr-base-ubuntu-24.04-arm64", types.StateStopped)
+	base.Kind = types.KindBase
+
+	result, err := st.Reconcile(context.Background(), newBackend(base))
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	rec, found, err := st.Machine(base.Name)
+	if err != nil {
+		t.Fatalf("reading the adopted base: %v", err)
+	}
+	if !found {
+		t.Fatalf("the base machine was not adopted, so it has no record: %v", changeSummary(result))
+	}
+	if rec.Kind != types.KindBase {
+		t.Errorf("the adopted base was recorded as %q, want %q", rec.Kind, types.KindBase)
+	}
+
+	// A base exists to be cloned, so adopting one must never destroy it: that
+	// would make every isolated create re-provision from scratch.
+	for _, c := range result.Changes {
+		if c.Machine == base.Name && c.Action == ActionDeleted {
+			t.Errorf("reconciliation deleted the base machine it should have adopted: %s", c.Reason)
+		}
+	}
+}
