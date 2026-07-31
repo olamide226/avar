@@ -291,17 +291,17 @@ func sizeOrUnknown(gb float64) string {
 	return formatGB(gb) + " GB"
 }
 
-// diskLabel renders disk as used-of-allocated where both are known, because the
-// number that matters is what the environment costs the host today, not the
-// ceiling it may never reach (REQ-5.1).
+// diskLabel renders what the environment costs the host today (REQ-5.1: disk
+// usage), not the ceiling it may never reach: avar's machines are given a large
+// sparse disk on purpose, so the allocated figure says nothing about the space
+// the user has actually spent. It is shown only when the used figure is the one
+// the backend could not work out.
 func diskLabel(machine types.MachineStatus) string {
 	switch {
-	case machine.DiskGB > 0 && machine.DiskUsed > 0:
-		return fmt.Sprintf("%s of %s GB", formatGB(machine.DiskUsed), formatGB(machine.DiskGB))
-	case machine.DiskGB > 0:
-		return sizeOrUnknown(machine.DiskGB)
 	case machine.DiskUsed > 0:
-		return fmt.Sprintf("%s GB used", formatGB(machine.DiskUsed))
+		return sizeOrUnknown(machine.DiskUsed)
+	case machine.DiskGB > 0:
+		return "up to " + sizeOrUnknown(machine.DiskGB)
 	default:
 		return unknownValue
 	}

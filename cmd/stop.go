@@ -23,6 +23,12 @@ const stopAllFlag = "--all"
 // Stopping releases memory and destroys nothing: packages, files written inside
 // the guest and everything else survive, and the next `avr` starts the machine
 // again.
+//
+// Both paths start from the backend's own listing of the machines avar owns.
+// That is what lets avar say "there is no such environment yet" instead of
+// reporting a machine it never created as an error, and it is the same listing
+// --all is built on, so neither path can reach a machine avar does not own
+// (REQ-5.4, PROP-6).
 func runStop(ctx context.Context, app *App, inv cli.Invocation) error {
 	all, err := parseStopArgs(inv.SubcommandArgs)
 	if err != nil {
@@ -33,10 +39,16 @@ func runStop(ctx context.Context, app *App, inv cli.Invocation) error {
 	if err != nil {
 		return err
 	}
-	if all {
-		return stopEverything(ctx, app, p)
+	machines, err := p.Status(ctx)
+	if err != nil {
+		return err
 	}
-	return stopSelected(ctx, app, p, inv)
+	machines = avarOwned(machines)
+
+	if all {
+		return stopEverything(ctx, app, p, machines)
+	}
+	return stopSelected(ctx, app, p, inv, machines)
 }
 
 // parseStopArgs reads `stop`'s own flags.
@@ -59,56 +71,43 @@ func parseStopArgs(args []string) (all bool, err error) {
 
 // stopSelected stops the machine this directory and these selector flags
 // resolve to (REQ-5.2).
-func stopSelected(ctx context.Context, app *App, p provider.Provider, inv cli.Invocation) error {
+func stopSelected(ctx context.Context, app *App, p provider.Provider, inv cli.Invocation, machines []types.MachineStatus) error {
 	target, err := app.Resolve(inv)
 	if err != nil {
 		return err
 	}
 	label := target.Selector.Label()
 
-	stopping := false
-	progress := types.ProgressFunc(func(event types.ProgressEvent) {
-		// The backend's own wording names the machine, and a machine name is
-		// something avar's user never has to see (REQ-1.5). The event is what
-		// matters — that work has started — so avar says so in its own words.
-		if event.Kind == types.ProgressStopping {
-			stopping = true
-			fmt.Fprintf(app.Out, "Stopping %s…\n", label)
-		}
-	})
-
-	switch err := p.Stop(ctx, target.MachineName, progress); {
-	case errors.Is(err, provider.ErrMachineNotFound):
+	machine, found := findMachine(machines, target.MachineName)
+	switch {
+	case !found:
 		// Never created, or already deleted. Nothing to stop is a converged
 		// state, not a failure of the command.
 		fmt.Fprintf(app.Out, "There is no %s environment yet, so there is nothing to stop.\n", label)
 		return nil
-	case errors.Is(err, provider.ErrNotOwned):
-		return unownedError(err, label)
-	case err != nil:
-		return err
+	case machine.State == types.StateStopped:
+		// Stop converges on a state, so this is a success (REQ-5.2).
+		fmt.Fprintf(app.Out, "%s is already stopped.\n", label)
+		return nil
+	case machine.State != types.StateRunning:
+		fmt.Fprintf(app.Out, "%s is %s, so avar left it alone. Run `avr status` to see what its backend says about it.\n", label, stateLabel(machine.State))
+		return nil
 	}
 
-	if stopping {
+	stopped, err := stopOne(ctx, app, p, machine, label)
+	if err != nil {
+		return err
+	}
+	if stopped {
 		fmt.Fprintf(app.Out, "Stopped %s. Run `avr` to start it again.\n", label)
 	} else {
-		// Stop converges on a state, so this is a success (REQ-5.2).
-		fmt.Fprintf(app.Out, "%s was already stopped.\n", label)
+		fmt.Fprintf(app.Out, "%s is already stopped.\n", label)
 	}
 	return nil
 }
 
 // stopEverything stops every environment avar manages (REQ-5.2).
-//
-// The list comes from the provider's own listing, which is filtered to machines
-// avar owns, and is filtered again here: --all must never reach a machine the
-// user created themselves (REQ-5.4, PROP-6).
-func stopEverything(ctx context.Context, app *App, p provider.Provider) error {
-	machines, err := p.Status(ctx)
-	if err != nil {
-		return err
-	}
-	machines = avarOwned(machines)
+func stopEverything(ctx context.Context, app *App, p provider.Provider, machines []types.MachineStatus) error {
 	if len(machines) == 0 {
 		fmt.Fprintln(app.Out, "avar is not managing any Linux environments, so there is nothing to stop.")
 		return nil
@@ -135,23 +134,49 @@ func stopEverything(ctx context.Context, app *App, p provider.Provider) error {
 			continue
 		}
 
-		fmt.Fprintf(app.Out, "Stopping %s…\n", label)
-		switch err := p.Stop(ctx, machine.Name, types.DiscardProgress); {
-		case errors.Is(err, provider.ErrMachineNotFound):
-			// It disappeared between the listing and the stop, which is the
-			// state --all was asking for.
-			alreadyIdle++
-		case errors.Is(err, provider.ErrNotOwned):
-			failures = append(failures, unownedError(err, label))
+		switch didStop, err := stopOne(ctx, app, p, machine, label); {
 		case err != nil:
+			// Every machine is attempted before anything is reported: one
+			// environment refusing to stop must not leave the others running.
 			failures = append(failures, err)
-		default:
+		case didStop:
 			stopped++
+		default:
+			alreadyIdle++
 		}
 	}
 
 	writeStopSummary(app, stopped, alreadyIdle, busy)
 	return joinStopFailures(failures)
+}
+
+// stopOne stops a machine the listing reported as running, and says whether
+// there was anything to stop.
+//
+// A machine that disappeared between the listing and the stop is the state the
+// caller was asking for, not a failure.
+func stopOne(ctx context.Context, app *App, p provider.Provider, machine types.MachineStatus, label string) (stopped bool, err error) {
+	fmt.Fprintf(app.Out, "Stopping %s…\n", label)
+	switch err := p.Stop(ctx, machine.Name, types.DiscardProgress); {
+	case errors.Is(err, provider.ErrMachineNotFound):
+		return false, nil
+	case errors.Is(err, provider.ErrNotOwned):
+		return false, unownedError(err, label)
+	case err != nil:
+		return false, err
+	default:
+		return true, nil
+	}
+}
+
+// findMachine looks a resolved machine up in the backend's listing.
+func findMachine(machines []types.MachineStatus, name string) (types.MachineStatus, bool) {
+	for _, machine := range machines {
+		if machine.Name == name {
+			return machine, true
+		}
+	}
+	return types.MachineStatus{}, false
 }
 
 // writeStopSummary reports what --all did, including what it deliberately did
@@ -168,9 +193,8 @@ func writeStopSummary(app *App, stopped, alreadyIdle int, busy []string) {
 	}
 }
 
-// joinStopFailures reports the machines --all could not stop, having tried
-// every one of them first: one environment refusing to stop must not leave the
-// others running.
+// joinStopFailures reports the machines that could not be stopped, after every
+// one of them has been tried.
 func joinStopFailures(failures []error) error {
 	switch len(failures) {
 	case 0:
@@ -194,5 +218,5 @@ func joinStopFailures(failures []error) error {
 // which of the two things the user can do next.
 func unownedError(cause error, label string) error {
 	return fmt.Errorf("stopping %s: %w. avar will not act on a machine it has no record of creating; "+
-		"run `avr` to let avar adopt or clean it up, or remove it with your virtualization tool directly", label, cause)
+		"run `avr` to let avar adopt or clean it up, or stop it with your virtualization tool directly", label, cause)
 }
