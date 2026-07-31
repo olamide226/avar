@@ -92,6 +92,17 @@ type Input struct {
 	// EnvFile carries variables loaded from --env-file, as name → value
 	// (REQ-12.2). A nil map is the same as an empty one.
 	EnvFile map[string]string
+
+	// Allowlist names host variables the user has granted standing
+	// permission to cross, through forward_env in avar's own configuration
+	// (REQ-12.4). It is the one grant that outlives a single invocation, and
+	// it is deliberately host-side: a grant that travelled with the project
+	// would let a cloned repository decide what leaves the user's machine.
+	//
+	// Each name behaves like a bare --env: the host's value is forwarded if
+	// the host has one, and nothing happens if it does not. A name absent
+	// from this list cannot cross, which is what keeps PROP-4 true.
+	Allowlist []string
 }
 
 // Compose returns the environment for one guest execution.
@@ -124,6 +135,19 @@ func Compose(in Input) map[string]string {
 		out[name] = value
 	}
 	out[termName] = terminalType(in.Host[termName])
+
+	// Apply the standing forward_env grant (REQ-12.4). It comes before the
+	// per-invocation flags so that either can override it: a standing grant
+	// is a default, not a floor.
+	for _, name := range in.Allowlist {
+		name = strings.TrimSpace(name)
+		if name == "" || strings.Contains(name, "=") {
+			continue
+		}
+		if value, ok := in.Host[name]; ok {
+			out[name] = value
+		}
+	}
 
 	// Apply --env-file contents (REQ-12.2).
 	for name, value := range in.EnvFile {

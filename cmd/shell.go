@@ -77,6 +77,7 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 			Host:      envpolicy.HostEnviron(),
 			Forwarded: inv.Env,
 			EnvFile:   envFile,
+			Allowlist: forwardEnv(app),
 		}),
 		TTY:             stdinIsTerminal(),
 		ForwardSSHAgent: inv.SSHAgent,
@@ -256,6 +257,27 @@ func stdinIsTerminal() bool {
 		return false
 	}
 	return stat.Mode()&os.ModeCharDevice != 0
+}
+
+// forwardEnv reads the standing forward_env grant from avar's configuration
+// (REQ-12.4).
+//
+// It returns nothing rather than failing when the configuration cannot be
+// read: forward_env is an optional convenience, and refusing to open a shell
+// because a hand-edited file has a typo in it would be a poor trade. The
+// consequence — a variable the user expected not arriving — is visible in the
+// guest, whereas a shell that will not start is not obviously about this at
+// all.
+func forwardEnv(app *App) []string {
+	store, err := app.Store()
+	if err != nil {
+		return nil
+	}
+	names, err := store.ConfigList("forward_env")
+	if err != nil {
+		return nil
+	}
+	return names
 }
 
 // loadEnvFile opens the file at path and parses it as envpolicy.ParseDotEnv

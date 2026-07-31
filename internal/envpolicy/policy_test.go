@@ -371,3 +371,72 @@ func TestHostEnviron_DropsMalformedEntries(t *testing.T) {
 		t.Error("HostEnviron() produced a variable with an empty name")
 	}
 }
+
+// forward_env is a standing grant, and the whole point of PROP-4 is that a
+// grant is the only way anything crosses. A name not on the list must not.
+func TestCompose_AllowlistForwardsOnlyWhatItNames_REQ_12_4_PROP_4(t *testing.T) {
+	host := map[string]string{
+		"AWS_PROFILE":   "work",
+		"GITHUB_TOKEN":  "ghp_secret",
+		"AWS_SECRET_ID": "must-not-cross",
+	}
+
+	got := Compose(Input{Host: host, Allowlist: []string{"AWS_PROFILE", "GITHUB_TOKEN"}})
+
+	if got["AWS_PROFILE"] != "work" || got["GITHUB_TOKEN"] != "ghp_secret" {
+		t.Errorf("a granted variable did not cross: %v", got)
+	}
+	if _, present := got["AWS_SECRET_ID"]; present {
+		t.Error("a variable absent from forward_env crossed into the guest (PROP-4)")
+	}
+}
+
+// A name on the list that the host does not have is not an error and does not
+// create an empty variable, which would read as "set but blank" in the guest.
+func TestCompose_AllowlistSkipsVariablesTheHostDoesNotHave_REQ_12_4(t *testing.T) {
+	got := Compose(Input{Host: map[string]string{}, Allowlist: []string{"NOT_SET"}})
+	if _, present := got["NOT_SET"]; present {
+		t.Error("a variable the host does not have was created in the guest")
+	}
+}
+
+// The standing grant is a default: a per-invocation flag overrides it, so a
+// user can correct forward_env for one command without editing the file.
+func TestCompose_PerInvocationFlagsOverrideTheAllowlist_REQ_12_4(t *testing.T) {
+	host := map[string]string{"AWS_PROFILE": "work"}
+
+	got := Compose(Input{
+		Host:      host,
+		Allowlist: []string{"AWS_PROFILE"},
+		Forwarded: []string{"AWS_PROFILE=personal"},
+	})
+	if got["AWS_PROFILE"] != "personal" {
+		t.Errorf("AWS_PROFILE = %q, want the --env value to win over forward_env", got["AWS_PROFILE"])
+	}
+
+	got = Compose(Input{
+		Host:      host,
+		Allowlist: []string{"AWS_PROFILE"},
+		EnvFile:   map[string]string{"AWS_PROFILE": "from-file"},
+	})
+	if got["AWS_PROFILE"] != "from-file" {
+		t.Errorf("AWS_PROFILE = %q, want the --env-file value to win over forward_env", got["AWS_PROFILE"])
+	}
+}
+
+// An entry that is blank or malformed must be ignored rather than becoming a
+// variable with a strange name, since config.toml is hand-edited.
+func TestCompose_AllowlistIgnoresMalformedEntries_REQ_12_4(t *testing.T) {
+	got := Compose(Input{
+		Host:      map[string]string{"OK": "yes"},
+		Allowlist: []string{"", "   ", "A=B", "OK"},
+	})
+	if got["OK"] != "yes" {
+		t.Error("a well-formed entry was lost among malformed ones")
+	}
+	for _, bad := range []string{"", "   ", "A=B", "A"} {
+		if _, present := got[bad]; present {
+			t.Errorf("malformed allowlist entry %q became a guest variable", bad)
+		}
+	}
+}
