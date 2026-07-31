@@ -54,6 +54,13 @@ fmt-check:
 tidy-check:
 	go mod tidy -diff
 
+# Point git at the versioned hooks. Linked worktrees share the repository
+# config, so this covers them too.
+.PHONY: hooks
+hooks:
+	git config core.hooksPath .githooks
+	@echo "hooks installed: direct pushes to main are now refused"
+
 .PHONY: clean
 clean:
 	rm -rf bin coverage.out
