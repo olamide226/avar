@@ -21,9 +21,16 @@ between sessions, and any port you listen on reachable at `localhost` on macOS.
 
 ## Status
 
-Early development. avar is being built spec-first: see
-[`.kiro/specs/avar-cli/`](.kiro/specs/avar-cli/) for the requirements, design, and
-phased implementation plan, and [`CLAUDE.md`](CLAUDE.md) for the working agreement.
+Early development, and the core loop works: `avr` and `avr <command>` open the
+current directory in a real Linux VM, with the project mounted live at the same
+path and the guest's exit code becoming avar's. Warm invocations measure ~205 ms.
+
+Still to come before the MVP is complete: mount-change handling, `--arch`/`--distro`
+wiring, snapshots and reset, project isolation, and `avr code`.
+
+avar is built spec-first: see [`.kiro/specs/avar-cli/`](.kiro/specs/avar-cli/) for
+the requirements, design, and phased plan, [`CLAUDE.md`](CLAUDE.md) for the working
+agreement, and [`HANDOFF.md`](HANDOFF.md) for current state and open work.
 
 ## How it works
 

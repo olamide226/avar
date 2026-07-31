@@ -56,7 +56,7 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
     - _Requirements: 1.2, 1.3, 1.6, 4.7, 5.4_
     - _writes: internal/provider/lima/lima.go, internal/provider/lima/status.go, internal/provider/lima/lima_test.go, internal/provider/lima/testdata/*_
 
-- [ ] 8. Implement shell attachment (interactive + one-shot)
+- [x] 8. Implement shell attachment (interactive + one-shot)  _(PR #20)_
   - `limactl shell --workdir` wiring; PTY iff stdin is TTY; SIGINT/SIGTERM/SIGWINCH forwarding; TERM passthrough with color-capable fallback; exit-code propagation; env policy applied with base allowlist only (TERM, LANG, LC_*)
   - First e2e tests: cold-start `avr true`, `avr sh -c 'exit 42'` → 42, `avr pwd` == host pwd, guest `env` contains no marker var exported on host (Properties 1, 3, 4, 8)
   - _Requirements: 1.1, 1.4, 1.7, 2.1, 2.2, 2.3, 2.4, 3.1, 3.2, 3.3, 3.4, 9.1, 17.1_
@@ -68,10 +68,16 @@ Module path: `github.com/<owner>/avar`, binary `avr`.
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 9.3, 9.4_
   - _writes: internal/mounts/mounts.go, internal/mounts/mounts_test.go, e2e/mounts_test.go_
 
-- [ ] 10. Implement `avr status` and `avr stop`
+- [x] 10. Implement `avr status` and `avr stop`  _(PR #19)_
   - Status: env label, state, resources, disk, mode, registered mounts, port-forward diagnostics from hostagent log (7.2); empty-state onboarding message; `stop` current selector / `--all`; never touches non-avar Lima machines
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 7.2_
   - _writes: cmd/status.go, cmd/stop.go, internal/provider/lima/portdiag.go, cmd/status_test.go_
+
+- [ ] 29. Call the reconciler on startup
+  - `internal/state.Reconcile` is built and tested (task 13, PR #9) but **nothing calls it**. Every `avr` invocation should reconcile before resolving, so a machine left by a killed provision is adopted or cleaned up instead of persisting. Found while debugging task 8: a failed run left a running machine with no record and no automatic repair.
+  - Decide where it runs (likely `cmd/app.go` before the first provider use), what it prints when it acts, and how it stays cheap on the warm path — design §3.3 requires the consistent case to do no writes
+  - _Requirements: 1.6, 17.5_
+  - _writes: cmd/app.go, cmd/reconcile.go, cmd/reconcile_test.go_
 
 - [ ] 11. Wire `--arch` / `--distro` end to end
   - New-environment provision notice (4.7); one-time amd64 emulation warning on Apple Silicon (4.6); package persistence per environment verified in e2e (install pkg in ubuntu-arm64, absent in fedora-arm64)
