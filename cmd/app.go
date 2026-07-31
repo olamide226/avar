@@ -26,6 +26,7 @@ import (
 // of the backend is worse than asking again.
 type App struct {
 	Version string
+	Stdin   io.Reader
 	Out     io.Writer
 	Err     io.Writer
 
@@ -48,7 +49,7 @@ type App struct {
 
 // newApp returns an App writing to the real streams.
 func newApp(version string) *App {
-	return &App{Version: version, Out: os.Stdout, Err: os.Stderr}
+	return &App{Version: version, Stdin: os.Stdin, Out: os.Stdout, Err: os.Stderr}
 }
 
 // Store opens avar's state directory.
