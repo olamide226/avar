@@ -379,3 +379,38 @@ func TestProviderID_IsLima_REQ_18_14(t *testing.T) {
 		t.Errorf("ID() = %q, want %q", got, types.ProviderLima)
 	}
 }
+
+// Adding a project to a running machine restarts it, and a guest that hangs on
+// shutdown must not take the mount change down with it.
+//
+// This is a regression test with a specific history: escalation was added to
+// Stop, but SetMounts stopped the machine by calling limactl directly and so
+// never got it. A wedged hostagent then failed `avr` in a new project with a
+// message about stopping, which reads as unrelated to sharing a directory.
+func TestSetMounts_EndsAMachineThatWillNotShutDownCleanly_REQ_6_4(t *testing.T) {
+	project := t.TempDir()
+	runner := newFakeRunner().
+		listing(fixture(t, "list-mixed.json")).
+		failOn("stop", errors.New("hostagent would not exit")).
+		failOn("stop --force", nil)
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	sink := &recordingSink{}
+
+	dirs := shares(project)
+	if err := p.SetMounts(context.Background(), "avr-ubuntu-24.04-arm64", dirs, sink); err != nil {
+		t.Fatalf("sharing a directory failed because the machine would not stop cleanly: %v", err)
+	}
+
+	var forced bool
+	for _, argv := range runner.limactlArgvs() {
+		if argv == "limactl stop --force avr-ubuntu-24.04-arm64" {
+			forced = true
+		}
+	}
+	if !forced {
+		t.Errorf("the machine was never ended after refusing to stop: %v", runner.limactlArgvs())
+	}
+	if len(sink.of(types.ProgressWarning)) == 0 {
+		t.Error("a machine was ended outright without telling the user")
+	}
+}

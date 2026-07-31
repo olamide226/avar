@@ -146,7 +146,7 @@ func (p *Provider) ensureBase(ctx context.Context, spec provider.MachineSpec, ba
 		// must be stopped so that its disk image is closed and cloneable
 		// (Lima clones from a stopped instance's disk).
 		if inst.running() {
-			if _, err := p.run(ctx, "stop", base); err != nil {
+			if err := p.stopMachine(ctx, base, progress); err != nil {
 				return fmt.Errorf("stopping the base machine %s before cloning: %w", base, err)
 			}
 		}
@@ -183,7 +183,7 @@ func (p *Provider) ensureBase(ctx context.Context, spec provider.MachineSpec, ba
 	}
 
 	// Stop the base so its disk image is closed and cloneable.
-	if _, err := p.run(ctx, "stop", base); err != nil {
+	if err := p.stopMachine(ctx, base, progress); err != nil {
 		return fmt.Errorf("stopping the base machine %s after provisioning: %w", base, err)
 	}
 

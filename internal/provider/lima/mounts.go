@@ -94,7 +94,7 @@ func (p *Provider) SetMounts(ctx context.Context, machine string, mounts []types
 	})
 
 	if wasRunning {
-		if _, err := p.run(ctx, "stop", machine); err != nil {
+		if err := p.stopMachine(ctx, machine, progress); err != nil {
 			return fmt.Errorf("stopping machine %s to share new directories with it: %w; "+
 				"Lima cannot change file sharing while a machine is running", machine, err)
 		}
