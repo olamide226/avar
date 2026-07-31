@@ -559,3 +559,57 @@ func TestHostResources_FallsBackWhenTheProbeFails(t *testing.T) {
 		t.Errorf("host memory = %v GiB, want the conservative fallback %v", host.MemoryGB, fallbackHostMemoryGB)
 	}
 }
+
+// A guest that will not shut down cleanly must still stop. Before this,
+// avar surfaced the backend's own `limactl stop --force` command and left the
+// user to run it, which is the machine-management model avar exists to hide
+// (REQ-1.5).
+func TestStop_EndsAMachineThatWillNotShutDownCleanly_REQ_5_2(t *testing.T) {
+	runner := newFakeRunner().
+		listing(fixture(t, "list-mixed.json")).
+		failOn("stop", errors.New("hostagent would not exit")).
+		failOn("stop --force", nil)
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	sink := &recordingSink{}
+
+	if err := p.Stop(context.Background(), "avr-ubuntu-24.04-arm64", sink); err != nil {
+		t.Fatalf("Stop did not recover from an unclean shutdown: %v", err)
+	}
+
+	assertArgvs(t, runner.limactlArgvs(), []string{
+		"limactl list --json",
+		"limactl stop avr-ubuntu-24.04-arm64",
+		"limactl stop --force avr-ubuntu-24.04-arm64",
+	})
+
+	// Ending a machine outright can lose work inside it, so it is announced.
+	var warned bool
+	for _, k := range sink.kinds() {
+		if k == types.ProgressWarning {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("a machine was ended outright without telling the user: %v", sink.kinds())
+	}
+}
+
+// When even ending it outright fails there is nothing left to try, and the
+// error must name both attempts so the failure is diagnosable.
+func TestStop_ReportsBothFailuresWhenAMachineCannotBeEnded(t *testing.T) {
+	runner := newFakeRunner().
+		listing(fixture(t, "list-mixed.json")).
+		failOn("stop", errors.New("hostagent would not exit")).
+		failOn("stop --force", errors.New("no such process"))
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+
+	err := p.Stop(context.Background(), "avr-ubuntu-24.04-arm64", &recordingSink{})
+	if err == nil {
+		t.Fatal("Stop reported success when the machine is still running")
+	}
+	for _, want := range []string{"hostagent would not exit", "no such process"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not mention %q: %v", want, err)
+		}
+	}
+}

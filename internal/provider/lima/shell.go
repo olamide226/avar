@@ -62,6 +62,26 @@ const guestEnvCommand = "env"
 // for propagating the host environment wholesale.
 var transportForwardable = []string{"TERM", "COLORTERM", "LANG"}
 
+// sshAgentOverride turns on SSH agent forwarding for one invocation (REQ-12.3).
+//
+// `limactl shell` has no agent flag, but it documents $SSH as the way to
+// substitute the ssh command it runs, so the forwarding request goes there.
+// The socket itself needs nothing from avar: ssh runs on the host and reads the
+// host's own SSH_AUTH_SOCK, which transportEnv leaves in place because it is
+// not something the transport can put into the guest by itself.
+//
+// Disabling connection multiplexing is what actually makes it work, and is not
+// optional. Lima's ssh configuration sets ControlMaster/ControlPersist, so a
+// second `limactl shell` reuses the connection the first one opened; `-A` on
+// the later invocation is then silently ignored, because agent forwarding is
+// negotiated when the master connection is established. Verified against Lima
+// 2.2.0: with multiplexing left on, SSH_AUTH_SOCK is empty in the guest.
+//
+// The cost is a fresh TCP+SSH handshake for an agent-forwarded session, which
+// is why this is applied only when the flag is given and never to the warm path
+// (REQ-17.1).
+const sshAgentOverride = `SSH=ssh -A -o ControlMaster=no -o ControlPath=none`
+
 // forwardedSignals are the signals avar passes on to the guest.
 //
 // SIGINT and SIGTERM are Requirement 2.4. SIGWINCH is Requirement 3.1: it
@@ -133,6 +153,9 @@ func checkShellOpts(machine string, opts provider.ShellOpts) error {
 func (p *Provider) shellCommand(ctx context.Context, machine string, opts provider.ShellOpts) (*exec.Cmd, *stdoutRelay) {
 	cmd := exec.CommandContext(ctx, p.limactl, shellArgv(machine, opts)...)
 	cmd.Env = transportEnv(os.Environ(), opts.Env)
+	if opts.ForwardSSHAgent {
+		cmd.Env = append(cmd.Env, sshAgentOverride)
+	}
 
 	cmd.Stdin = opts.Stdin
 	if cmd.Stdin == nil {

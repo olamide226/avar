@@ -40,14 +40,6 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 		return fmt.Errorf("--env-file %s: %w", inv.EnvFile, err)
 	}
 
-	// No backend forwards the host SSH agent yet, so the flag is refused
-	// rather than ignored. Handing the user a session that silently has no
-	// agent is worse than refusing one: they would discover it only when an
-	// authenticated operation failed inside the guest (REQ-12.3).
-	if inv.SSHAgent {
-		return Exit(exitUsage, errors.New("--ssh-agent is not implemented yet: no avar backend forwards the host SSH agent, so the flag would have no effect"))
-	}
-
 	p, err := app.Provider(ctx)
 	if err != nil {
 		return err

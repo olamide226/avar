@@ -329,3 +329,66 @@ func TestExitStatus_AFailureToRunAtAllIsAnError(t *testing.T) {
 		t.Errorf("error %q does not name the machine avar was working on", err)
 	}
 }
+
+// The flag has to reach the transport, not merely be recorded on the options.
+// An earlier version set ShellOpts.ForwardSSHAgent and no backend ever read it,
+// so `avr --ssh-agent` produced a session with no agent and said nothing.
+func TestShellCommand_ForwardsTheAgentWhenAsked_REQ_12_3(t *testing.T) {
+	p := newTestProvider(t, newFakeRunner(), newFakeRecords(ownedRecord(shellMachine)))
+
+	cmd, relay := p.shellCommand(context.Background(), shellMachine, provider.ShellOpts{
+		Workdir:         "/w",
+		Argv:            []string{"true"},
+		ForwardSSHAgent: true,
+	})
+	if relay != nil {
+		relay.close()
+	}
+
+	ssh := lastValueOf(cmd.Env, "SSH")
+	if ssh == "" {
+		// Deliberately not printing cmd.Env: it is the developer's real
+		// environment, and a failing test is not a reason to put their
+		// secrets in CI output.
+		t.Fatal("nothing in the transport environment asks ssh to forward the agent (no SSH= entry)")
+	}
+	if !strings.Contains(ssh, "-A") {
+		t.Errorf("SSH=%q does not request agent forwarding", ssh)
+	}
+	// Lima multiplexes over a persistent control socket, so a reused
+	// connection ignores -A entirely. Without this the flag is a no-op on the
+	// second and every later invocation.
+	if !strings.Contains(ssh, "ControlPath=none") {
+		t.Errorf("SSH=%q reuses Lima's control socket, so -A would be ignored", ssh)
+	}
+}
+
+// The default must stay agentless (REQ-9.2): the agent is a credential, and it
+// crosses only when the user asks for it that invocation.
+func TestShellCommand_DoesNotForwardTheAgentByDefault_REQ_9_2(t *testing.T) {
+	p := newTestProvider(t, newFakeRunner(), newFakeRecords(ownedRecord(shellMachine)))
+
+	cmd, relay := p.shellCommand(context.Background(), shellMachine, provider.ShellOpts{
+		Workdir: "/w",
+		Argv:    []string{"true"},
+	})
+	if relay != nil {
+		relay.close()
+	}
+
+	if ssh := lastValueOf(cmd.Env, "SSH"); strings.Contains(ssh, "-A") {
+		t.Errorf("the agent was forwarded without being asked for: SSH=%q", ssh)
+	}
+}
+
+// lastValueOf returns the value of the final NAME= entry in an environment,
+// which is the one exec applies when a name appears more than once.
+func lastValueOf(env []string, name string) string {
+	value := ""
+	for _, entry := range env {
+		if got, rest, ok := strings.Cut(entry, "="); ok && got == name {
+			value = rest
+		}
+	}
+	return value
+}
