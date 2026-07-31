@@ -3,10 +3,12 @@ package mounts_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/olamide226/avar/internal/mounts"
 	"github.com/olamide226/avar/internal/provider"
@@ -37,7 +39,7 @@ func TestEnsure_AlreadyShared_ReturnsImmediately_REQ_17_1(t *testing.T) {
 	fk.Reset()
 
 	// The project is already shared — so Ensure should return immediately.
-	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", existing, existing.GuestPath, 0, types.DiscardProgress)
+	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", existing, existing.GuestPath, 0, nil, types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("Ensure on an already-shared project: %v", err)
 	}
@@ -73,7 +75,7 @@ func TestEnsure_NewProject_NoSessions_AppliesMount(t *testing.T) {
 
 	// Add a second project.
 	newMount := types.MountSpec{HostPath: "/Users/dev/proj-b", GuestPath: "/Users/dev/proj-b", Writable: true}
-	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, types.DiscardProgress)
+	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, nil, types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("Ensure for a new project: %v", err)
 	}
@@ -119,7 +121,7 @@ func TestEnsure_AppliedSetEqualsRegisteredRoots_PROP_5(t *testing.T) {
 	projects := []string{"/Users/dev/proj-a", "/Users/dev/proj-b", "/Users/dev/proj-c"}
 	for _, p := range projects {
 		mount := types.MountSpec{HostPath: p, GuestPath: p, Writable: true}
-		_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", mount, mount.GuestPath, 0, types.DiscardProgress)
+		_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", mount, mount.GuestPath, 0, nil, types.DiscardProgress)
 		if err != nil {
 			t.Fatalf("Ensure for %s: %v", p, err)
 		}
@@ -162,7 +164,7 @@ func TestEnsure_NewProject_WithSessions_ReturnsConflict_REQ_6_4(t *testing.T) {
 
 	// Three other sessions are attached.
 	newMount := types.MountSpec{HostPath: "/Users/dev/proj-b", GuestPath: "/Users/dev/proj-b", Writable: true}
-	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 3, types.DiscardProgress)
+	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 3, nil, types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("Ensure with sessions: %v", err)
 	}
@@ -199,7 +201,7 @@ func TestEnsure_SubdirectoryReuse_REQ_6_6(t *testing.T) {
 	// The mount spec is the same (project root), but guestCwd points deeper.
 	// This is what MapProjectPath returns when the user is in a subdirectory.
 	guestCwd := filepath.Join(root, "a", "b")
-	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", existing, guestCwd, 0, types.DiscardProgress)
+	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", existing, guestCwd, 0, nil, types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("Ensure from a subdirectory: %v", err)
 	}
@@ -230,7 +232,7 @@ func TestEnsure_VerifyMountFails_ReturnsError_REQ_6_5(t *testing.T) {
 	fk.SetExitCode(1)
 
 	newMount := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
-	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, types.DiscardProgress)
+	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, nil, types.DiscardProgress)
 	if err == nil {
 		t.Fatal("Ensure succeeded when mount verification should have failed")
 	}
@@ -246,7 +248,7 @@ func TestEnsure_AppliedMountsError_ReturnsWrappedError(t *testing.T) {
 	fk := fake.New()
 
 	// The machine does not exist — AppliedMounts should fail.
-	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", types.MountSpec{HostPath: "/x", GuestPath: "/x"}, "/x", 0, types.DiscardProgress)
+	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", types.MountSpec{HostPath: "/x", GuestPath: "/x"}, "/x", 0, nil, types.DiscardProgress)
 	if err == nil {
 		t.Fatal("Ensure succeeded on a nonexistent machine")
 	}
@@ -263,7 +265,7 @@ func TestEnsure_SetMountsError_ReturnsWrappedError(t *testing.T) {
 	fk.FailOn(fake.OpSetMounts, errors.New("cannot edit configuration"))
 
 	newMount := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
-	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, types.DiscardProgress)
+	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, nil, types.DiscardProgress)
 	if err == nil {
 		t.Fatal("Ensure succeeded when SetMounts should have failed")
 	}
@@ -287,7 +289,7 @@ func TestEnsure_ProgressEvents_Delivered(t *testing.T) {
 	})
 
 	newMount := types.MountSpec{HostPath: "/Users/dev/proj-b", GuestPath: "/Users/dev/proj-b", Writable: true}
-	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, sink)
+	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, nil, sink)
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -304,7 +306,7 @@ func TestEnsure_MachineNotOwned_ReturnsError_PROP_6(t *testing.T) {
 	fk.AddForeignMachine("avr-foreign-00")
 
 	mount := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
-	_, err := mounts.Ensure(ctx, fk, "avr-foreign-00", mount, mount.GuestPath, 0, types.DiscardProgress)
+	_, err := mounts.Ensure(ctx, fk, "avr-foreign-00", mount, mount.GuestPath, 0, nil, types.DiscardProgress)
 	if !errors.Is(err, provider.ErrNotOwned) {
 		t.Fatalf("error = %v, want ErrNotOwned", err)
 	}
@@ -323,7 +325,7 @@ func TestEnsure_WarmPathNoRestart_PROP_5_Warm(t *testing.T) {
 	restartsBefore := fk.Restarts("avr-ubuntu-24.04-arm64")
 	fk.Reset()
 
-	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", existing, existing.GuestPath, 0, types.DiscardProgress)
+	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", existing, existing.GuestPath, 0, nil, types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("Ensure on already-shared project: %v", err)
 	}
@@ -337,5 +339,91 @@ func mustSetMounts(t *testing.T, ctx context.Context, fk *fake.Fake, machine str
 	t.Helper()
 	if err := fk.SetMounts(ctx, machine, mounts, types.DiscardProgress); err != nil {
 		t.Fatalf("seed mounts for %s: %v", machine, err)
+	}
+}
+
+// A machine that shares too many directories cannot boot at all, and the
+// failure gives no hint that mounts caused it. The cap is what keeps a user
+// who works across many projects from reaching that state.
+func TestEnsure_UnsharesTheLeastRecentlyUsedProjectAtTheLimit_REQ_6_1(t *testing.T) {
+	ctx := context.Background()
+	fk := fake.New()
+	const machine = "avr-ubuntu-24.04-arm64"
+	fk.AddMachine(machine, selector, types.KindShared, types.StateRunning)
+
+	// Fill the machine to the cap, oldest first.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	lastUsed := map[string]time.Time{}
+	applied := make([]types.MountSpec, 0, mounts.MaxMounts)
+	for i := 0; i < mounts.MaxMounts; i++ {
+		path := fmt.Sprintf("/Users/dev/p%02d", i)
+		applied = append(applied, types.MountSpec{HostPath: path, GuestPath: path, Writable: true})
+		lastUsed[path] = base.Add(time.Duration(i) * time.Hour)
+	}
+	if err := fk.SetMounts(ctx, machine, applied, types.DiscardProgress); err != nil {
+		t.Fatal(err)
+	}
+	fk.Reset()
+
+	// Entering one more must not push the machine over the limit.
+	newProject := types.MountSpec{HostPath: "/Users/dev/new", GuestPath: "/Users/dev/new", Writable: true}
+	lastUsed[newProject.HostPath] = base.Add(1000 * time.Hour)
+
+	res, err := mounts.Ensure(ctx, fk, machine, newProject, newProject.GuestPath, 0, lastUsed, types.DiscardProgress)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	call := fk.AssertCalled(t, fake.OpSetMounts)
+	if len(call.Mounts) > mounts.MaxMounts {
+		t.Errorf("applied %d mounts, over the limit of %d — this machine would not start", len(call.Mounts), mounts.MaxMounts)
+	}
+
+	// The oldest went, and it is reported so the user is not left wondering
+	// where a directory went.
+	if len(res.Unshared) != 1 || res.Unshared[0] != "/Users/dev/p00" {
+		t.Errorf("unshared %v, want the least recently used /Users/dev/p00", res.Unshared)
+	}
+
+	// The project being entered must still be there: a shell at a path that
+	// is not shared is the failure REQ-6.5 exists to prevent.
+	var kept bool
+	for _, m := range call.Mounts {
+		if m.HostPath == newProject.HostPath {
+			kept = true
+		}
+		if m.HostPath == "/Users/dev/p00" {
+			t.Error("the evicted project was still applied")
+		}
+	}
+	if !kept {
+		t.Error("the project being entered was not shared")
+	}
+}
+
+// Below the limit nothing is given up, which is the ordinary case and must
+// stay free of surprises.
+func TestEnsure_KeepsEveryProjectBelowTheLimit_REQ_6_1(t *testing.T) {
+	ctx := context.Background()
+	fk := fake.New()
+	const machine = "avr-ubuntu-24.04-arm64"
+	fk.AddMachine(machine, selector, types.KindShared, types.StateRunning)
+
+	applied := []types.MountSpec{{HostPath: "/Users/dev/a", GuestPath: "/Users/dev/a", Writable: true}}
+	if err := fk.SetMounts(ctx, machine, applied, types.DiscardProgress); err != nil {
+		t.Fatal(err)
+	}
+	fk.Reset()
+
+	newProject := types.MountSpec{HostPath: "/Users/dev/b", GuestPath: "/Users/dev/b", Writable: true}
+	res, err := mounts.Ensure(ctx, fk, machine, newProject, newProject.GuestPath, 0, nil, types.DiscardProgress)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if len(res.Unshared) != 0 {
+		t.Errorf("gave up %v while below the limit", res.Unshared)
+	}
+	if call := fk.AssertCalled(t, fake.OpSetMounts); len(call.Mounts) != 2 {
+		t.Errorf("applied %d mounts, want both", len(call.Mounts))
 	}
 }
