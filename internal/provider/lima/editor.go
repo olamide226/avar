@@ -56,20 +56,25 @@ func (p *Provider) EditorTarget(ctx context.Context, machine, guestPath string) 
 	// Replace the Lima host name with avar's alias, leaving every other
 	// directive — Hostname, Port, IdentityFile, User — intact so that the
 	// resulting stanza is self-contained and needs no Lima knowledge to use.
+	//
+	// Everything before the Host line is dropped. Lima's file opens with its
+	// own header, including a warning that modifications are lost when the
+	// instance restarts; copied into avar's file that warning is both untrue
+	// and alarming, and it describes a file the user is not looking at.
 	lines := strings.Split(string(data), "\n")
-	replaced := false
+	start := -1
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "Host ") && !strings.HasPrefix(trimmed, "Host *") {
 			lines[i] = "Host " + machine
-			replaced = true
+			start = i
 			break
 		}
 	}
-	if !replaced {
+	if start < 0 {
 		return provider.EditorTarget{}, fmt.Errorf("read Lima's SSH configuration for %s at %s: the file contains no Host directive", machine, configPath)
 	}
-	sshConfig := strings.Join(lines, "\n")
+	sshConfig := strings.TrimSpace(strings.Join(lines[start:], "\n"))
 
 	return provider.EditorTarget{
 		Authority: authority,

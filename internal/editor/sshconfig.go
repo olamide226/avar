@@ -49,6 +49,94 @@ func ConfigPath(sshDir string) string {
 	return filepath.Join(sshDir, "config")
 }
 
+// IncludeLine is the single directive the user's own SSH configuration needs
+// for avar's hosts to resolve.
+func IncludeLine(configPath string) string { return "Include " + configPath }
+
+// UserConfigPath is the OpenSSH client configuration avar's file must be
+// included from. It is the user's, not avar's, and avar adds at most one line
+// to it (REQ-13.3).
+func UserConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("find your home directory: %w", err)
+	}
+	return filepath.Join(home, ".ssh", "config"), nil
+}
+
+// HasInclude reports whether userConfig already pulls in avar's configuration.
+//
+// Matching is on the resolved path rather than the literal text, because
+// "Include ~/.avr/ssh/config" and the same path spelled out are the same
+// instruction, and asking a user twice to add a line they already have is
+// how a tool loses their trust.
+func HasInclude(userConfig, configPath string) (bool, error) {
+	data, err := os.ReadFile(userConfig)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", userConfig, err)
+	}
+
+	want, err := filepath.Abs(configPath)
+	if err != nil {
+		want = configPath
+	}
+	home, _ := os.UserHomeDir()
+
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || !strings.EqualFold(fields[0], "Include") {
+			continue
+		}
+		for _, arg := range fields[1:] {
+			got := strings.Trim(arg, `"`)
+			if home != "" && strings.HasPrefix(got, "~/") {
+				got = filepath.Join(home, got[2:])
+			}
+			if abs, err := filepath.Abs(got); err == nil {
+				got = abs
+			}
+			if got == want {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// AddInclude prepends the Include directive to the user's SSH configuration,
+// leaving everything already in the file byte-for-byte intact (REQ-13.3).
+//
+// It goes at the top because OpenSSH takes the first value it obtains for each
+// option, so a directive placed after an existing "Host *" block would be
+// ignored for avar's hosts.
+//
+// The caller is responsible for having obtained the user's consent: this
+// function edits a file avar does not own and must never be reached without
+// it.
+func AddInclude(userConfig, configPath string) error {
+	existing, err := os.ReadFile(userConfig)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", userConfig, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userConfig), sshDirPerm); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(userConfig), err)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("# Added by avar so that `avr code` can reach your Linux environments.\n")
+	buf.WriteString("# Remove this line to disconnect them; nothing else here is avar's.\n")
+	buf.WriteString(IncludeLine(configPath) + "\n")
+	if len(existing) > 0 {
+		buf.WriteString("\n")
+		buf.Write(existing)
+	}
+
+	return state.WriteFileAtomic(userConfig, buf.Bytes())
+}
+
 // hostHeader builds the comment that marks the start of one machine's block.
 func hostHeader(machine string) string {
 	return hostHeaderPrefix + machine + hostHeaderSuffix

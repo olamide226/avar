@@ -12,6 +12,50 @@ import (
 
 func init() { registerSubcommand("code", runCode) }
 
+// ensureSSHInclude makes sure the user's own SSH configuration pulls in
+// avar's, which is what lets VS Code resolve the host avar just wrote
+// (REQ-13.1).
+//
+// avar writes one line into a file it does not own, so it asks first, once —
+// after which HasInclude finds it and nothing is asked again. Declining is a
+// real answer, not a failure: `avr code` still opens, and the user is told the
+// exact line to add if they change their mind. A non-interactive run is
+// treated as a decline, because consent cannot be assumed from silence.
+func ensureSSHInclude(app *App, avarConfigPath string) error {
+	userConfig, err := editor.UserConfigPath()
+	if err != nil {
+		return err
+	}
+
+	present, err := editor.HasInclude(userConfig, avarConfigPath)
+	if err != nil {
+		return err
+	}
+	if present {
+		return nil
+	}
+
+	line := editor.IncludeLine(avarConfigPath)
+	if !stdinIsTerminal() {
+		fmt.Fprintf(app.Err, "avr: VS Code cannot find your Linux environments until %s includes avar's SSH configuration.\n", userConfig)
+		fmt.Fprintf(app.Err, "     Add this line to the top of that file:\n\n       %s\n\n", line)
+		return nil
+	}
+
+	fmt.Fprintf(app.Err, "avr: VS Code finds hosts through %s, which does not yet include avar's.\n", userConfig)
+	fmt.Fprintf(app.Err, "     avar would add one line to the top of it and change nothing else:\n\n       %s\n\n", line)
+	if !app.confirmYesNo("      Add it? (y/N) ") {
+		fmt.Fprintf(app.Err, "avr: left %s alone. Add the line above yourself when you want `avr code` to connect.\n", userConfig)
+		return nil
+	}
+
+	if err := editor.AddInclude(userConfig, avarConfigPath); err != nil {
+		return fmt.Errorf("add avar's Include line to %s: %w", userConfig, err)
+	}
+	fmt.Fprintf(app.Err, "avr: added it. This is asked once.\n")
+	return nil
+}
+
 // forgetSSHHost drops a destroyed machine's entry from avar's SSH
 // configuration, so the file does not accumulate stanzas pointing at guests
 // that no longer exist.
@@ -75,18 +119,22 @@ func runCode(ctx context.Context, app *App, inv cli.Invocation) error {
 		return fmt.Errorf("prepare the editor connection for %s: %w", target.Selector.Label(), err)
 	}
 
-	// Write an avar-owned SSH host entry so that VS Code's Remote-SSH
-	// can resolve the authority. Nothing touches the user's ~/.ssh/config
-	// — this file belongs to avar alone (REQ-13.3).
+	// Write an avar-owned SSH host entry so that VS Code's Remote-SSH can
+	// resolve the authority. The entry lives in a file that belongs to avar
+	// alone; the user's own configuration gains at most one Include line, and
+	// only with their consent (REQ-13.3).
 	if et.SSHConfig != "" {
 		store, err := app.Store()
 		if err != nil {
 			return err
 		}
-		if err := editor.WriteHost(store.SSHDir(), target.MachineName, et.SSHConfig); err != nil {
+		sshDir := store.SSHDir()
+		if err := editor.WriteHost(sshDir, target.MachineName, et.SSHConfig); err != nil {
 			return fmt.Errorf("prepare the SSH configuration for %s: %w", target.Selector.Label(), err)
 		}
-		fmt.Fprintf(app.Out, "avr: wrote SSH configuration for %s\n", target.Selector.Label())
+		if err := ensureSSHInclude(app, editor.ConfigPath(sshDir)); err != nil {
+			return err
+		}
 	}
 
 	if err := editor.Launch(ctx, et.Authority, et.GuestPath); err != nil {
