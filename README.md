@@ -29,17 +29,12 @@ Homebrew is the recommended route: the cask installs Lima as a dependency and
 clears the quarantine attribute that would otherwise stop the first run.
 
 ```bash
-brew tap olamide226/tap
-brew install --cask avar
+brew install --cask olamide226/tap/avar
 ```
 
-Or download the archive for your Mac from the
-[releases page](https://github.com/olamide226/avar/releases) and put `avr`
-somewhere on your `PATH`.
-
-> **No release is published yet.** Both routes above are how v0.1.0 will be
-> installed, not something you can run today. Until the first release, build from
-> source: `make build` puts `avr` in `./bin`.
+This installs the latest stable release and Lima. Or download the archive for
+your Mac from the [releases page](https://github.com/olamide226/avar/releases)
+and put `avr` somewhere on your `PATH`.
 
 ## Sixty seconds to a Linux shell
 
