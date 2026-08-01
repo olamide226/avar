@@ -113,7 +113,7 @@ avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or 
 
 4.7 IF `--arch` / `--distro` selection would require provisioning a new machine THEN THE CLI SHALL state which environment is being created before doing so (no silent multi-VM sprawl).
 
-### Requirement 5: Machine Lifecycle Management — *Phase 1 (5.1–5.4), Phase 2 (5.5)*
+### Requirement 5: Machine Lifecycle Management — *Phase 1 (5.1–5.4), Phase 2 (5.5–5.8)*
 
 **User Story:** As a developer, I want avar to manage machine state invisibly but let me inspect and stop it, so that I keep control without needing to think about VMs day to day.
 
@@ -128,6 +128,21 @@ avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or 
 5.4 THE CLI SHALL only ever manage machines it created (identified by an avar naming prefix/label), and SHALL never list, modify, or stop the user's other Lima machines.
 
 5.5 WHILE a machine has had no active avar sessions for the Idle_Timeout (default 2 hours, configurable, disableable) THE system SHALL stop that machine automatically to release memory. *(Phase 2)*
+
+*Criteria 5.6–5.8 added after implementation.* Every other lifecycle verb was
+specified — create, start, stop, idle-stop, reset — and removal was not, so nothing
+implemented it. The result was that an environment could be created but never
+deliberately removed: `avr reset` destroys and immediately recreates, and
+`avr isolate off` removes only the current project's machine and only when that
+project's directory is the working directory. A user wanting to reclaim the disk an
+environment holds had no avar command for it and had to reach for the backend's own
+tooling, which is precisely what Requirement 1.5 and the product rule exist to prevent.
+
+5.6 WHEN a user runs `avr destroy` THEN THE CLI SHALL remove the environment for the current Environment_Selector — the machine and everything inside it — after stating what will be destroyed and obtaining interactive confirmation, bypassable with `--yes`. Host project files SHALL never be affected. *(Phase 2)*
+
+5.7 WHEN a user runs `avr destroy --all` THEN THE CLI SHALL remove every avar-managed environment under the same confirmation rules, and SHALL report how many were removed. *(Phase 2)*
+
+5.8 WHEN a user runs `avr destroy --orphaned` THEN THE CLI SHALL remove only those isolated environments whose project directory no longer exists on the host, naming the project each belonged to. THIS is the only path by which such an environment can be removed, because `avr isolate off` requires the project directory it is being run from to exist. *(Phase 2)*
 
 ### Requirement 6: Project File Sharing (Live Mount) — *Phase 1*
 

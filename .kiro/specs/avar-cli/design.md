@@ -113,7 +113,8 @@ cmd/  ─────────────────┐
 avr [selector flags] [--] [COMMAND [ARGS...]]     # no COMMAND → interactive shell
 avr [selector flags] status | stop [--all] | code
 avr snapshot [NAME] | restore NAME | reset [--yes]     (Phase 2)
-avr isolate off                                        (Phase 2)
+avr isolate off [--yes]                                (Phase 2)
+avr destroy [--yes] [--all | --orphaned]               (Phase 2)
 
 Selector flags: --arch arm64|amd64   --distro NAME[:VERSION]   --isolate | --shared
 Forwarding flags (Phase 2): --env NAME[=V] (repeatable)  --env-file PATH  --ssh-agent

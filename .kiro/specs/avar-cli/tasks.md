@@ -121,7 +121,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 18.1, 18.14, 17.6_
   - _writes: internal/provider/select.go, internal/provider/select_test.go, cmd/root.go_
 
-## Phase 2 — MVP completion: lifecycle, isolation, editor, forwarding
+## Phase 2 — MVP completion: lifecycle, isolation, editor, forwarding, release
 
 - [x] 15. Implement snapshots and restore  _(PR #34)_
   - `avr snapshot <name>` / bare `avr snapshot` list with timestamps / `avr restore <name>`; stop-if-needed-then-resume orchestration; unknown name lists available
@@ -158,6 +158,36 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - `sessions.json` attach/detach records with stale-pid pruning; `avr internal idle-check`; launchd agent install with one-time notice; config.toml `idle_timeout` (default 2h, "0" disables); never stops machines with live sessions (Property 11)
   - _Requirements: 5.5_
   - _writes: internal/session/session.go, internal/session/idle.go, cmd/internal_idle.go, internal/session/session_test.go_
+
+- [ ] 30. Implement `avr destroy`
+  - `avr destroy` removes the current environment; `--all` removes every avar-managed environment; `--orphaned` removes isolated environments whose project directory no longer exists, naming the project each served. Destruction summary then interactive confirmation, bypassable with `--yes`, exactly as `avr reset` does it. Host project files untouched (Property 10). The machine's SSH host entry goes with it (`forgetSSHHost`), and its records with it.
+  - Add `destroy` to the argv grammar's subcommand set — the split a user sees must not change as commands land, so the name is reserved even before the handler exists.
+  - Found after Phase 2 was otherwise complete: every other lifecycle verb was specified and removal was not, so an environment could be created but never deliberately removed, and reclaiming its disk meant reaching for `limactl` (REQ-1.5).
+  - FakeProvider flow tests for each scope; e2e proves the machine is gone, the record is gone, and the host project directory is intact
+  - _Requirements: 5.6, 5.7, 5.8_
+  - _writes: cmd/destroy.go, cmd/destroy_test.go, internal/cli/grammar.go, internal/cli/grammar_test.go, e2e/z_destroy_test.go_
+
+- [ ] 31. Exercise the release pipeline before tagging
+  - `.goreleaser.yaml` and `.github/workflows/release.yml` exist (task 14) and have never run. Three things are missing and would each fail a real release: the `homebrew-tap` repository does not exist, the `HOMEBREW_TAP_TOKEN` secret is not configured, and no tag has ever been pushed.
+  - Order: `goreleaser release --snapshot --clean` locally (builds every artifact, publishes nothing) → create the tap repository and PAT secret → tag a prerelease (`v0.1.0-rc.1`) and verify the GitHub release, the archive, the checksums and the generated cask → only then tag `v0.1.0`
+  - Decide and document the signing posture: released binaries are unsigned and unnotarised, so a direct tarball download hits Gatekeeper. The cask strips the quarantine attribute, which covers Homebrew users; anyone else needs to be told.
+  - _Requirements: 17.2, 8.5_
+  - _writes: docs/releasing.md, .goreleaser.yaml (only if the dry run finds a defect)_
+
+- [ ] 32. Public-facing documentation
+  - [ ] 32.1 Rewrite the README for a public audience
+    - It currently reads as a project-status note. Needs: one-line pitch, install (Homebrew and direct), a sixty-second quickstart, a command table covering the whole surface, requirements, how it works, honest limitations, contributing, licence.
+    - **Platform support must be stated honestly.** macOS is supported today; Windows via WSL 2 is Requirement 18, Phase 4, and not started. The two must be visibly separated so no reader concludes Windows works.
+    - Limitations to state rather than omit: snapshots need an emulated environment (Lima's snapshots are QEMU-only), sixteen project directories per environment, unsigned binaries.
+    - _Requirements: 17.2_
+    - _writes: README.md, CONTRIBUTING.md_
+  - [ ] 32.2 Publish a documentation site  _(after v0.1.0)_
+    - GitHub Pages with the just-the-docs Jekyll theme: free for public repositories, no build toolchain beyond what Pages provides, and no third-party service.
+    - The README stays canonical for install and quickstart; the site carries what outgrows one page — command reference, configuration, troubleshooting, the environment matrix.
+    - **On a custom subdomain:** Pages serves `<owner>.github.io/avar` free, and a `CNAME` subdomain is free to configure — but only against a domain that is already owned and paid for. If there is no domain, the `github.io` URL costs nothing and needs no decision.
+    - Deferred until after v0.1.0 deliberately: a docs site that forks from the README before the README is settled produces two sources of truth.
+    - _Requirements: 17.2_
+    - _writes: docs/**, .github/workflows/pages.yml, _config.yml_
 
 ## Phase 3 — Post-MVP
 
