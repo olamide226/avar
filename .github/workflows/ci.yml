@@ -32,6 +32,9 @@ jobs:
       - name: Verify go.mod is tidy
         run: make tidy-check
 
+      - name: Test release versioning
+        run: make release-version-test
+
       - name: Build
         run: make build
 

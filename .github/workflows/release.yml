@@ -1,23 +1,35 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
   release:
+    # A tag pushed with GITHUB_TOKEN does not trigger another workflow. Keep
+    # tagging and publishing in this one CI-gated workflow rather than relying
+    # on a second tag-push trigger that would never run.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     # Builds must run on macOS: universal binaries are produced with Apple's
     # lipo, and avar targets macOS only (REQ-17.6).
     runs-on: macos-14
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
+          # Release exactly the commit whose CI run passed, not a newer main
+          # commit that may still be under test.
+          ref: ${{ github.event.workflow_run.head_sha }}
           # GoReleaser needs the full history and tags to build a changelog.
           fetch-depth: 0
 
@@ -26,7 +38,38 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Refresh release tags
+        run: git fetch --force --tags origin
+
+      - name: Determine release version
+        id: version
+        shell: bash
+        run: |
+          version="$(bash scripts/next-version.sh)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ -n "$version" ]]; then
+            echo "Publishing $version"
+          else
+            echo "No feat, fix, perf, or breaking Conventional Commit since the last stable tag; skipping release."
+          fi
+
+      - name: Create release tag
+        if: steps.version.outputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null; then
+            echo "Refusing to overwrite existing tag $VERSION." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+
       - name: Release
+        if: steps.version.outputs.version != ''
         uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"

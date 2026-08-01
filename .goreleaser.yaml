@@ -129,7 +129,7 @@ release:
     ## Installation
 
     ```bash
-    brew install olamide226/tap/avar
+    brew install --cask olamide226/tap/avar
     ```
 
     Lima is installed automatically as a dependency.

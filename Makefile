@@ -54,6 +54,10 @@ fmt-check:
 tidy-check:
 	go mod tidy -diff
 
+.PHONY: release-version-test
+release-version-test:
+	bash scripts/next-version_test.sh
+
 # Point git at the versioned hooks. Linked worktrees share the repository
 # config, so this covers them too.
 .PHONY: hooks
