@@ -16,6 +16,12 @@ coverage.out
 # the history.
 /tmp/
 
+# Local environment files. Never committed: this repository is public, and a
+# token that reaches history is a token that has to be revoked.
+.env
+.env.*
+!.env.example
+
 # Editor and OS noise
 .DS_Store
 .idea/
