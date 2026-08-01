@@ -195,6 +195,17 @@ avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or 
 
 #### Acceptance Criteria
 
+*Amended after implementation.* Snapshots depend on the backend: Lima implements
+them for QEMU machines only, and every snapshot subcommand exits `unimplemented`
+on a `vz` machine. avar runs host-native environments under `vz` deliberately —
+that is what supplies VirtioFS speed and Rosetta (see the VM-stack row in
+design.md §1) — so on an Apple Silicon Mac the default environment is precisely
+the one that cannot be snapshotted, while an emulated `--arch amd64` environment
+can. Criteria 10.1, 10.2 and 10.4 therefore apply *where the backend supports
+snapshots*; where it does not, the CLI SHALL say so, name `avr reset` as the way
+to return to a clean state, and change nothing. Criterion 10.3 (`avr reset`) is
+unaffected and works on every environment.
+
 10.1 WHEN a user runs `avr snapshot <name>` THEN THE CLI SHALL capture a named snapshot of the current Environment_Selector's machine while preserving the running workload state or cleanly stopping/restarting as required by the backend, and report what was captured.
 
 10.2 WHEN a user runs `avr restore <name>` THEN THE CLI SHALL restore that snapshot and confirm completion; IF the name does not exist THEN THE CLI SHALL list available snapshots.

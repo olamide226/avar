@@ -59,6 +59,17 @@ var (
 	// skipping EnsureMachine.
 	ErrMachineNotRunning = errors.New("machine is not running")
 
+	// ErrUnsupportedCapability reports that a backend implements an optional
+	// interface but cannot carry out the operation for this particular
+	// machine.
+	//
+	// Implementing an interface is a compile-time claim about the backend;
+	// whether an operation is possible can depend on how one machine is
+	// built. Lima is the case in point: its snapshots are a QEMU feature, so
+	// the same provider can snapshot an emulated machine and not a native
+	// one. A caller that type-asserted successfully still has to handle this.
+	ErrUnsupportedCapability = errors.New("this environment does not support that operation")
+
 	// ErrSnapshotNotFound reports an unknown snapshot name, so the caller can
 	// list the names that do exist instead of echoing a backend error
 	// (REQ-10.2).

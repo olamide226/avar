@@ -7,10 +7,29 @@ import (
 	"testing"
 )
 
+// requireSnapshots skips a test when the default environment cannot be
+// snapshotted.
+//
+// Lima implements snapshots for QEMU only, and avar runs host-native
+// environments under vz for VirtioFS speed and Rosetta. On an Apple Silicon
+// Mac the default environment is therefore the one that cannot snapshot, and
+// these tests have nothing to assert. Skipping states that plainly rather than
+// failing, which would read as a defect in avar; the refusal itself is covered
+// by a unit test against both machine kinds.
+func requireSnapshots(t *testing.T, dir string) {
+	t.Helper()
+
+	_, stderr, code := avr(t, dir, nil, "snapshot")
+	if code != 0 && strings.Contains(stderr, "does not support snapshots") {
+		t.Skip("this environment runs on Apple's virtualization framework, which cannot take snapshots")
+	}
+}
+
 // With no snapshots on a machine, `avr snapshot` prints a helpful message
 // instead of an empty table (REQ-10.4).
 func TestAvr_EmptySnapshotList_REQ_10_4(t *testing.T) {
 	dir := project(t, "snapshots-list-empty")
+	requireSnapshots(t, dir)
 
 	stdout, stderr, code := avr(t, dir, nil, "snapshot")
 	if code != 0 {
@@ -25,6 +44,7 @@ func TestAvr_EmptySnapshotList_REQ_10_4(t *testing.T) {
 // (REQ-10.1).
 func TestAvr_SnapshotCaptureAndList_REQ_10_1(t *testing.T) {
 	dir := project(t, "snapshots-capture")
+	requireSnapshots(t, dir)
 
 	const name = "e2e-test-snapshot"
 	stdout, stderr, code := avr(t, dir, nil, "snapshot", name)
@@ -48,6 +68,7 @@ func TestAvr_SnapshotCaptureAndList_REQ_10_1(t *testing.T) {
 // `avr restore <name>` restores a previously captured snapshot (REQ-10.2).
 func TestAvr_RestoreSnapshot_REQ_10_2(t *testing.T) {
 	dir := project(t, "snapshots-restore")
+	requireSnapshots(t, dir)
 
 	const name = "e2e-restore-test"
 	stdout, stderr, code := avr(t, dir, nil, "snapshot", name)
@@ -68,6 +89,7 @@ func TestAvr_RestoreSnapshot_REQ_10_2(t *testing.T) {
 // snapshots so the user can pick one without another command (REQ-10.2).
 func TestAvr_RestoreUnknownNameSuggestsAvailable_REQ_10_2(t *testing.T) {
 	dir := project(t, "snapshots-restore-unknown")
+	requireSnapshots(t, dir)
 
 	stdout, stderr, code := avr(t, dir, nil, "restore", "nonexistent-snapshot")
 	if code == 0 {
