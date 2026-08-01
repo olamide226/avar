@@ -185,7 +185,8 @@ This is [the manifest lesson](#a-file-manifest-bounds-what-a-task-writes-not-wha
 again, one layer down: the task wired the flag end to end *except* the end that does
 the work, and a field being set looks exactly like a field being used. For a flag that
 weakens or strengthens a security boundary, silence is the worst failure mode — the
-user believes the grant happened. Until a backend implements it, the flag is refused.
+user believes the grant happened. The flag was refused outright until a backend
+implemented forwarding, which the Lima backend now does.
 
 When a feature crosses a layer, the test that proves it belongs at the far side: assert
 the backend *acts*, not that the caller *asked*.
