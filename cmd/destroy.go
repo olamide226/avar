@@ -1,14 +1,12 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
-	"sort"
-	"strings"
 
 	"github.com/olamide226/avar/internal/cli"
+	"github.com/olamide226/avar/internal/state"
 	"github.com/olamide226/avar/internal/types"
 )
 
@@ -41,30 +39,61 @@ type destroyArgs struct {
 	yes   bool
 }
 
+// victim is a machine selected for destruction, together with the project it
+// served where avar knows one.
+//
+// The project comes from avar's own records rather than from the backend's
+// mount list. Which project an isolated machine serves is avar's bookkeeping
+// and nothing a backend can be asked (see the MachineStatus doc comment), and
+// REQ-5.8 requires naming it — so it is carried here from the lookup that
+// already had to establish it, rather than re-derived later from a mount and
+// hoped to be the same thing.
+type victim struct {
+	machine types.MachineStatus
+	project string
+	// sessions is how many live avr sessions are attached. It is counted from
+	// avar's own records rather than read from MachineStatus.Sessions, which
+	// no provider populates — the backend has no idea what an avr session is.
+	sessions int
+}
+
+// label names a victim the way the user chose it — by environment, and by
+// project when that is what distinguishes it — never by the machine name avar
+// generated (REQ-1.5).
+//
+// Several isolated environments share one environment label, so destroying
+// three of them would otherwise print the same sentence three times, and
+// REQ-5.8 asks for the project each belonged to.
+func (v victim) label() string {
+	label := environmentLabel(v.machine)
+	if v.project == "" {
+		return label
+	}
+	return fmt.Sprintf("%s for %s", label, v.project)
+}
+
 // parseDestroyArgs reads `destroy`'s flags. The grammar hands a subcommand its
 // arguments unparsed; what they mean is the command's business (design §3.1).
 func parseDestroyArgs(args []string) (destroyArgs, error) {
 	out := destroyArgs{scope: scopeCurrent}
-	scoped := ""
 
 	for _, arg := range args {
 		switch arg {
 		case destroyYesFlag:
 			out.yes = true
 		case destroyAllFlag, destroyOrphanedFlag:
-			// Two scopes in one command is a contradiction rather than a
-			// combination, and guessing which the user meant would be
-			// guessing about destruction.
-			if scoped != "" && scoped != arg {
+			want := scopeAll
+			if arg == destroyOrphanedFlag {
+				want = scopeOrphaned
+			}
+			// Two different scopes in one command is a contradiction rather
+			// than a combination, and guessing which was meant would be
+			// guessing about destruction. The same one twice is harmless.
+			if out.scope != scopeCurrent && out.scope != want {
 				return destroyArgs{}, fmt.Errorf("`avr destroy` cannot take both %s and %s: %s removes every environment, %s removes only those whose project directory is gone",
-					scoped, arg, destroyAllFlag, destroyOrphanedFlag)
+					destroyAllFlag, destroyOrphanedFlag, destroyAllFlag, destroyOrphanedFlag)
 			}
-			scoped = arg
-			if arg == destroyAllFlag {
-				out.scope = scopeAll
-			} else {
-				out.scope = scopeOrphaned
-			}
+			out.scope = want
 		default:
 			return destroyArgs{}, fmt.Errorf("`avr destroy` does not understand %q: it takes %s, %s, and %s to skip confirmation",
 				arg, destroyAllFlag, destroyOrphanedFlag, destroyYesFlag)
@@ -108,6 +137,7 @@ func runDestroy(ctx context.Context, app *App, inv cli.Invocation) error {
 		writeNothingToDestroy(app, args.scope)
 		return nil
 	}
+	countLiveSessions(app, victims)
 
 	writeDestroySummary(app, victims, args.scope)
 
@@ -117,33 +147,34 @@ func runDestroy(ctx context.Context, app *App, inv cli.Invocation) error {
 	}
 	fmt.Fprintln(app.Out)
 
-	destroyed := 0
-	for _, m := range victims {
-		fmt.Fprintf(app.Out, "Destroying %s…\n", environmentOf(m))
-		if err := p.Delete(ctx, m.Name); err != nil {
-			return fmt.Errorf("destroying %s: %w", environmentOf(m), err)
+	for _, v := range victims {
+		fmt.Fprintf(app.Out, "Destroying %s…\n", v.label())
+		if err := p.Delete(ctx, v.machine.Name); err != nil {
+			return fmt.Errorf("destroying %s: %w", v.label(), err)
 		}
-		// The machine is gone, so the things that describe it must go too:
-		// a record naming a machine that does not exist is exactly what
-		// reconciliation exists to clean up, and an SSH stanza pointing at a
-		// dead guest accumulates silently.
-		forgetMachineRecord(app, m.Name)
-		forgetSSHHost(app, m.Name)
-		destroyed++
+		forgetMachine(app, v.machine.Name)
 	}
 
 	fmt.Fprintln(app.Out)
 	fmt.Fprintf(app.Out, "Destroyed %s. Your project files on this Mac were not touched.\n",
-		countLabel(destroyed, "environment", "environments"))
+		countLabel(len(victims), "environment", "environments"))
 	fmt.Fprintln(app.Out, "Run `avr` in a project to create one again.")
 	return nil
 }
 
 // selectForDestruction resolves the scope into the machines to remove.
-func selectForDestruction(app *App, inv cli.Invocation, owned []types.MachineStatus, scope destroyScope) ([]types.MachineStatus, error) {
+func selectForDestruction(app *App, inv cli.Invocation, owned []types.MachineStatus, scope destroyScope) ([]victim, error) {
 	switch scope {
 	case scopeAll:
-		return owned, nil
+		projects, err := isolatedProjectPaths(app)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]victim, 0, len(owned))
+		for _, m := range owned {
+			out = append(out, victim{machine: m, project: projects[m.Name]})
+		}
+		return out, nil
 
 	case scopeOrphaned:
 		return orphanedMachines(app, owned)
@@ -157,10 +188,47 @@ func selectForDestruction(app *App, inv cli.Invocation, owned []types.MachineSta
 			return nil, err
 		}
 		if m, found := findMachine(owned, target.MachineName); found {
-			return []types.MachineStatus{m}, nil
+			return []victim{{machine: m}}, nil
 		}
 		return nil, nil
 	}
+}
+
+// isolatedProjectPaths maps each isolated machine to the host path of the
+// project it serves, from avar's own records.
+//
+// Both reads happen in one transaction. Two would be cheap, but they would also
+// be two answers about one question, and the join below is only meaningful if
+// the machine records and the project records describe the same moment.
+func isolatedProjectPaths(app *App) (map[string]string, error) {
+	store, err := app.Store()
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		machines []types.MachineRecord
+		projects []types.ProjectRecord
+	)
+	if err := store.Update(func(tx *state.Tx) error {
+		machines = tx.Machines()
+		projects = tx.Projects()
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read avar's machine and project records: %w", err)
+	}
+
+	pathOf := make(map[string]string, len(projects))
+	for _, pr := range projects {
+		pathOf[pr.ID] = pr.Path
+	}
+	out := make(map[string]string, len(machines))
+	for _, r := range machines {
+		if r.Kind == types.KindIsolated {
+			out[r.Name] = pathOf[r.ProjectID]
+		}
+	}
+	return out, nil
 }
 
 // orphanedMachines returns the isolated environments whose project directory no
@@ -170,52 +238,54 @@ func selectForDestruction(app *App, inv cli.Invocation, owned []types.MachineSta
 // project's machine but must be run from inside that project, and a directory
 // that has been deleted cannot be stood in. Without this they accumulate
 // forever, holding disk that nothing will reclaim.
-func orphanedMachines(app *App, owned []types.MachineStatus) ([]types.MachineStatus, error) {
-	store, err := app.Store()
+func orphanedMachines(app *App, owned []types.MachineStatus) ([]victim, error) {
+	projects, err := isolatedProjectPaths(app)
 	if err != nil {
 		return nil, err
 	}
-	records, err := store.Machines()
-	if err != nil {
-		return nil, fmt.Errorf("read avar's machine records: %w", err)
-	}
-	projects, err := store.Projects()
-	if err != nil {
-		return nil, fmt.Errorf("read avar's project records: %w", err)
-	}
 
-	pathOf := make(map[string]string, len(projects))
-	for _, pr := range projects {
-		pathOf[pr.ID] = pr.Path
-	}
-	projectOf := make(map[string]string, len(records))
-	for _, r := range records {
-		if r.Kind == types.KindIsolated && r.ProjectID != "" {
-			projectOf[r.Name] = pathOf[r.ProjectID]
-		}
-	}
-
-	var out []types.MachineStatus
+	var out []victim
 	for _, m := range owned {
-		// Only isolated machines can be orphaned. A shared machine serves
-		// every project at once, so no single directory disappearing makes
-		// it unwanted, and a base machine serves future clones.
-		if m.Kind != types.KindIsolated {
-			continue
-		}
-		path, known := projectOf[m.Name]
-		if !known || path == "" {
-			// avar has no record of which project this serves. It cannot be
-			// shown to be orphaned, so it is left alone — the same caution
-			// reconciliation applies to an isolated machine it cannot place.
+		// Only an isolated machine can be orphaned. A shared machine serves
+		// every project at once, so no single directory disappearing makes it
+		// unwanted, and a base machine serves future clones.
+		//
+		// An empty path means avar has no record of which project this serves,
+		// so it cannot be shown to be orphaned and is left alone — the same
+		// caution reconciliation applies to an isolated machine it cannot
+		// place.
+		path := projects[m.Name]
+		if m.Kind != types.KindIsolated || path == "" {
 			continue
 		}
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			out = append(out, m)
+			out = append(out, victim{machine: m, project: path})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	// Provider.Status returns machines ordered by name and avarOwned preserves
+	// that, so the selection is already stable.
 	return out, nil
+}
+
+// countLiveSessions fills in how many avr sessions are attached to each
+// selected environment, so the summary can say when destroying one would take
+// somebody else's terminal with it.
+//
+// A failure leaves the counts at zero rather than stopping the command: not
+// knowing about a session is a worse summary, but refusing to destroy anything
+// because the session file could not be read would be a worse command.
+func countLiveSessions(app *App, victims []victim) {
+	store, err := app.Store()
+	if err != nil {
+		return
+	}
+	sessions, err := store.Sessions()
+	if err != nil {
+		return
+	}
+	for i := range victims {
+		victims[i].sessions = countSessions(sessions, victims[i].machine.Name)
+	}
 }
 
 // writeNothingToDestroy explains an empty selection in the terms the user asked
@@ -235,19 +305,26 @@ func writeNothingToDestroy(app *App, scope destroyScope) {
 
 // writeDestroySummary states what is about to be destroyed and what survives,
 // so that a user cannot confirm without having been told (REQ-5.6).
-func writeDestroySummary(app *App, victims []types.MachineStatus, scope destroyScope) {
+func writeDestroySummary(app *App, victims []victim, scope destroyScope) {
 	if scope == scopeOrphaned {
-		fmt.Fprintf(app.Out, "%s no longer has its project directory:\n\n",
+		fmt.Fprintf(app.Out, "%s no longer have a project directory:\n\n",
 			countLabel(len(victims), "environment", "environments"))
 	} else {
 		fmt.Fprintf(app.Out, "This will permanently destroy %s:\n\n",
 			countLabel(len(victims), "environment", "environments"))
 	}
 
-	for _, m := range victims {
-		fmt.Fprintf(app.Out, "  %s  (%s)\n", environmentOf(m), modeLabel(m.Kind))
-		for _, mount := range m.Mounts {
+	for _, v := range victims {
+		fmt.Fprintf(app.Out, "  %s  (%s)\n", v.label(), modeLabel(v.machine.Kind))
+		for _, mount := range v.machine.Mounts {
 			fmt.Fprintf(app.Out, "      shares %s\n", mount.HostPath)
+		}
+		// A machine somebody is sitting in is the one case where destroying
+		// costs someone else their terminal, so it is named before the
+		// confirmation rather than discovered after it (REQ-5.6).
+		if v.sessions > 0 {
+			fmt.Fprintf(app.Out, "      %s attached right now\n",
+				countLabel(v.sessions, "session is", "sessions are"))
 		}
 	}
 
@@ -264,70 +341,37 @@ func writeDestroySummary(app *App, victims []types.MachineStatus, scope destroyS
 // keystroke that removes everything should not be one keystroke. `--orphaned`
 // takes a yes, because every environment in that list belongs to a project
 // directory the user has already deleted, and the list has just been shown.
-func confirmDestruction(app *App, victims []types.MachineStatus, scope destroyScope) bool {
+func confirmDestruction(app *App, victims []victim, scope destroyScope) bool {
 	switch scope {
 	case scopeAll:
-		fmt.Fprintf(app.Out, "\nType %q and press enter to destroy all of them, or anything else to cancel: ", "all")
-		return readLine(app) == "all"
+		return app.confirmByTyping("\nType \"all\" and press enter to destroy all of them, or anything else to cancel: ", "all")
 
 	case scopeOrphaned:
-		return app.confirmYesNo("\nDestroy them? (y/N) ")
+		return app.confirmByTyping("\nType \"yes\" and press enter to destroy them, or anything else to cancel: ", "yes")
 
 	default:
-		label := environmentOf(victims[0])
-		fmt.Fprintf(app.Out, "\nType %q and press enter to destroy it, or anything else to cancel: ", label)
-		return readLine(app) == label
+		label := victims[0].label()
+		return app.confirmByTyping(
+			fmt.Sprintf("\nType %q and press enter to destroy it, or anything else to cancel: ", label), label)
 	}
 }
 
-// readLine reads one trimmed line from the App's input.
+// forgetMachine drops everything that described a machine avar has just
+// destroyed: its record, and its entry in avar's SSH configuration.
 //
-// A whole line, not a token: environment labels contain spaces ("Ubuntu 24.04 ·
-// arm64"), so a word-wise read would compare the user's answer against only its
-// first word and no correct answer would ever be accepted.
+// The two belong together. A record naming a machine that does not exist is
+// what reconciliation exists to clean up, and an SSH stanza pointing at a dead
+// guest is cleaned up by nothing at all — so a caller that removes one and
+// forgets the other leaves the worse half behind.
 //
-// An empty or closed input returns the empty string, which fails every caller's
-// comparison — the safe direction for a destructive command.
-func readLine(app *App) string {
-	line, err := bufio.NewReader(app.Stdin).ReadString('\n')
-	if err != nil && line == "" {
-		return ""
-	}
-	return strings.TrimSpace(line)
-}
-
-// environmentOf names a machine the way the user chose it — by environment, and
-// by the project when that is what distinguishes it — rather than by the machine
-// name avar generated (REQ-1.5).
-//
-// Isolated environments carry their project, because several of them share one
-// environment label: destroying three of them otherwise prints the same
-// sentence three times, and REQ-5.8 requires naming the project each belonged
-// to. A shared environment serves every project at once and has no single
-// project to name.
-func environmentOf(m types.MachineStatus) string {
-	label := m.Selector.Label()
-	if m.Kind != types.KindIsolated {
-		return label
-	}
-	for _, mount := range m.Mounts {
-		if mount.HostPath != "" {
-			return fmt.Sprintf("%s for %s", label, mount.HostPath)
-		}
-	}
-	return label
-}
-
-// forgetMachineRecord drops avar's record of a machine that no longer exists.
-//
-// Failure is not reported: the machine is genuinely gone, which is what the
-// user asked for, and a stale record is repaired by reconciliation on the next
-// invocation. Turning that into an error would report a failure against an
-// operation that succeeded.
-func forgetMachineRecord(app *App, machine string) {
+// Failures are not reported: the machine is genuinely gone, which is what the
+// user asked for, and turning bookkeeping into an error would report a failure
+// against an operation that succeeded.
+func forgetMachine(app *App, machine string) {
 	store, err := app.Store()
 	if err != nil {
 		return
 	}
 	_ = store.DeleteMachine(machine)
+	forgetSSHHost(app, machine)
 }

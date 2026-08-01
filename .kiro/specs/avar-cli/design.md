@@ -494,9 +494,11 @@ _For any_ one-shot command, a PTY SHALL be allocated iff host stdin is a TTY, an
 _For any_ argv, the first non-selector-flag token SHALL be interpreted as an avar subcommand iff it is in the subcommand set, and prefixing `--` SHALL always force guest interpretation.
 **Validates: 2.5, 2.6**
 
-### Property 10: Reset scoping
-_For any_ `avr reset`, host project files SHALL be byte-identical before and after, and _for any_ reset in a project with an Isolated_Environment, no other machine SHALL be modified.
-**Validates: 10.3, 11.4, 18.12**
+### Property 10: Destructive scoping
+_For any_ operation that destroys a machine — `avr reset`, `avr destroy`, `avr isolate off` — host project files SHALL be byte-identical before and after, and _for any_ such operation scoped to one environment, no other machine SHALL be modified.
+**Validates: 5.6, 5.7, 5.8, 10.3, 11.4, 18.12**
+
+*Widened after implementation.* The property was written as "Reset scoping" and quantified over `avr reset` alone, because reset was the only destructive command at the time. `avr destroy` makes the same guarantee for the same reason — the provider shares project directories and never copies them, so no machine deletion can reach a host file — and citing a property that does not quantify over your command is how a design ends up covered on paper and untested in fact (see docs/lessons.md, "A property that quantifies over part of the design gives false confidence").
 
 ### Property 11: Idle-stop safety
 _For any_ machine with at least one live session, the idle agent SHALL NOT stop it, regardless of elapsed time.

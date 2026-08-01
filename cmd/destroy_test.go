@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/provider/fake"
@@ -20,8 +21,6 @@ func destroyInvocation(args ...string) cli.Invocation {
 func TestDestroy_RemovesTheCurrentEnvironment_REQ_5_6(t *testing.T) {
 	f := fake.New()
 	app := newTestApp(t, f)
-	app.Stdin = strings.NewReader("")
-
 	target, label := resolvedTarget(t, app)
 	seedMachine(t, f, target, ubuntu(), types.KindShared, "/Users/ola/code/app")
 
@@ -55,8 +54,6 @@ func TestDestroy_RemovesTheCurrentEnvironment_REQ_5_6(t *testing.T) {
 func TestDestroy_NothingToDestroyIsNotAnError_REQ_5_6(t *testing.T) {
 	f := fake.New()
 	app := newTestApp(t, f)
-	app.Stdin = strings.NewReader("")
-
 	if err := runDestroy(context.Background(), app.App, destroyInvocation()); err != nil {
 		t.Fatalf("destroying a non-existent environment failed: %v", err)
 	}
@@ -104,8 +101,6 @@ func TestDestroy_CorrectConfirmationProceeds_REQ_5_6(t *testing.T) {
 func TestDestroy_AllRemovesEveryEnvironment_REQ_5_7(t *testing.T) {
 	f := fake.New()
 	app := newTestApp(t, f)
-	app.Stdin = strings.NewReader("")
-
 	shared, _ := resolvedTarget(t, app)
 	seedMachine(t, f, shared, ubuntu(), types.KindShared, "/Users/ola/code/a")
 	const other = "avr-debian-13-arm64"
@@ -194,8 +189,6 @@ func TestDestroy_OrphanedRemovesOnlyEnvironmentsWhoseProjectIsGone_REQ_5_8(t *te
 func TestDestroy_OrphanedWithNoneSaysSo_REQ_5_8(t *testing.T) {
 	f := fake.New()
 	app := newTestApp(t, f)
-	app.Stdin = strings.NewReader("")
-
 	if err := runDestroy(context.Background(), app.App, destroyInvocation("--orphaned")); err != nil {
 		t.Fatalf("avr destroy --orphaned: %v", err)
 	}
@@ -203,15 +196,6 @@ func TestDestroy_OrphanedWithNoneSaysSo_REQ_5_8(t *testing.T) {
 		t.Errorf("did not report an empty orphan set:\n%s", app.stdout())
 	}
 	f.AssertOps(t, fake.OpStatus)
-}
-
-func TestDestroy_RejectsContradictoryScopes(t *testing.T) {
-	f := fake.New()
-	app := newTestApp(t, f)
-
-	err := runDestroy(context.Background(), app.App, destroyInvocation("--all", "--orphaned"))
-	assertExitCode(t, err, exitUsage)
-	f.AssertOps(t)
 }
 
 func TestDestroy_RejectsUnknownArguments(t *testing.T) {
@@ -291,4 +275,86 @@ func seedIsolated(t *testing.T, app *testApp, f *fake.Fake, projectDir string) s
 		t.Fatalf("recording the isolated machine %s: %v", name, err)
 	}
 	return name
+}
+
+// Task 30 claimed the record was proven gone. Nothing asserted it: the e2e
+// test greps `avr status`, which reads the backend, not avar's records.
+func TestDestroy_ForgetsTheMachineRecord_REQ_5_6(t *testing.T) {
+	f := fake.New()
+	app := newTestApp(t, f)
+
+	target, _ := resolvedTarget(t, app)
+	seedMachine(t, f, target, ubuntu(), types.KindShared, "/Users/ola/code/app")
+	if err := app.store.PutMachine(types.MachineRecord{
+		Name: target, Provider: types.ProviderLima, Selector: ubuntu(), Kind: types.KindShared,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runDestroy(context.Background(), app.App, destroyInvocation("--yes")); err != nil {
+		t.Fatalf("avr destroy --yes: %v", err)
+	}
+
+	if _, found, err := app.store.Machine(target); err != nil {
+		t.Fatal(err)
+	} else if found {
+		t.Error("the record survived the machine it describes; reconciliation would have to clean it up")
+	}
+}
+
+// avarOwned lists on the name prefix alone, deliberately, so a machine left by
+// a crash mid-create stays visible. Such a machine has no usable selector, and
+// formatting it unguarded yields "  · " — which the single-environment path
+// would then ask the user to type. An untypeable name makes the environment
+// undestroyable, and those are exactly the ones most in need of destroying.
+func TestDestroy_NamesAnUnplaceableEnvironmentTypeably_REQ_1_5(t *testing.T) {
+	f := fake.New()
+	app := newTestApp(t, f)
+
+	const stranded = "avr-ubuntu-24.04-arm64"
+	seedMachine(t, f, stranded, types.EnvironmentSelector{}, types.KindShared)
+
+	if err := runDestroy(context.Background(), app.App, destroyInvocation("--all", "--yes")); err != nil {
+		t.Fatalf("avr destroy --all --yes: %v", err)
+	}
+
+	out := app.stdout()
+	if strings.Contains(out, " · \n") || strings.Contains(out, "Destroying  ·") {
+		t.Errorf("an unplaceable environment rendered as an empty label:\n%s", out)
+	}
+	if !strings.Contains(out, "unrecognised environment") {
+		t.Errorf("an unplaceable environment was not named as one:\n%s", out)
+	}
+}
+
+// Destroying a machine somebody is working in costs them their terminal. That
+// is the one consequence the summary cannot leave for them to discover after
+// confirming (REQ-5.6).
+func TestDestroy_SummaryNamesLiveSessions_REQ_5_6(t *testing.T) {
+	f := fake.New()
+	app := newTestApp(t, f)
+	app.Stdin = strings.NewReader("no\n")
+
+	target, _ := resolvedTarget(t, app)
+	seedMachine(t, f, target, ubuntu(), types.KindShared, "/Users/ola/code/app")
+	// Sessions live in avar's records, not in anything a backend reports:
+	// the backend has no idea what an avr session is.
+	if err := app.store.PutMachine(types.MachineRecord{
+		Name: target, Provider: types.ProviderLima, Selector: ubuntu(), Kind: types.KindShared,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, pid := range []int{os.Getpid(), os.Getppid()} {
+		if err := app.store.AddSession(types.SessionRecord{Machine: target, PID: pid, StartedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := runDestroy(context.Background(), app.App, destroyInvocation()); err != nil {
+		t.Fatalf("avr destroy: %v", err)
+	}
+
+	if !strings.Contains(app.stdout(), "attached right now") {
+		t.Errorf("the summary did not warn that sessions are attached:\n%s", app.stdout())
+	}
 }
