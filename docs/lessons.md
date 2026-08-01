@@ -116,6 +116,37 @@ also cannot see that a helper it needs is being written next door, and it will n
 looking for one in a package its task never mentions. When splitting work, name the
 shared helpers each task must use — or expect to spend the review consolidating them.
 
+### Measure the limit; three plausible explanations were all wrong
+
+The shared machine stopped starting once the end-to-end suite had used it for a
+while. Three hypotheses were formed and each was tested: a ceiling around seventeen
+mounts (eighteen started fine), a system-wide device limit across concurrent VMs (it
+failed with nothing else running), and mounts pointing at deleted directories (all
+twenty existed). The fourth held — macOS caps directory-share devices per VM, and the
+boundary is exactly nineteen.
+
+Each wrong hypothesis was plausible enough to have been implemented without checking.
+The first would have shipped an eviction scheme tuned to a number that does not exist.
+What made the difference was that every guess was cheap to falsify and was falsified
+before any code was written for it. When a limit is the thing being designed against,
+the limit is the thing to measure — and the measured value belongs in the code with
+the version it was measured against, or the next person re-derives it.
+
+### An interface a backend implements is not a capability it always has
+
+`limactl snapshot` exits with the single word `unimplemented` on a `vz` machine:
+Lima's snapshots are a QEMU feature. avar runs host-native environments under `vz`
+deliberately, so on an Apple Silicon Mac the everyday environment is precisely the one
+that cannot be snapshotted — and the design, the code, and the tests had all assumed
+otherwise, because the tests used a fake and the design was written from documentation.
+
+Capability segregation was already right: `Snapshotter` exists because snapshot support
+is a real difference between backends. What was missing is that a successful type
+assertion answers a compile-time question, while whether an operation is possible can
+depend on how one machine was built. The same provider snapshots an emulated machine
+and refuses a native one, which is why `ErrUnsupportedCapability` has to exist and be
+handled by callers that have already asserted the interface.
+
 ### A test suite that leaks resources eventually fails tests it has nothing to do with
 
 The e2e suite created a machine per isolated project and deleted none. Twenty-four

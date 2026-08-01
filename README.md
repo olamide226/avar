@@ -23,7 +23,8 @@ between sessions, and any port you listen on reachable at `localhost` on macOS.
 
 The MVP is feature-complete. `avr` and `avr <command>` open the current directory
 in a real Linux VM, with the project mounted live at the same path and the guest's
-exit code becoming avar's. Warm invocations measure ~205 ms.
+exit code becoming avar's. Warm invocations measure ~400 ms against a ~500 ms
+budget, on an M-series Mac with the machine already running.
 
 ```bash
 avr                         # interactive shell, current directory
