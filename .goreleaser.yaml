@@ -53,10 +53,13 @@ archives:
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_darwin_all"
+    # What someone who downloads a binary needs, and nothing else. CLAUDE.md
+    # shipped here until v0.1.0 was prepared: it is the working agreement for
+    # people developing avar, not documentation for people running it, and it
+    # only puzzles someone who unpacked a tarball to get a command.
     files:
       - README.md
       - LICENSE
-      - CLAUDE.md
 
 checksum:
   name_template: checksums.txt
