@@ -94,6 +94,9 @@ Linux — whose own flags avar never reads.
 | `avr stop --all` | Stop every environment avar manages |
 | `avr reset` | Return the current environment to a clean OS, after confirmation. Project files are never touched |
 | `avr reset --yes` | The same, without the prompt |
+| `avr destroy` | Remove the current environment and everything in it, after confirmation. Project files are never touched |
+| `avr destroy --all` | Remove every environment avar manages |
+| `avr destroy --orphaned` | Remove isolated environments whose project directory has been deleted |
 | `avr snapshot` | List the snapshots held for the current environment |
 | `avr snapshot <name>` | Capture a snapshot of the current environment |
 | `avr restore <name>` | Restore the current environment to a snapshot |
@@ -187,10 +190,6 @@ implemented, and there are no dates.
   not started:** there is no WSL provider in the codebase, and `avr` does not run
   on Windows at all. It is a design on paper behind avar's provider boundary,
   nothing more.
-- **`avr destroy`** — removing an environment outright is specified
-  (REQ-5.6–5.8) but not yet implemented. Today `avr reset` returns an
-  environment to a clean OS, and `avr isolate off` can delete a project's own
-  machine.
 - Post-MVP work: a Linux-native workspace mode, `.avr.toml` and `avr init`,
   `avr ports` and `avr open`, more editors, and a second backend behind the
   provider interface.

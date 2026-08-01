@@ -76,6 +76,27 @@ func (a *App) confirmYesNo(question string) bool {
 	}
 }
 
+// confirmByTyping asks the user to type an exact phrase before something
+// irreversible happens, and reports whether they did.
+//
+// Typing the thing's own name rather than pressing a key is what makes the
+// confirmation evidence of intent: it cannot be given by a stray return, and it
+// cannot be given without having read what is about to happen.
+//
+// A closed or unreadable input is not a confirmation. That is the safe
+// direction, and it is why this returns a bool rather than an error — there is
+// nothing a caller could usefully do with the difference between "typed the
+// wrong thing" and "typed nothing at all".
+func (a *App) confirmByTyping(prompt, expected string) bool {
+	fmt.Fprint(a.Out, prompt)
+
+	line, err := bufio.NewReader(a.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return false
+	}
+	return strings.TrimSpace(line) == expected
+}
+
 // Store opens avar's state directory.
 func (a *App) Store() (*state.Store, error) {
 	a.once.store.Do(func() {

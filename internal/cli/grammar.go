@@ -113,6 +113,7 @@ type Invocation struct {
 // land, or a project script named `snapshot` would silently stop working.
 var subcommands = []string{
 	"code",
+	"destroy",
 	"help",
 	"internal",
 	"isolate",
