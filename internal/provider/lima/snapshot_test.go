@@ -1,5 +1,8 @@
 package lima
 
+// Lima's snapshots are a QEMU feature, so these tests run against an emulated
+// machine — the kind `avr --arch amd64` creates. A native vz machine cannot be
+// snapshotted at all, which TestSnapshot_RefusedOnAMachineThatCannotDoIt covers.
 import (
 	"context"
 	"errors"
@@ -12,21 +15,21 @@ import (
 )
 
 func TestSnapshot_CapturesANamedSnapshot_REQ_10_1(t *testing.T) {
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\n")
-	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-amd64")))
 	sink := &recordingSink{}
 
-	if err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-arm64", "before-experiment", sink); err != nil {
+	if err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-amd64", "before-experiment", sink); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 
 	assertArgvs(t, runner.limactlArgvs(), []string{
 		"limactl list --json",
-		"limactl snapshot list avr-ubuntu-24.04-arm64",
-		"limactl stop avr-ubuntu-24.04-arm64",
-		"limactl snapshot create avr-ubuntu-24.04-arm64 --tag before-experiment",
-		"limactl start --tty=false avr-ubuntu-24.04-arm64",
+		"limactl snapshot list avr-ubuntu-24.04-amd64",
+		"limactl stop avr-ubuntu-24.04-amd64",
+		"limactl snapshot create avr-ubuntu-24.04-amd64 --tag before-experiment",
+		"limactl start --tty=false avr-ubuntu-24.04-amd64",
 	})
 
 	// The user was told what was happening.
@@ -40,7 +43,7 @@ func TestSnapshot_CapturesANamedSnapshot_REQ_10_1(t *testing.T) {
 }
 
 func TestSnapshot_NoOpWhenMachineIsAlreadyStopped_REQ_10_1(t *testing.T) {
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\n")
 	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-fedora-42-amd64")))
 	sink := &recordingSink{}
@@ -62,11 +65,11 @@ func TestSnapshot_NoOpWhenMachineIsAlreadyStopped_REQ_10_1(t *testing.T) {
 }
 
 func TestSnapshot_RefusesDuplicateName_REQ_10_1(t *testing.T) {
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\nbefore-experiment\t2024-06-01 12:00:00 +0000 UTC\n")
-	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-amd64")))
 
-	err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-arm64", "before-experiment", types.DiscardProgress)
+	err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-amd64", "before-experiment", types.DiscardProgress)
 	if err == nil {
 		t.Fatal("a duplicate snapshot name was accepted")
 	}
@@ -83,12 +86,12 @@ func TestSnapshot_RefusesDuplicateName_REQ_10_1(t *testing.T) {
 
 func TestSnapshot_FailedCreateRestartsTheMachine(t *testing.T) {
 	snapFailed := errors.New("exit status 1: snapshot create failed")
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\n")
 	runner.failOn("snapshot create", snapFailed)
-	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-amd64")))
 
-	err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-arm64", "doomed", types.DiscardProgress)
+	err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-amd64", "doomed", types.DiscardProgress)
 	if !errors.Is(err, snapFailed) {
 		t.Fatalf("want the snapshot failure wrapped, got: %v", err)
 	}
@@ -97,29 +100,29 @@ func TestSnapshot_FailedCreateRestartsTheMachine(t *testing.T) {
 	// snapshot itself failed.
 	assertArgvs(t, runner.limactlArgvs(), []string{
 		"limactl list --json",
-		"limactl snapshot list avr-ubuntu-24.04-arm64",
-		"limactl stop avr-ubuntu-24.04-arm64",
-		"limactl snapshot create avr-ubuntu-24.04-arm64 --tag doomed",
-		"limactl start --tty=false avr-ubuntu-24.04-arm64",
+		"limactl snapshot list avr-ubuntu-24.04-amd64",
+		"limactl stop avr-ubuntu-24.04-amd64",
+		"limactl snapshot create avr-ubuntu-24.04-amd64 --tag doomed",
+		"limactl start --tty=false avr-ubuntu-24.04-amd64",
 	})
 }
 
 func TestRestoreSnapshot_RestoresANamedSnapshot_REQ_10_2(t *testing.T) {
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\nbefore-experiment\t2024-06-01 12:00:00 +0000 UTC\n")
-	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-amd64")))
 	sink := &recordingSink{}
 
-	if err := p.RestoreSnapshot(context.Background(), "avr-ubuntu-24.04-arm64", "before-experiment", sink); err != nil {
+	if err := p.RestoreSnapshot(context.Background(), "avr-ubuntu-24.04-amd64", "before-experiment", sink); err != nil {
 		t.Fatalf("RestoreSnapshot: %v", err)
 	}
 
 	assertArgvs(t, runner.limactlArgvs(), []string{
 		"limactl list --json",
-		"limactl snapshot list avr-ubuntu-24.04-arm64",
-		"limactl stop avr-ubuntu-24.04-arm64",
-		"limactl snapshot apply avr-ubuntu-24.04-arm64 --tag before-experiment",
-		"limactl start --tty=false avr-ubuntu-24.04-arm64",
+		"limactl snapshot list avr-ubuntu-24.04-amd64",
+		"limactl stop avr-ubuntu-24.04-amd64",
+		"limactl snapshot apply avr-ubuntu-24.04-amd64 --tag before-experiment",
+		"limactl start --tty=false avr-ubuntu-24.04-amd64",
 	})
 
 	kinds := sink.kinds()
@@ -129,11 +132,11 @@ func TestRestoreSnapshot_RestoresANamedSnapshot_REQ_10_2(t *testing.T) {
 }
 
 func TestRestoreSnapshot_UnknownNameIsErrSnapshotNotFound_REQ_10_2(t *testing.T) {
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\nonly-snap\t2024-06-01 12:00:00 +0000 UTC\n")
-	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-amd64")))
 
-	err := p.RestoreSnapshot(context.Background(), "avr-ubuntu-24.04-arm64", "nonexistent", types.DiscardProgress)
+	err := p.RestoreSnapshot(context.Background(), "avr-ubuntu-24.04-amd64", "nonexistent", types.DiscardProgress)
 	if !errors.Is(err, provider.ErrSnapshotNotFound) {
 		t.Fatalf("want ErrSnapshotNotFound, got: %v", err)
 	}
@@ -147,27 +150,27 @@ func TestRestoreSnapshot_UnknownNameIsErrSnapshotNotFound_REQ_10_2(t *testing.T)
 
 func TestRestoreSnapshot_FailedApplyRestartsTheMachine(t *testing.T) {
 	snapFailed := errors.New("exit status 1: snapshot apply failed")
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\nbefore-experiment\t2024-06-01 12:00:00 +0000 UTC\n")
 	runner.failOn("snapshot apply", snapFailed)
-	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-amd64")))
 
-	err := p.RestoreSnapshot(context.Background(), "avr-ubuntu-24.04-arm64", "before-experiment", types.DiscardProgress)
+	err := p.RestoreSnapshot(context.Background(), "avr-ubuntu-24.04-amd64", "before-experiment", types.DiscardProgress)
 	if !errors.Is(err, snapFailed) {
 		t.Fatalf("want the snapshot failure wrapped, got: %v", err)
 	}
 	// Machine was restarted despite the failure.
 	assertArgvs(t, runner.limactlArgvs(), []string{
 		"limactl list --json",
-		"limactl snapshot list avr-ubuntu-24.04-arm64",
-		"limactl stop avr-ubuntu-24.04-arm64",
-		"limactl snapshot apply avr-ubuntu-24.04-arm64 --tag before-experiment",
-		"limactl start --tty=false avr-ubuntu-24.04-arm64",
+		"limactl snapshot list avr-ubuntu-24.04-amd64",
+		"limactl stop avr-ubuntu-24.04-amd64",
+		"limactl snapshot apply avr-ubuntu-24.04-amd64 --tag before-experiment",
+		"limactl start --tty=false avr-ubuntu-24.04-amd64",
 	})
 }
 
 func TestRestoreSnapshot_NoOpWhenMachineIsAlreadyStopped_REQ_10_2(t *testing.T) {
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\nbefore-experiment\t2024-06-01 12:00:00 +0000 UTC\n")
 	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-fedora-42-amd64")))
 	sink := &recordingSink{}
@@ -185,18 +188,18 @@ func TestRestoreSnapshot_NoOpWhenMachineIsAlreadyStopped_REQ_10_2(t *testing.T) 
 }
 
 func TestListSnapshots_ListsInChronologicalOrder_REQ_10_4(t *testing.T) {
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\nsecond\t2024-06-02 12:00:00 +0000 UTC\nfirst\t2024-06-01 12:00:00 +0000 UTC\n")
-	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-amd64")))
 
-	snaps, err := p.ListSnapshots(context.Background(), "avr-ubuntu-24.04-arm64")
+	snaps, err := p.ListSnapshots(context.Background(), "avr-ubuntu-24.04-amd64")
 	if err != nil {
 		t.Fatalf("ListSnapshots: %v", err)
 	}
 
 	assertArgvs(t, runner.limactlArgvs(), []string{
 		"limactl list --json",
-		"limactl snapshot list avr-ubuntu-24.04-arm64",
+		"limactl snapshot list avr-ubuntu-24.04-amd64",
 	})
 
 	if len(snaps) != 2 {
@@ -209,11 +212,11 @@ func TestListSnapshots_ListsInChronologicalOrder_REQ_10_4(t *testing.T) {
 }
 
 func TestListSnapshots_EmptyListIsNotAnError(t *testing.T) {
-	runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+	runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 	runner.snapshotListOut = []byte("NAME\tCREATED\n")
-	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-amd64")))
 
-	snaps, err := p.ListSnapshots(context.Background(), "avr-ubuntu-24.04-arm64")
+	snaps, err := p.ListSnapshots(context.Background(), "avr-ubuntu-24.04-amd64")
 	if err != nil {
 		t.Fatalf("ListSnapshots: %v", err)
 	}
@@ -227,21 +230,21 @@ func TestSnapshotAndRestore_RefuseUnownedMachine_PROP_6(t *testing.T) {
 	p := newTestProvider(t, runner, newFakeRecords())
 
 	t.Run("snapshot", func(t *testing.T) {
-		err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-arm64", "test", types.DiscardProgress)
+		err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-amd64", "test", types.DiscardProgress)
 		if !errors.Is(err, provider.ErrNotOwned) {
 			t.Fatalf("want ErrNotOwned, got: %v", err)
 		}
 	})
 
 	t.Run("restore", func(t *testing.T) {
-		err := p.RestoreSnapshot(context.Background(), "avr-ubuntu-24.04-arm64", "test", types.DiscardProgress)
+		err := p.RestoreSnapshot(context.Background(), "avr-ubuntu-24.04-amd64", "test", types.DiscardProgress)
 		if !errors.Is(err, provider.ErrNotOwned) {
 			t.Fatalf("want ErrNotOwned, got: %v", err)
 		}
 	})
 
 	t.Run("list", func(t *testing.T) {
-		_, err := p.ListSnapshots(context.Background(), "avr-ubuntu-24.04-arm64")
+		_, err := p.ListSnapshots(context.Background(), "avr-ubuntu-24.04-amd64")
 		if !errors.Is(err, provider.ErrNotOwned) {
 			t.Fatalf("want ErrNotOwned, got: %v", err)
 		}
@@ -304,12 +307,12 @@ func TestParseSnapshotList(t *testing.T) {
 // same state it started in, regardless of whether the snapshot succeeds.
 func TestProp_SnapshotPreservesRunningState(t *testing.T) {
 	t.Run("successful-snapshot", func(t *testing.T) {
-		runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+		runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 		runner.snapshotListOut = []byte("NAME\tCREATED\n")
-		p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+		p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-amd64")))
 
 		// Before: running. After successful capture: running again.
-		if err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-arm64", "s1", types.DiscardProgress); err != nil {
+		if err := p.Snapshot(context.Background(), "avr-ubuntu-24.04-amd64", "s1", types.DiscardProgress); err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
 		// The last action was a start.
@@ -320,7 +323,7 @@ func TestProp_SnapshotPreservesRunningState(t *testing.T) {
 	})
 
 	t.Run("successful-snapshot-on-stopped-machine", func(t *testing.T) {
-		runner := newFakeRunner().listing(fixture(t, "list-mixed.json"))
+		runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
 		runner.snapshotListOut = []byte("NAME\tCREATED\n")
 		p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-fedora-42-amd64")))
 		// Machine is stopped in the fixture.
@@ -359,6 +362,52 @@ func TestParseSnapshotTime(t *testing.T) {
 			}
 			if !tc.valid && err == nil {
 				t.Errorf("want error, got nil")
+			}
+		})
+	}
+}
+
+// Lima's snapshots are a QEMU feature. avar runs native-architecture machines
+// under vz on purpose — that is what gives VirtioFS speed and Rosetta — so on
+// an Apple Silicon Mac the everyday machine is exactly the one that cannot be
+// snapshotted, and Lima's own answer is the single word "unimplemented".
+//
+// Refusing here, before anything is stopped, is what lets the command layer
+// say why and what to do instead.
+func TestSnapshot_RefusedOnAMachineThatCannotDoIt_REQ_10_1(t *testing.T) {
+	const vzMachine = "avr-ubuntu-24.04-arm64" // vz in the fixture
+
+	for _, tc := range []struct {
+		name string
+		call func(p *Provider) error
+	}{
+		{"capture", func(p *Provider) error {
+			return p.Snapshot(context.Background(), vzMachine, "snap", &recordingSink{})
+		}},
+		{"restore", func(p *Provider) error {
+			return p.RestoreSnapshot(context.Background(), vzMachine, "snap", &recordingSink{})
+		}},
+		{"list", func(p *Provider) error {
+			_, err := p.ListSnapshots(context.Background(), vzMachine)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := newFakeRunner().listing(fixture(t, "list-qemu-running.json"))
+			p := newTestProvider(t, runner, newFakeRecords(ownedRecord(vzMachine)))
+
+			err := tc.call(p)
+			if !errors.Is(err, provider.ErrUnsupportedCapability) {
+				t.Fatalf("want ErrUnsupportedCapability, got %v", err)
+			}
+
+			// Nothing may have been done to the machine: a refusal that had
+			// already stopped the guest would be worse than the failure it
+			// is reporting.
+			for _, argv := range runner.limactlArgvs() {
+				if strings.Contains(argv, "snapshot") || strings.Contains(argv, "stop") {
+					t.Errorf("the machine was acted on before the refusal: %q", argv)
+				}
 			}
 		})
 	}

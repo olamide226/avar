@@ -34,6 +34,19 @@ func runSnapshot(ctx context.Context, app *App, inv cli.Invocation) error {
 	}
 }
 
+// explainUnsupported turns a capability refusal into one plain sentence.
+//
+// The user asked for something this environment cannot do. That is not a
+// failure they can debug, so the answer names the environment and what to do
+// instead rather than restating a chain of wrapped errors.
+func explainUnsupported(err error, label string) error {
+	if !errors.Is(err, provider.ErrUnsupportedCapability) {
+		return err
+	}
+	return fmt.Errorf("%s does not support snapshots: it runs on Apple's virtualization framework, which cannot take them. "+
+		"`avr reset` returns it to a clean state, and an emulated environment (`avr --arch amd64`) can be snapshotted", label)
+}
+
 // listSnapshots shows the snapshots held for the current environment, with
 // their creation timestamps (REQ-10.4).
 func listSnapshots(ctx context.Context, app *App, inv cli.Invocation) error {
@@ -44,7 +57,7 @@ func listSnapshots(ctx context.Context, app *App, inv cli.Invocation) error {
 
 	snaps, err := snapter.ListSnapshots(ctx, target.MachineName)
 	if err != nil {
-		return err
+		return explainUnsupported(err, target.Selector.Label())
 	}
 
 	if len(snaps) == 0 {
@@ -71,7 +84,7 @@ func captureSnapshot(ctx context.Context, app *App, inv cli.Invocation, name str
 
 	fmt.Fprintf(app.Err, "Capturing snapshot %q of %s…\n", name, target.Selector.Label())
 	if err := snapter.Snapshot(ctx, target.MachineName, name, progressTo(app.Err)); err != nil {
-		return err
+		return explainUnsupported(err, target.Selector.Label())
 	}
 
 	fmt.Fprintf(app.Out, "Captured snapshot %q of %s.\n", name, target.Selector.Label())
@@ -104,7 +117,7 @@ func runRestore(ctx context.Context, app *App, inv cli.Invocation) error {
 		if errors.Is(err, provider.ErrSnapshotNotFound) {
 			return suggestAvailableSnapshots(ctx, err, target, snapter)
 		}
-		return err
+		return explainUnsupported(err, target.Selector.Label())
 	}
 
 	fmt.Fprintf(app.Out, "Restored %s to snapshot %q.\n", target.Selector.Label(), name)

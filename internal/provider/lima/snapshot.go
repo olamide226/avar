@@ -37,8 +37,7 @@ func (p *Provider) Snapshot(ctx context.Context, machine, name string, progress 
 		return fmt.Errorf("capturing a snapshot of %s: a snapshot name is required", machine)
 	}
 
-	v := p.newView()
-	inst, err := v.require(ctx, machine)
+	inst, err := p.requireSnapshotCapable(ctx, machine)
 	if err != nil {
 		return err
 	}
@@ -94,6 +93,33 @@ func (p *Provider) Snapshot(ctx context.Context, machine, name string, progress 
 	return nil
 }
 
+// requireSnapshotCapable returns the instance, refusing when this machine
+// cannot be snapshotted.
+//
+// Lima's snapshots are a QEMU feature: on a vz machine every snapshot
+// subcommand exits with "unimplemented". avar runs native-architecture
+// machines under vz deliberately, because that is what gives VirtioFS speed
+// and Rosetta, so the common machine on an Apple Silicon Mac is exactly the
+// one that cannot snapshot.
+//
+// The check is on the machine rather than the provider because the same
+// provider can do both: an emulated --arch amd64 machine runs under QEMU and
+// snapshots normally. Refusing here, with the reason, is better than passing
+// the request through to a backend whose own error is the single word
+// "unimplemented".
+func (p *Provider) requireSnapshotCapable(ctx context.Context, machine string) (instance, error) {
+	inst, err := p.newView().require(ctx, machine)
+	if err != nil {
+		return instance{}, err
+	}
+	if inst.VMType == vmTypeVZ {
+		return instance{}, fmt.Errorf("%w: %s runs on Apple's virtualization framework, which cannot take snapshots; "+
+			"an emulated environment (avr --arch amd64) can, and `avr reset` returns any environment to a clean state",
+			provider.ErrUnsupportedCapability, machine)
+	}
+	return inst, nil
+}
+
 // startAfterSnapshotOp restarts a machine after a failed snapshot or restore,
 // on a detached context because the caller's context may already be cancelled.
 func (p *Provider) startAfterSnapshotOp(ctx context.Context, machine string) error {
@@ -118,8 +144,7 @@ func (p *Provider) RestoreSnapshot(ctx context.Context, machine, name string, pr
 		return fmt.Errorf("restoring a snapshot of %s: a snapshot name is required", machine)
 	}
 
-	v := p.newView()
-	inst, err := v.require(ctx, machine)
+	inst, err := p.requireSnapshotCapable(ctx, machine)
 	if err != nil {
 		return err
 	}
@@ -178,7 +203,7 @@ func (p *Provider) ListSnapshots(ctx context.Context, machine string) ([]provide
 	if err := p.gate(ctx, machine, ownershipRecord); err != nil {
 		return nil, err
 	}
-	if _, err := p.newView().require(ctx, machine); err != nil {
+	if _, err := p.requireSnapshotCapable(ctx, machine); err != nil {
 		return nil, err
 	}
 	return p.listSnapshots(ctx, machine)
