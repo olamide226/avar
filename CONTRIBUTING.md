@@ -223,6 +223,12 @@ pull request is where that claim gets checked against the diff. Several correcti
    a signal to proceed; the job takes under a minute. A pull request has been merged on
    a pending check before, it failed, and `main` went red.
 
+## Releases
+
+[`docs/releasing.md`](docs/releasing.md) explains the automated release policy,
+the Conventional Commit types that create releases, and how GoReleaser publishes
+the GitHub archive and Homebrew cask after CI passes on `main`.
+
 ## `docs/lessons.md`
 
 [`docs/lessons.md`](docs/lessons.md) records mistakes that changed how this project
