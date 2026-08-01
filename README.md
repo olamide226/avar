@@ -95,6 +95,7 @@ Linux — whose own flags avar never reads.
 | `avr reset` | Return the current environment to a clean OS, after confirmation. Project files are never touched |
 | `avr reset --yes` | The same, without the prompt |
 | `avr destroy` | Remove the current environment and everything in it, after confirmation. Project files are never touched |
+| `avr destroy --yes` | Remove the current environment without a confirmation prompt |
 | `avr destroy --all` | Remove every environment avar manages |
 | `avr destroy --orphaned` | Remove isolated environments whose project directory has been deleted |
 | `avr snapshot` | List the snapshots held for the current environment |
@@ -106,12 +107,20 @@ Linux — whose own flags avar never reads.
 | `avr code` | Open the current project in VS Code, running in the Linux environment over Remote-SSH |
 | `avr version`, `avr help` | Also spelled `--version` and `--help` |
 
+Use `avr help <command>` or `avr <command> --help` for the exact arguments and
+flags supported by an individual management command. Help never starts, stops,
+resets, snapshots, or destroys an environment.
+
 Snapshots do not work in every environment — see [Limitations](#limitations).
 
 ## Choosing an environment
 
-These flags apply in every mode, including in front of a subcommand
-(`avr --distro fedora status`).
+Environment-selection flags come before the guest command or management command
+they select. They affect `avr`, one-shot guest commands, `stop`, `snapshot`,
+`restore`, `reset`, `destroy` (without `--all` or `--orphaned`), and `code`.
+`avr status`, `avr stop --all`, and the global `destroy` scopes operate across
+environments instead. `avr isolate` changes the current project's remembered
+default rather than selecting an environment.
 
 | Flag | Meaning |
 | --- | --- |
@@ -122,6 +131,10 @@ These flags apply in every mode, including in front of a subcommand
 | `--env NAME` or `--env NAME=value` | Forward or set one variable in the guest. Repeatable |
 | `--env-file PATH` | Forward a file of `KEY=value` lines |
 | `--ssh-agent` | Lend the guest your SSH agent for this invocation only |
+
+`--env`, `--env-file`, and `--ssh-agent` apply only to an interactive shell or
+one-shot guest command. Management commands do not start a guest session, so
+they do not forward environment values or an SSH agent.
 
 Nothing crosses into the guest that you did not ask for: no host environment
 beyond a small terminal allowlist, no home directory, no credentials, no agent.

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/olamide226/avar/internal/cli"
@@ -63,7 +64,8 @@ func NewRootCommand(version string, inv cli.Invocation, app *App) *cobra.Command
 			"decides the rest: an avr subcommand if it names one, otherwise the\n" +
 			"start of a command to run in Linux, whose own flags avr never reads.\n" +
 			"`--` forces the command reading, so `avr -- status` runs the guest's\n" +
-			"own `status` rather than avr's.",
+			"own `status` rather than avr's.\n\n" +
+			commandIndex,
 		Example: "  avr                     Interactive Linux shell in the current directory\n" +
 			"  avr npm test            Run one command in Linux\n" +
 			"  avr npm test --watch    --watch goes to npm, not to avr\n" +
@@ -97,13 +99,142 @@ func NewRootCommand(version string, inv cli.Invocation, app *App) *cobra.Command
 	flags.String("distro", "", "guest distribution: ubuntu, debian or fedora, optionally :version")
 	flags.Bool("isolate", false, "use a machine dedicated to this project")
 	flags.Bool("shared", false, "use the machine shared by every project, just this once")
-	flags.StringSlice("env", nil, "forward host env var to Linux: NAME or NAME=value (repeatable)")
-	flags.String("env-file", "", "file of KEY=value lines to forward into Linux (.env format)")
-	flags.Bool("ssh-agent", false, "forward the host SSH agent socket into Linux for this session")
+	flags.StringSlice("env", nil, "forward host env var to a guest session: NAME or NAME=value (repeatable)")
+	flags.String("env-file", "", "file of KEY=value lines to forward to a guest session (.env format)")
+	flags.Bool("ssh-agent", false, "forward the host SSH agent socket for a guest session")
 	flags.BoolP("help", "h", false, "show how to use avr")
 	flags.BoolP("version", "v", false, "show the avr version")
 
 	return root
+}
+
+// commandIndex is part of the root help rather than a Cobra command tree:
+// internal/cli owns argv parsing so that a guest command can never be mistaken
+// for an avar command. Keep this list limited to the public interface; internal
+// scheduler commands remain deliberately undocumented.
+const commandIndex = `Management commands:
+  status                         Show every Linux environment avar manages
+  stop [--all]                   Stop this environment, or every avar environment
+  snapshot [name]                List snapshots, or capture one named snapshot
+  restore <name>                 Restore this environment from a snapshot
+  reset [--yes]                  Recreate this environment from a clean OS
+  isolate [on|off [--yes]]       Show or change this project's isolation default
+  destroy [--all|--orphaned] [--yes]
+                                 Remove environments after confirmation
+  code                           Open this project in VS Code over Remote-SSH
+  help [command]                 Show general or command-specific help
+  version                        Print the avr version
+
+Run "avr help <command>" or "avr <command> --help" for command-specific help.`
+
+type commandHelp struct {
+	usage       string
+	description string
+	flags       string
+}
+
+// publicCommandHelp describes the subcommands that have handlers today. It is
+// intentionally alongside the root help: a public command must have both a
+// registered handler and user-facing usage before it is added here.
+var publicCommandHelp = map[string]commandHelp{
+	"code": {
+		usage:       "avr [selector flags] code",
+		description: "Open the current project in VS Code attached to its Linux environment.",
+	},
+	"destroy": {
+		usage:       "avr [selector flags] destroy [--all | --orphaned] [--yes]",
+		description: "Remove the selected environment, all avar environments, or isolated environments whose projects no longer exist. Host project files are never removed; confirmation is required unless --yes is supplied.",
+		flags:       "  --all        remove every Linux environment avar manages\n  --orphaned   remove isolated environments whose project directory is gone\n  --yes        skip the confirmation prompt",
+	},
+	"isolate": {
+		usage:       "avr isolate [on | off [--yes]]",
+		description: "Show whether this project defaults to its own environment, or change that default. Turning isolation off offers to delete the isolated environment.",
+		flags:       "  --yes   with `avr isolate off`, delete the isolated environment without asking",
+	},
+	"reset": {
+		usage:       "avr [selector flags] reset [--yes]",
+		description: "Recreate the selected environment from a clean OS. Host project files are never changed; confirmation is required unless --yes is supplied.",
+		flags:       "  --yes   skip the confirmation prompt",
+	},
+	"restore": {
+		usage:       "avr [selector flags] restore <name>",
+		description: "Restore the selected environment from a named snapshot. Snapshots are available only in environments whose backend supports them.",
+	},
+	"snapshot": {
+		usage:       "avr [selector flags] snapshot [name]",
+		description: "List snapshots for the selected environment, or capture one with a name. Snapshots are available only in environments whose backend supports them.",
+	},
+	"status": {
+		usage:       "avr status",
+		description: "Show every Linux environment avar manages, including state, resources, sessions, and forwarded-port diagnostics.",
+	},
+	"stop": {
+		usage:       "avr [selector flags] stop [--all]",
+		description: "Stop the selected environment, or every Linux environment avar manages.",
+		flags:       "  --all   stop every Linux environment avar manages",
+	},
+	"version": {
+		usage:       "avr version",
+		description: "Print the avr version. Also available as `avr --version`.",
+	},
+}
+
+func writeCommandHelp(w io.Writer, name string) error {
+	if name == "help" {
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintln(w, "  avr help [command]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Show avr's help, or help for one public management command.")
+		return nil
+	}
+
+	help, ok := publicCommandHelp[name]
+	if !ok {
+		return fmt.Errorf("unknown command %q; run `avr --help` to see avar's commands", name)
+	}
+
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintf(w, "  %s\n", help.usage)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, help.description)
+	if help.flags != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Flags:")
+		fmt.Fprintln(w, help.flags)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Selector flags such as --arch and --distro must come before the command; run `avr --help` to see them.")
+	return nil
+}
+
+// helpForInvocation identifies help requests before dispatch. This matters for
+// destructive and provisioning commands: `avr reset --help` must describe the
+// command, not reset an environment.
+func helpForInvocation(inv cli.Invocation) (string, bool, error) {
+	if inv.Help {
+		return "", true, nil
+	}
+	if inv.Subcommand == "help" {
+		switch len(inv.SubcommandArgs) {
+		case 0:
+			return "", true, nil
+		case 1:
+			if inv.SubcommandArgs[0] == "--help" || inv.SubcommandArgs[0] == "-h" {
+				return "", true, nil
+			}
+			return inv.SubcommandArgs[0], true, nil
+		default:
+			return "", false, fmt.Errorf("`avr help` takes at most one command name, got %q", inv.SubcommandArgs)
+		}
+	}
+	if inv.Mode == cli.ModeSubcommand {
+		for _, arg := range inv.SubcommandArgs {
+			if arg == "--help" || arg == "-h" {
+				return inv.Subcommand, true, nil
+			}
+		}
+	}
+	return "", false, nil
 }
 
 // Execute runs avar and returns the process exit code. It never calls
@@ -120,16 +251,28 @@ func Execute(ctx context.Context, version string, args []string) int {
 
 	// `avr help` and `avr version` are the subcommand spellings of the flags
 	// (REQ-2.5 keeps them in the subcommand set so that a guest command of
-	// either name still needs `avr -- help`).
+	// either name still needs `avr -- help`). Help is handled before dispatch so
+	// it remains side-effect free for every management command.
+	helpName, wantsHelp, helpErr := helpForInvocation(inv)
+	if helpErr != nil {
+		fmt.Fprintf(os.Stderr, "avr: %v\n", helpErr)
+		return exitUsage
+	}
 	switch {
-	case inv.Version || inv.Subcommand == "version":
-		fmt.Fprintf(root.OutOrStdout(), "avr %s\n", version)
-		return 0
-	case inv.Help || inv.Subcommand == "help":
+	case wantsHelp && helpName == "":
 		if err := root.Help(); err != nil {
 			fmt.Fprintf(os.Stderr, "avr: %v\n", err)
 			return 1
 		}
+		return 0
+	case wantsHelp:
+		if err := writeCommandHelp(root.OutOrStdout(), helpName); err != nil {
+			fmt.Fprintf(os.Stderr, "avr: %v\n", err)
+			return exitUsage
+		}
+		return 0
+	case inv.Version || inv.Subcommand == "version":
+		fmt.Fprintf(root.OutOrStdout(), "avr %s\n", version)
 		return 0
 	}
 
