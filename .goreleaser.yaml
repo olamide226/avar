@@ -102,6 +102,10 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     binaries:
       - avr
+    # Keep `avr` as the canonical command, but also link the same executable
+    # under the product name for people who naturally type `avar`.
+    custom_block: |
+      binary "avr", target: "avar"
     homepage: https://github.com/olamide226/avar
     description: Run your current directory in Linux
     # Lima is avar's virtualization backend. Declaring it here is what

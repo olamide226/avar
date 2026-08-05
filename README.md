@@ -36,6 +36,9 @@ This installs the latest stable release and Lima. Or download the archive for
 your Mac from the [releases page](https://github.com/olamide226/avar/releases)
 and put `avr` somewhere on your `PATH`.
 
+Homebrew installs both `avr` and its `avar` alias; they run the same command.
+The shorter `avr` name remains canonical and is used throughout this guide.
+
 ## Sixty seconds to a Linux shell
 
 ```bash
