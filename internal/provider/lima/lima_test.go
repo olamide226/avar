@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/olamide226/avar/internal/deps"
 	"github.com/olamide226/avar/internal/provider"
@@ -591,6 +592,38 @@ func TestStop_EndsAMachineThatWillNotShutDownCleanly_REQ_5_2(t *testing.T) {
 	}
 	if !warned {
 		t.Errorf("a machine was ended outright without telling the user: %v", sink.kinds())
+	}
+}
+
+// A spinning Lima hostagent can keep `limactl stop` alive indefinitely rather
+// than returning an error. Avar must bound that wait and take the same forceful
+// recovery path as an explicit graceful-stop failure.
+func TestStop_EndsAMachineWhenGracefulShutdownHangs_REQ_5_2(t *testing.T) {
+	runner := newFakeRunner().
+		listing(fixture(t, "list-mixed.json")).
+		blockOn("stop avr-ubuntu-24.04-arm64").
+		failOn("stop --force", nil)
+	p := newTestProvider(t, runner, newFakeRecords(ownedRecord("avr-ubuntu-24.04-arm64")))
+	p.stopTimeout = 10 * time.Millisecond
+	sink := &recordingSink{}
+
+	if err := p.Stop(context.Background(), "avr-ubuntu-24.04-arm64", sink); err != nil {
+		t.Fatalf("Stop did not recover from a hung graceful shutdown: %v", err)
+	}
+
+	assertArgvs(t, runner.limactlArgvs(), []string{
+		"limactl list --json",
+		"limactl stop avr-ubuntu-24.04-arm64",
+		"limactl stop --force avr-ubuntu-24.04-arm64",
+	})
+	var warned bool
+	for _, kind := range sink.kinds() {
+		if kind == types.ProgressWarning {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("a timed-out graceful shutdown was force-stopped without warning: %v", sink.kinds())
 	}
 }
 

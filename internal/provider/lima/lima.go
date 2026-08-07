@@ -47,6 +47,12 @@ var _ provider.Provider = (*Provider)(nil)
 // half-created machine behind is exactly what PROP-7 forbids.
 const cleanupTimeout = 2 * time.Minute
 
+// gracefulStopTimeout is long enough for a healthy guest shutdown but bounds a
+// Lima hostagent that spins forever while limactl waits for it. The force-stop
+// path below still preserves host project files and tells the user that guest
+// work may be lost.
+const gracefulStopTimeout = 30 * time.Second
+
 // createLogPerm and logsDirPerm keep provisioning logs private to the user. They
 // carry image URLs and guest hostnames rather than secrets, but avar's state
 // directory is the user's alone.
@@ -107,11 +113,13 @@ type Options struct {
 // (see view), so two concurrent avr invocations cannot disagree because one of
 // them cached.
 type Provider struct {
-	limactl string
-	runner  deps.Runner
-	records Records
-	logsDir string
-	host    HostResources
+	limactl        string
+	runner         deps.Runner
+	records        Records
+	logsDir        string
+	host           HostResources
+	reapHostAgents func(context.Context, string, string) error
+	stopTimeout    time.Duration
 }
 
 // New returns a Provider driving the given Lima installation.
@@ -125,11 +133,13 @@ func New(opts Options) (*Provider, error) {
 		return nil, errors.New("creating the Lima provider: no log directory was given; provisioning failures must be able to name a log file")
 	}
 	return &Provider{
-		limactl: opts.Lima.Path,
-		runner:  opts.Runner,
-		records: opts.Records,
-		logsDir: opts.LogsDir,
-		host:    opts.Host,
+		limactl:        opts.Lima.Path,
+		runner:         opts.Runner,
+		records:        opts.Records,
+		logsDir:        opts.LogsDir,
+		host:           opts.Host,
+		reapHostAgents: reapHostAgents,
+		stopTimeout:    gracefulStopTimeout,
 	}, nil
 }
 
@@ -318,8 +328,9 @@ func (p *Provider) Stop(ctx context.Context, machine string, progress types.Prog
 		return err
 	}
 	if !inst.running() {
-		// Stop converges on a state. Already stopped is success, silently.
-		return nil
+		// Lima can report Stopped even when a host agent escaped its parent.
+		// Reaping that exact agent is still part of converging on stopped.
+		return p.reapHostAgents(ctx, p.limactl, machine)
 	}
 	progress.Progress(types.ProgressEvent{
 		Kind:    types.ProgressStopping,
@@ -345,15 +356,26 @@ func (p *Provider) Stop(ctx context.Context, machine string, progress types.Prog
 // announced rather than silent, because work in progress *inside* the guest
 // can still be lost and the user should know that is what happened.
 func (p *Provider) stopMachine(ctx context.Context, machine string, progress types.ProgressSink) error {
-	if _, err := p.run(ctx, "stop", machine); err != nil {
+	stopCtx, cancelStop := context.WithTimeout(ctx, p.stopTimeout)
+	_, stopErr := p.run(stopCtx, "stop", machine)
+	cancelStop()
+	if stopErr != nil {
+		// A caller cancellation means the user asked avar itself to stop. Do not
+		// turn that into a new forceful lifecycle action.
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("stopping machine %s: %w", machine, err)
+		}
 		progress.Progress(types.ProgressEvent{
 			Kind:    types.ProgressWarning,
 			Machine: machine,
 			Message: fmt.Sprintf("%s did not shut down cleanly; ending it. Unsaved work inside it may be lost — your project files on this Mac are not affected.", machine),
 		})
 		if _, forceErr := p.run(ctx, "stop", "--force", machine); forceErr != nil {
-			return fmt.Errorf("stopping machine %s: %w (it did not stop cleanly, and ending it outright also failed: %v)", machine, err, forceErr)
+			return fmt.Errorf("stopping machine %s: %w (it did not stop cleanly, and ending it outright also failed: %v)", machine, stopErr, forceErr)
 		}
+	}
+	if err := p.reapHostAgents(ctx, p.limactl, machine); err != nil {
+		return fmt.Errorf("removing orphaned Lima host agents for machine %s: %w", machine, err)
 	}
 	return nil
 }

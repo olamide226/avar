@@ -86,7 +86,11 @@ func stopSelected(ctx context.Context, app *App, p provider.Provider, inv cli.In
 		fmt.Fprintf(app.Out, "There is no %s environment yet, so there is nothing to stop.\n", label)
 		return nil
 	case machine.State == types.StateStopped:
-		// Stop converges on a state, so this is a success (REQ-5.2).
+		// Ask the provider to converge a stale backend process too. Lima can
+		// report Stopped while an orphaned host agent is still consuming CPU.
+		if err := p.Stop(ctx, machine.Name, types.DiscardProgress); err != nil {
+			return err
+		}
 		fmt.Fprintf(app.Out, "%s is already stopped.\n", label)
 		return nil
 	case machine.State != types.StateRunning:
@@ -124,6 +128,11 @@ func stopEverything(ctx context.Context, app *App, p provider.Provider, machines
 		switch machine.State {
 		case types.StateRunning:
 		case types.StateStopped:
+			// A stopped VM can still have an orphaned backend process. Let Stop
+			// converge that cleanup without counting it as a newly stopped VM.
+			if err := p.Stop(ctx, machine.Name, types.DiscardProgress); err != nil {
+				failures = append(failures, err)
+			}
 			alreadyIdle++
 			continue
 		default:

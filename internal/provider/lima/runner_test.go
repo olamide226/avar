@@ -62,6 +62,8 @@ type fakeRunner struct {
 
 	// errs fails a limactl subcommand, keyed by the subcommand name.
 	errs map[string]error
+	// blocks waits for context cancellation on a matching limactl subcommand.
+	blocks map[string]bool
 
 	// streamOutput is what a streamed invocation writes.
 	streamOutput string
@@ -91,7 +93,7 @@ const configPathPlaceholder = "<config.yaml>"
 var _ deps.Runner = (*fakeRunner)(nil)
 
 func newFakeRunner() *fakeRunner {
-	return &fakeRunner{errs: map[string]error{}, memsize: "17179869184"}
+	return &fakeRunner{errs: map[string]error{}, blocks: map[string]bool{}, memsize: "17179869184"}
 }
 
 // listing programs the JSON `limactl list --json` returns, once per call.
@@ -108,8 +110,19 @@ func (r *fakeRunner) failOn(subcommand string, err error) *fakeRunner {
 	return r
 }
 
+// blockOn makes a limactl action behave like a subprocess that never returns
+// until its context is cancelled.
+func (r *fakeRunner) blockOn(subcommand string) *fakeRunner {
+	r.blocks[subcommand] = true
+	return r
+}
+
 func (r *fakeRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
 	r.record(invocation{Program: name, Args: args, Streamed: false})
+	if r.blocks[strings.Join(args, " ")] {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -321,6 +334,7 @@ func newTestProvider(t *testing.T, runner *fakeRunner, records Records) *Provide
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	p.reapHostAgents = func(context.Context, string, string) error { return nil }
 	return p
 }
 
