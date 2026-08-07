@@ -321,6 +321,7 @@ func newTestProvider(t *testing.T, runner *fakeRunner, records Records) *Provide
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	p.reapHostAgents = func(context.Context, string, string) error { return nil }
 	return p
 }
 

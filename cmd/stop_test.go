@@ -81,9 +81,9 @@ func TestStop_AlreadyStoppedIsNotAnError_REQ_5_2(t *testing.T) {
 	if !strings.Contains(app.stdout(), "already stopped") {
 		t.Errorf("`avr stop` did not explain that there was nothing to do:\n%s", app.stdout())
 	}
-	// Nothing to stop is decided from the listing avar already has, so no
-	// second round trip is spent proving it (REQ-17.1).
-	f.AssertOps(t, fake.OpStatus)
+	// The provider also gets a chance to clear a stale backend process while
+	// preserving the already-stopped result.
+	f.AssertOps(t, fake.OpStatus, fake.OpStop)
 	f.AssertMachineState(t, target, types.StateStopped)
 }
 
@@ -126,16 +126,16 @@ func TestStop_AllStopsEveryOwnedMachineAndNothingElse_REQ_5_2(t *testing.T) {
 		t.Fatalf("avr stop --all: %v", err)
 	}
 
-	// Exactly one listing, then one Stop per running owned machine — the
-	// already-stopped one is not worth a subprocess.
-	f.AssertOps(t, fake.OpStatus, fake.OpStop, fake.OpStop)
+	// Exactly one listing, then one Stop per owned machine. Calling Stop for an
+	// already-stopped machine lets the provider reap a stale host process.
+	f.AssertOps(t, fake.OpStatus, fake.OpStop, fake.OpStop, fake.OpStop)
 	stopped := map[string]bool{}
 	for _, call := range f.CallsFor(fake.OpStop) {
 		stopped[call.Machine] = true
 	}
-	for _, want := range []string{"avr-fedora-42-arm64", "avr-ubuntu-24.04-arm64"} {
+	for _, want := range []string{"avr-debian-12-arm64", "avr-fedora-42-arm64", "avr-ubuntu-24.04-arm64"} {
 		if !stopped[want] {
-			t.Errorf("`avr stop --all` left %s running", want)
+			t.Errorf("`avr stop --all` did not converge %s through the provider", want)
 		}
 	}
 	for _, call := range f.Calls() {
