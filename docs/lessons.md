@@ -225,3 +225,45 @@ been evidence; reading the interface again was not.
 
 When a task's stated purpose is to make something work elsewhere, compile it
 elsewhere in the same PR, even when nothing there runs yet.
+
+### A test double that shares the code's assumption confirms the assumption, not the behaviour
+
+The WSL backend reads applied mounts out of `/proc/mounts` and filters them with
+`awk '$3 == "drvfs"'`. Twenty-nine unit tests passed. The fake `wsl.exe` they run
+against emitted the already-filtered two columns avar wanted, so every one of
+them agreed that the filter worked.
+
+WSL 2 serves DrvFS over 9P. Real `/proc/mounts` reports the *type* as `9p` and
+names DrvFS only inside the options, as `aname=drvfs`. The filter therefore
+matched nothing on a real machine, and it failed in two directions at once:
+`AppliedMounts` reported nothing applied, so `SetMounts` failed its own
+verification on a mount that had landed perfectly — and the same predicate in the
+provisioning check meant a guest with the whole of `C:` mounted would have passed
+the confinement check written to prevent exactly that. The first real
+provisioning run found both in one command.
+
+The fake was not wrong to be simple. It was wrong to answer in avar's vocabulary
+rather than the tool's: it rendered what avar hoped to parse instead of what
+`wsl.exe` writes. A double built that way can only ever confirm that the parser
+parses its author's idea of the format.
+
+When a double stands in for an external tool, its fixtures are the contract under
+test. Take them from the tool — paste a real line in — and where the parse itself
+is the value of the code, put it in front of the real thing at least once. This
+is the same rule as *"a test that asserts a command's shape proves only that you
+wrote what you wrote"*, arriving from the other end: there the assertion was the
+author's, here the input was.
+
+### `/mnt` on WSL is not the user's drives
+
+The same provisioning run refused a perfectly good environment because the
+confinement check treated everything under `/mnt` as a Windows drive. `/mnt/wsl`
+and `/mnt/wslg` are WSL's own tmpfs mounts — shared utility-VM state and GUI
+plumbing — present in every distribution and nothing to do with the host's
+filesystem.
+
+A confinement check has to name what it forbids precisely. "Anything under /mnt"
+was a guess at what automount does; what it actually does is mount the drives,
+and that is what the check should look for. A guess that is too broad fails
+honest environments, and the fix for it — narrowing — is exactly how a check
+becomes too narrow to catch anything.

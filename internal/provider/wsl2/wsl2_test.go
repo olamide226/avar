@@ -103,6 +103,13 @@ type fakeWSL struct {
 	mounted map[string]map[string]string
 	// listeners are the TCP ports a guest process is listening on.
 	listeners []int
+	// installFailsUntilWebDownload models a machine whose default download
+	// channel does not work (no Store, or a proxy blocking the distribution
+	// list), so only the fallback succeeds.
+	installFailsUntilWebDownload bool
+	// installRegistersThenFails models an install that got far enough to
+	// register the distribution and then failed anyway.
+	installRegistersThenFails bool
 
 	calls      [][]string
 	provisions []string
@@ -188,6 +195,16 @@ func (f *fakeWSL) respond(args []string) (string, error) {
 	case has(args, "--list"):
 		return strings.Join(f.names(), "\r\n") + "\r\n", nil
 	case has(args, "--install"):
+		if f.installRegistersThenFails {
+			f.register(argAfter(args, "--name"), 2, false)
+			return "", errors.New("exit status 0xffffffff")
+		}
+		if f.installFailsUntilWebDownload && !has(args, "--web-download") {
+			// The shape of the real failure: the distribution list cannot be
+			// fetched, so nothing is downloaded and nothing is registered.
+			return "Failed to fetch the distribution list\r\nError code: Wsl/InstallDistro/0x80072eff\r\n",
+				errors.New("exit status 0xffffffff")
+		}
 		if f.installRegisters {
 			f.register(argAfter(args, "--name"), 2, true)
 		}
@@ -276,8 +293,12 @@ func (f *fakeWSL) applyMountScript(machine, script string) {
 	}
 }
 
-// reportMounts renders the mount table the way /proc/mounts would, escaping
-// included, so the parser is exercised rather than bypassed.
+// reportMounts renders the mount table the way /proc/mounts would.
+//
+// The fixture is what WSL 2 actually writes: the filesystem type is 9p and
+// DrvFS is named only inside the options, as aname=drvfs. Rendering it as
+// `drvfs` would have made every test agree with a parser that finds nothing on
+// a real machine, which is exactly what happened until a real machine said so.
 func (f *fakeWSL) reportMounts(machine string) string {
 	targets := make([]string, 0, len(f.mounted[machine]))
 	for target := range f.mounted[machine] {
@@ -1257,4 +1278,83 @@ func (f *fakeWSL) reportListeners() string {
 		fmt.Fprintf(b, "00000000:%04X\n", port)
 	}
 	return b.String()
+}
+
+// A machine with no Store provisions on the first attempt, because
+// --web-download is on every one of them.
+//
+// The default channel goes through the Store, which enterprise policy disables
+// and Windows Server does not have at all. That is not a hypothetical: the first
+// real provisioning run of this backend failed with
+// Wsl/InstallDistro/0x80072eff.
+//
+// The two failures this install path guards against are different in kind, and
+// that is why only one of them is answered by retrying. The reset is
+// intermittent and is what the retry is for; a missing Store is deterministic
+// and knowable in advance, so gating the flag behind a retry would make every
+// such machine burn an attempt plus installRetryPause, and read "the download
+// did not start; retrying" about something that will never start. Retrying is
+// not what fixes the reset either way — that happens while fetching the
+// distribution list, which both channels do.
+func TestEnsureMachine_InstallsOnAStorelessMachineWithoutASpareAttempt_REQ_18_6(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeWSL()
+	// A machine that has no Store at all: only the direct channel ever works.
+	f.installFailsUntilWebDownload = true
+	p := newProvider(t, f, recorded())
+
+	spec := provider.MachineSpec{Name: testMachine, Selector: ubuntuSelector()}
+	if err := p.EnsureMachine(context.Background(), spec, types.DiscardProgress); err != nil {
+		t.Fatalf("EnsureMachine on a Store-less machine: %v", err)
+	}
+	if _, registered := f.registered[testMachine]; !registered {
+		t.Error("the environment was not installed")
+	}
+	if !f.ranAny("--web-download") {
+		t.Errorf("the channel that works on this machine was never used: %v", f.argvs())
+	}
+
+	installs := 0
+	for _, c := range f.calls {
+		if has(c, "--install") {
+			installs++
+		}
+	}
+	if installs != 1 {
+		t.Errorf("provisioning took %d install attempts on a Store-less machine, want 1: %v", installs, f.argvs())
+	}
+}
+
+// The retry stops the moment a distribution appears, whatever the exit status.
+// A failure after registration is not the transient one this exists for, and
+// retrying it would fail with ERROR_ALREADY_EXISTS and bury the real cause.
+func TestEnsureMachine_DoesNotRetryOnceSomethingIsRegistered_PROP_7(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeWSL()
+	// Registers the distribution and then reports failure — the shape of an
+	// install that got far enough to matter and then broke.
+	f.installRegistersThenFails = true
+	p := newProvider(t, f, recorded())
+
+	spec := provider.MachineSpec{Name: testMachine, Selector: ubuntuSelector()}
+	if err := p.EnsureMachine(context.Background(), spec, types.DiscardProgress); err == nil {
+		t.Fatal("EnsureMachine reported success although the install failed")
+	}
+
+	installs := 0
+	for _, c := range f.calls {
+		if has(c, "--install") {
+			installs++
+		}
+	}
+	if installs != 1 {
+		t.Errorf("avar ran %d installs; a failure that registered something is not retried", installs)
+	}
+	// And what it left behind is removed, so the next invocation finds either a
+	// working environment or nothing.
+	if _, still := f.registered[testMachine]; still {
+		t.Error("the half-installed distribution was left registered")
+	}
 }

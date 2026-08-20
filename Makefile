@@ -22,11 +22,19 @@ cover:
 	go test -race -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
 
-# Real-Lima end-to-end tests. Requires macOS with virtualization and limactl.
-# Excluded from default CI: these provision actual virtual machines.
+# End-to-end tests against the real backend for this host: Lima on macOS, WSL 2
+# on Windows. The build tags select the half that applies, so this is one target
+# on both.
+#
+# Excluded from default CI: these create actual Linux environments (a virtual
+# machine on one host, a registered distribution on the other), and the Windows
+# half downloads a root filesystem the first time it runs.
+#
+# macOS needs limactl and virtualization; Windows needs WSL 2, and skips with a
+# reason rather than failing if it is not there.
 .PHONY: e2e
 e2e:
-	go test -tags=e2e -timeout=30m -count=1 ./e2e/...
+	go test -tags=e2e -timeout=45m -count=1 ./e2e/...
 
 .PHONY: lint
 lint: fmt-check vet

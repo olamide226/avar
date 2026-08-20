@@ -130,13 +130,25 @@ chmod 0644 /etc/wsl.conf
 // It reports rather than judges, and it does not use `set -e`: a fact avar
 // cannot read is a fact avar has to report as missing, and a script that exited
 // early would leave the caller unable to say which check failed.
-const verifyScript = `. /etc/os-release 2>/dev/null || true
+//
+// The mount check asks about DrvFS specifically, not about everything under
+// /mnt. WSL keeps its own machinery there — /mnt/wsl and /mnt/wslg, which carry
+// the shared utility-VM state and the GUI plumbing — and those are tmpfs mounts
+// belonging to WSL rather than doors into the user's filesystem. The first real
+// provisioning run of this backend refused a perfectly good environment because
+// of them. What automount does, and what avar turns off, is mount the Windows
+// *drives*, so a Windows drive is what the check looks for (REQ-9.3, PROP-5).
+//
+// Recognising one is drvfsPredicate's business; getting it wrong here is how a
+// guest with the whole of C: mounted passes a check written to prevent exactly
+// that.
+var verifyScript = `. /etc/os-release 2>/dev/null || true
 echo "os-id=${ID}"
 echo "os-version=${VERSION_ID}"
 echo "marker=$(cat %[1]s 2>/dev/null | tr -d '\n' | head -c 4000)"
 echo "user=$(id -un '%[2]s' 2>/dev/null)"
 if sudo -n -u root true >/dev/null 2>&1; then echo "sudo=yes"; else echo "sudo=no"; fi
-echo "mounts=$(awk '$2 ~ /^\/mnt\// {print $2}' /proc/mounts | tr '\n' ',')"
+echo "mounts=$(awk '` + drvfsPredicate + ` && index($2, "%[3]s/") != 1 {print $2}' /proc/mounts | tr '\n' ',')"
 `
 
 // guestShellArgv is how avar runs a script inside a distribution as root.
@@ -264,10 +276,10 @@ func (f guestFacts) checkOwnedAndConfined(machine, wantUser string) error {
 	case !f.Sudo:
 		return fmt.Errorf("environment %s does not grant %s passwordless sudo", machine, wantUser)
 	case len(f.Mounts) > 0:
-		// A guest that still mounts the Windows drives has automount on, which
+		// A guest that still has a Windows drive mounted has automount on, which
 		// means /etc/wsl.conf did not take effect and the guest can reach every
-		// file on the host (REQ-9.3, PROP-5).
-		return fmt.Errorf("environment %s still has the Windows drives mounted at %s; avar shares registered project directories only",
+		// file on it (REQ-9.3, PROP-5).
+		return fmt.Errorf("environment %s still has a Windows drive mounted at %s; avar shares registered project directories only",
 			machine, strings.Join(f.Mounts, ", "))
 	}
 	return nil

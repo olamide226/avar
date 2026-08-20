@@ -209,15 +209,23 @@ This is the platform avar has been used on.
 
 **Windows 11 22H2+**, x64 or Arm64, backed by WSL 2. The command grammar is
 identical — `avr`, `avr npm test`, `avr status`, `avr code` and the rest behave
-the same way — because the backend sits behind the same provider boundary. Two
-honest caveats:
+the same way — because the backend sits behind the same provider boundary.
 
-- It has been built and unit-tested but **not yet exercised end to end against a
-  real WSL installation.** No avar environment has been provisioned on Windows
-  outside a test double. Treat it as ready to try, not as proven.
+It is exercised end to end against a real WSL installation: `make e2e` on Windows
+provisions a distribution, runs commands in it, and checks the things that are
+meant to be true of it — a non-root account, the project visible from both sides,
+no Windows drive mounted, no host environment variable crossing, and the guest's
+own exit status coming back out. It has had far less mileage than the macOS path,
+which has been in daily use; treat it as working rather than as worn in.
+
+Two things to know:
+
 - Each environment runs on the host's own processor. WSL 2 has no CPU emulation,
   so `--arch` cannot ask for the architecture your machine is not, and avar says
   so before downloading anything rather than after.
+- Your project stays on the Windows filesystem, which Linux reaches through a
+  translation layer. For editing that is invisible; for a large dependency tree
+  it is not, and avar says so once per project.
 
 Linux hosts, cloud and remote environments, and GUI applications are out of
 scope.

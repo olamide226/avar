@@ -618,3 +618,46 @@ func TestParseVersion_AcceptsAFourthComponent_REQ_18_2(t *testing.T) {
 		t.Errorf("2.7.13.0 (%s) does not compare as newer than 2.7.12.0 (%s)", newer, got)
 	}
 }
+
+// REQ-18.3: a refusal should say what avar knows. When the version is the
+// problem, "WSL 2 is not usable" is true and useless — the user needs to know
+// which version they have, which one avar needs, and that updating is the fix.
+//
+// This is reachable without a terminal, which is exactly when it matters: a
+// script or a CI job cannot answer a prompt, and the message is the only thing
+// it leaves behind.
+func TestEnsureWSL_ARefusedUpdateNamesTheVersion_REQ_18_3(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		interactive bool
+		answer      bool
+	}{
+		{name: "nobody to ask", interactive: false},
+		{name: "the user said no", interactive: true, answer: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := &fakeWSL{versionOut: versionOutput(tooOldWSL), interactive: tc.interactive, confirmAnswer: tc.answer}
+			_, err := f.manager(t).EnsureWSL(context.Background())
+			if err == nil {
+				t.Fatal("EnsureWSL succeeded against a WSL below the minimum")
+			}
+
+			var tooOld *WSLVersionTooOldError
+			if !errors.As(err, &tooOld) {
+				t.Fatalf("error %v is not a WSLVersionTooOldError, so the user is not told what is wrong", err)
+			}
+			for _, want := range []string{tooOldWSL[:strings.LastIndex(tooOldWSL, ".")], MinWSLVersion, "wsl --update"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the message does not mention %q:\n%s", want, err)
+				}
+			}
+			assertNoSetup(t, f)
+		})
+	}
+}
