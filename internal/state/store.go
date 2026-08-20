@@ -69,6 +69,10 @@ const (
 	// It exists on every host so that the layout is one thing rather than two,
 	// and stays empty where nothing imports a distribution.
 	distrosDirName = "distros"
+	// snapshotsDirName holds captured environment states. Like distros/ it is
+	// a directory only the WSL backend fills: Lima keeps its snapshots inside
+	// its own instance directories.
+	snapshotsDirName = "snapshots"
 )
 
 // Store is a handle on the State_Dir. It is safe for concurrent use by
@@ -161,6 +165,14 @@ func (s *Store) LogsDir() string { return s.path(logsDirName) }
 // with confidence that nothing else put a file there, and removing avar removes
 // every environment it made (REQ-18.7, REQ-5.6).
 func (s *Store) DistrosDir() string { return s.path(distrosDirName) }
+
+// SnapshotsDir holds the environment states `avr snapshot` captures on Windows.
+//
+// They live beside the environments themselves for the same reason: a snapshot
+// is a copy of an environment's whole disk, and keeping it in avar's own state
+// directory is what makes `avr destroy` able to reclaim it and removing avar
+// able to remove it.
+func (s *Store) SnapshotsDir() string { return s.path(snapshotsDirName) }
 
 func (s *Store) path(name string) string { return filepath.Join(s.root, name) }
 

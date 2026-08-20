@@ -192,6 +192,14 @@ func (f *fakeWSL) respond(args []string) (string, error) {
 			f.register(argAfter(args, "--name"), 2, true)
 		}
 		return "Installing: Ubuntu 24.04 LTS\r\nDistribution successfully installed.\r\n", nil
+	case has(args, "--export"):
+		// The real tool writes a disk image. The fake writes a file, because
+		// what avar's own logic depends on is that a file appears where it
+		// asked for one and does not when the export fails.
+		return "", os.WriteFile(args[2], []byte("virtual disk"), 0o600)
+	case has(args, "--import"):
+		f.register(args[1], 2, false)
+		return "", nil
 	case has(args, "--terminate"):
 		f.running[argAfter(args, "--terminate")] = false
 		return "", nil
@@ -401,13 +409,14 @@ func newProvider(t *testing.T, f *fakeWSL, recs Records) *Provider {
 
 	root := t.TempDir()
 	p, err := New(Options{
-		WSL:        deps.WSL{Path: `C:\Windows\System32\wsl.exe`},
-		Runner:     f,
-		Records:    recs,
-		DistrosDir: filepath.Join(root, "distros"),
-		LogsDir:    filepath.Join(root, "logs"),
-		GuestUser:  testUser,
-		HostArch:   types.ArchAMD64,
+		WSL:          deps.WSL{Path: `C:\Windows\System32\wsl.exe`},
+		Runner:       f,
+		Records:      recs,
+		DistrosDir:   filepath.Join(root, "distros"),
+		LogsDir:      filepath.Join(root, "logs"),
+		SnapshotsDir: filepath.Join(root, "snapshots"),
+		GuestUser:    testUser,
+		HostArch:     types.ArchAMD64,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1120,19 +1129,21 @@ func TestNew_RequiresItsCollaborators(t *testing.T) {
 	t.Parallel()
 
 	full := Options{
-		WSL:        deps.WSL{Path: `C:\Windows\System32\wsl.exe`},
-		Runner:     newFakeWSL(),
-		DistrosDir: `C:\state\distros`,
-		LogsDir:    `C:\state\logs`,
-		GuestUser:  testUser,
-		HostArch:   types.ArchAMD64,
+		WSL:          deps.WSL{Path: `C:\Windows\System32\wsl.exe`},
+		Runner:       newFakeWSL(),
+		DistrosDir:   `C:\state\distros`,
+		LogsDir:      `C:\state\logs`,
+		SnapshotsDir: `C:\state\snapshots`,
+		GuestUser:    testUser,
+		HostArch:     types.ArchAMD64,
 	}
 
 	tests := map[string]func(*Options){
-		"no wsl.exe":     func(o *Options) { o.WSL.Path = "" },
-		"no runner":      func(o *Options) { o.Runner = nil },
-		"no distros dir": func(o *Options) { o.DistrosDir = "" },
-		"no logs dir":    func(o *Options) { o.LogsDir = "" },
+		"no wsl.exe":       func(o *Options) { o.WSL.Path = "" },
+		"no runner":        func(o *Options) { o.Runner = nil },
+		"no distros dir":   func(o *Options) { o.DistrosDir = "" },
+		"no snapshots dir": func(o *Options) { o.SnapshotsDir = "" },
+		"no logs dir":      func(o *Options) { o.LogsDir = "" },
 		"root as the guest account": func(o *Options) {
 			o.GuestUser = "root"
 		},

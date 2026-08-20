@@ -232,6 +232,28 @@ func parseGuestFacts(out string) guestFacts {
 // into a root shell, or into a guest that mounts their whole C: drive, and
 // discovering it when they notice (REQ-18.12, PROP-7).
 func (f guestFacts) check(machine string, sel types.EnvironmentSelector, entry registryEntry, wantUser string) error {
+	if err := f.checkOwnedAndConfined(machine, wantUser); err != nil {
+		return err
+	}
+	return f.checkRelease(machine, sel, entry)
+}
+
+// checkOwnedAndConfined is the half of the verification that asks only whether
+// this is an avar environment and whether it is confined — no selector, no
+// registry entry, nothing about which release it holds.
+//
+// It is separate because Restore needs exactly this half and cannot use the
+// other. A snapshot holds whatever release it held when it was captured, and
+// checking that against today's selector would refuse a restore for doing
+// precisely what the user asked; but that a restored disk carries avar's marker
+// for this machine, has the account, and does not have the Windows drives
+// mounted are all still true of any environment avar will hand a user.
+//
+// The confinement clause is the one that matters most here. /etc/wsl.conf
+// travels inside the VHD, so the policy is expected to come back with the disk —
+// but that is an assumption about a file inside an artifact exported some time
+// ago, and asserting it costs one guest command.
+func (f guestFacts) checkOwnedAndConfined(machine, wantUser string) error {
 	switch {
 	case !f.HasMarker:
 		return fmt.Errorf("environment %s does not carry avar's marker at %s, so avar cannot confirm it built it", machine, markerPath)
@@ -248,7 +270,7 @@ func (f guestFacts) check(machine string, sel types.EnvironmentSelector, entry r
 		return fmt.Errorf("environment %s still has the Windows drives mounted at %s; avar shares registered project directories only",
 			machine, strings.Join(f.Mounts, ", "))
 	}
-	return f.checkRelease(machine, sel, entry)
+	return nil
 }
 
 // checkRelease reports a guest that is not the release the selector named.

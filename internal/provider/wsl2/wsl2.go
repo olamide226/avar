@@ -105,6 +105,12 @@ type Options struct {
 	// required.
 	LogsDir string
 
+	// SnapshotsDir is where captured environment states are kept, normally
+	// <State_Dir>\snapshots. It is required: a snapshot is a copy of a whole
+	// disk, and one written outside avar's own state directory could not be
+	// reclaimed by removing the environment it belongs to.
+	SnapshotsDir string
+
 	// GuestUser overrides the Linux account avar creates in each distribution.
 	// Empty means one derived from the Windows account name, which is what
 	// production uses; tests pin it so a generated provisioning script is the
@@ -121,13 +127,14 @@ type Options struct {
 // It holds no mutable state: what WSL knows is read fresh per call (see view),
 // so two concurrent avr invocations cannot disagree because one of them cached.
 type Provider struct {
-	wsl        string
-	runner     deps.Runner
-	records    Records
-	distrosDir string
-	logsDir    string
-	guestUser  string
-	hostArch   types.Arch
+	wsl          string
+	runner       deps.Runner
+	records      Records
+	distrosDir   string
+	logsDir      string
+	snapshotsDir string
+	guestUser    string
+	hostArch     types.Arch
 }
 
 // New returns a Provider driving the given WSL installation.
@@ -141,6 +148,8 @@ func New(opts Options) (*Provider, error) {
 		return nil, errors.New("creating the WSL backend: no directory was given for imported distributions; avar stores them under its own state directory so that removing an environment reclaims its disk")
 	case opts.LogsDir == "":
 		return nil, errors.New("creating the WSL backend: no log directory was given; provisioning failures must be able to name a log file")
+	case opts.SnapshotsDir == "":
+		return nil, errors.New("creating the WSL backend: no snapshot directory was given; avar keeps captured environment states under its own state directory")
 	}
 
 	guestUser := opts.GuestUser
@@ -157,13 +166,14 @@ func New(opts Options) (*Provider, error) {
 	}
 
 	return &Provider{
-		wsl:        opts.WSL.Path,
-		runner:     opts.Runner,
-		records:    opts.Records,
-		distrosDir: opts.DistrosDir,
-		logsDir:    opts.LogsDir,
-		guestUser:  guestUser,
-		hostArch:   hostArch,
+		wsl:          opts.WSL.Path,
+		runner:       opts.Runner,
+		records:      opts.Records,
+		distrosDir:   opts.DistrosDir,
+		logsDir:      opts.LogsDir,
+		snapshotsDir: opts.SnapshotsDir,
+		guestUser:    guestUser,
+		hostArch:     hostArch,
 	}, nil
 }
 
@@ -274,10 +284,21 @@ func (p *Provider) installDir(machine string) string {
 	return filepath.Join(p.distrosDir, machine)
 }
 
-// Provider implements provider.Provider against a local WSL 2 installation.
+// What this backend is, stated where the compiler checks it.
 //
-// The assertion is here rather than in a test because it is the claim the whole
-// Provider boundary was built for: a second backend that satisfies the same
-// contract without a line of command-layer code changing (REQ-17.3, REQ-18.14).
-// If it ever stops compiling, that claim has stopped being true.
-var _ provider.Provider = (*Provider)(nil)
+// The core contract is the claim the whole Provider boundary was built for: a
+// second backend satisfying it without a line of command-layer code changing
+// (REQ-17.3, REQ-18.14). If it stops compiling, that claim has stopped being
+// true.
+//
+// The three optional ones are claims about what WSL can do, and they are all
+// yes: it can export and import a distribution's disk, VS Code can attach to a
+// distribution, and a guest port's reachability can be probed. A backend that
+// could not do one of these would say so by leaving the assertion out rather
+// than by stubbing the methods (design §3.0).
+var (
+	_ provider.Provider             = (*Provider)(nil)
+	_ provider.Snapshotter          = (*Provider)(nil)
+	_ provider.EditorTargetProvider = (*Provider)(nil)
+	_ provider.PortDiagnoser        = (*Provider)(nil)
+)
