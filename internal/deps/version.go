@@ -48,9 +48,16 @@ type Version struct {
 }
 
 // versionToken matches a single semantic-version-shaped token, tolerating a
-// leading "v", a missing patch component, a pre-release suffix, and build
-// metadata.
-var versionToken = regexp.MustCompile(`^[vV]?([0-9]+)\.([0-9]+)(?:\.([0-9]+))?(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$`)
+// leading "v", a missing patch component, a fourth numeric component, a
+// pre-release suffix, and build metadata.
+//
+// The fourth component is matched and discarded rather than rejected, because
+// Windows numbers its components with four: `wsl --version` reports "WSL
+// version: 2.7.12.0". Refusing that token would make the parser skip past the
+// version it was looking for and find the Windows build number further down the
+// same output, which is a worse answer than ignoring a trailing zero. Nothing
+// avar gates on has ever distinguished two releases by their fourth component.
+var versionToken = regexp.MustCompile(`^[vV]?([0-9]+)\.([0-9]+)(?:\.([0-9]+))?(?:\.[0-9]+)?(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$`)
 
 // ParseVersion extracts a version from a tool's version output.
 //
