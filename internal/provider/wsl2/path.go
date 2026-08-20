@@ -52,13 +52,10 @@ var unsafeLabelChars = regexp.MustCompile(`[^a-z0-9._-]`)
 // cost for no correctness gained, and the ten-character truncation is the same
 // one avar already uses to name a per-project machine.
 //
-// It is a pure function: deterministic, no filesystem access, no subprocess. It
-// plans a mapping; applying one is SetMounts.
+// It is a pure function: deterministic, no filesystem access, no subprocess, and
+// nothing of the receiver is read. It plans a mapping; applying one is
+// SetMounts.
 func (p *Provider) MapProjectPath(projectID, hostRoot, hostCwd string) (types.MountSpec, string, error) {
-	return mapProjectPath(projectID, hostRoot, hostCwd)
-}
-
-func mapProjectPath(projectID, hostRoot, hostCwd string) (types.MountSpec, string, error) {
 	if strings.TrimSpace(projectID) == "" {
 		return types.MountSpec{}, "", fmt.Errorf("mapping %s into the guest: no project identity was given", hostRoot)
 	}

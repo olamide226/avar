@@ -2,6 +2,8 @@ package wsl2
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/olamide226/avar/internal/provider"
@@ -85,25 +87,25 @@ func lookupRegistry(sel types.EnvironmentSelector) (registryEntry, error) {
 	return entry, nil
 }
 
-// supportedDistroNames lists the distributions this backend serves, in avar's
-// own matrix order so that two error messages never disagree about it.
+// supportedDistroNames lists the distributions this backend serves.
+//
+// The order comes from the registry's own keys rather than from a second list
+// naming them again: a hand-kept list beside the map is two places to add a
+// distribution and one place to forget, and forgetting shows up as a
+// distribution avar can create but never mentions when refusing another.
 func supportedDistroNames() []string {
 	out := make([]string, 0, len(registry))
-	for _, distro := range []types.Distro{types.DistroUbuntu, types.DistroDebian, types.DistroFedora} {
-		if _, ok := registry[distro]; ok {
-			out = append(out, string(distro))
-		}
+	for distro := range registry {
+		out = append(out, string(distro))
 	}
+	slices.Sort(out)
 	return out
 }
 
-// supportedVersions lists the releases this backend serves for a distribution.
+// supportedVersions lists the releases this backend serves for a distribution,
+// ordered so that one refusal always reads the same way.
 func supportedVersions(d types.Distro) []string {
-	out := make([]string, 0, 2)
-	for version := range registry[d] {
-		out = append(out, version)
-	}
-	return out
+	return slices.Sorted(maps.Keys(registry[d]))
 }
 
 // checkSupported refuses an environment this backend cannot create, before
@@ -116,11 +118,12 @@ func supportedVersions(d types.Distro) []string {
 // Arm64 Windows machine is therefore not a slow request, it is an impossible
 // one, and saying so before a gigabyte is downloaded is the difference between
 // an error and a wasted ten minutes.
-func (p *Provider) checkSupported(sel types.EnvironmentSelector) error {
+func (p *Provider) checkSupported(sel types.EnvironmentSelector) (registryEntry, error) {
 	if sel.Arch != "" && sel.Arch != p.hostArch {
-		return fmt.Errorf("%w: WSL runs Linux on the Windows machine's own processor and cannot emulate another, so avar cannot give you a %s environment on a %s host; the supported architecture here is %s",
+		return registryEntry{}, fmt.Errorf("%w: WSL runs Linux on the Windows machine's own processor and cannot emulate another, so avar cannot give you a %s environment on a %s host; the supported architecture here is %s",
 			provider.ErrUnsupportedCapability, sel.Arch, p.hostArch, p.hostArch)
 	}
-	_, err := lookupRegistry(sel)
-	return err
+	// The entry is returned rather than discarded: EnsureMachine has to check
+	// before it does anything, and create needs the same answer a moment later.
+	return lookupRegistry(sel)
 }

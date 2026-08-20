@@ -135,6 +135,17 @@ type Provider struct {
 	snapshotsDir string
 	guestUser    string
 	hostArch     types.Arch
+
+	// shared is this invocation's picture of what WSL has. It is built on
+	// first use and dropped by forget() whenever avar changes something, so
+	// one invocation asks WSL its three listing questions once rather than
+	// once per operation (REQ-17.1). A Provider is per-invocation, so this
+	// never outlives the process.
+	//
+	// It is not guarded by a mutex because a Provider serves one invocation on
+	// one goroutine: cmd.App builds it behind a sync.Once and every command
+	// drives it in sequence.
+	shared *view
 }
 
 // New returns a Provider driving the given WSL installation.
@@ -258,7 +269,7 @@ func (p *Provider) gate(ctx context.Context, machine string, mode ownership) err
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("operating on environment %s: %w", machine, err)
 	}
-	if err := types.ValidateMachineName(machine); err != nil {
+	if types.ValidateMachineName(machine) != nil {
 		return fmt.Errorf("%w: %s; avar only manages environments it created", provider.ErrNotOwned, machine)
 	}
 	if mode == ownershipRecord && p.records != nil {

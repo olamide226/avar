@@ -3,7 +3,6 @@ package wsl2
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/olamide226/avar/internal/types"
@@ -52,7 +51,7 @@ const (
 	fstabEnd   = "# END avar"
 )
 
-// drvfsOptionsExpr is the shell expression that computes the mount options
+// drvfsOptionsExpr renders the shell expression that computes the mount options
 // every project share gets.
 //
 // metadata is what makes Linux permissions work on a Windows filesystem at all:
@@ -63,10 +62,19 @@ const (
 // are Microsoft's own documented automount defaults, which is the combination
 // with the most miles on it.
 //
-// It is an expression rather than a constant string because the numeric uid is
-// only known inside the guest, and it has to be numeric: an fstab line is read
-// by mount, not by a shell, so a name would not be resolved.
-const drvfsOptionsExpr = `AVR_OPTS="metadata,uid=$(id -u),gid=$(id -g),umask=22,fmask=11,case=off"`
+// The account is named explicitly rather than taken from `id -u` with no
+// argument. Every script this package sends runs as root — guestShellArgv says
+// so — so a bare `id -u` is 0, and the share would be handed to root: the exact
+// opposite of what the paragraph above promises, and invisible until a user
+// found their own project read-only inside the guest.
+//
+// It is an expression rather than a constant because the numeric id is only
+// known inside the guest, and it has to be numeric: an fstab line is read by
+// mount, not by a shell, so a name would not be resolved.
+func drvfsOptionsExpr(guestUser string) string {
+	return fmt.Sprintf(`AVR_OPTS="metadata,uid=$(id -u %[1]s),gid=$(id -g %[1]s),umask=22,fmask=11,case=off"`,
+		shellQuote(guestUser))
+}
 
 // AppliedMounts reports the project shares the guest currently has.
 //
@@ -94,8 +102,15 @@ func (p *Provider) AppliedMounts(ctx context.Context, machine string) ([]types.M
 // /proc/mounts is a kernel-defined format that is the same on all three
 // distributions in avar's matrix and is not localized, whereas `mount`'s output
 // is a courtesy the util-linux version decides on.
-const readMountsScript = `awk '$3 == "drvfs" && $2 ~ /^\/mnt\/avr\/projects\// {print $1 "\t" $2}' /proc/mounts
-`
+//
+// The project root is built in from the constant rather than spelled again as a
+// literal. Spelled twice, changing it would leave this reading nothing while
+// SetMounts kept planning — so avar would tear down and rebuild every share on
+// every invocation, and its own verification would fail every time. `index`
+// rather than a regex also spares the slashes any escaping.
+var readMountsScript = fmt.Sprintf(
+	"awk '$3 == \"drvfs\" && index($2, \"%s/\") == 1 {print $1 \"\\t\" $2}' /proc/mounts\n",
+	GuestProjectRoot)
 
 // SetMounts makes mounts the complete set of project shares the guest has.
 //
@@ -144,7 +159,7 @@ func (p *Provider) SetMounts(ctx context.Context, machine string, mounts []types
 		Message: fmt.Sprintf("sharing %s", strings.Join(types.MountHostPaths(desired), ", ")),
 	})
 
-	script := mountScript(applied, desired)
+	script := mountScript(applied, desired, p.guestUser)
 	if _, err := p.run(ctx, guestShellArgv(machine, script)...); err != nil {
 		return fmt.Errorf("sharing directories with environment %s: %w", machine, err)
 	}
@@ -174,30 +189,37 @@ func (p *Provider) SetMounts(ctx context.Context, machine string, mounts []types
 // Unmounting comes before mounting. A stale share at a guest path avar is about
 // to reuse would otherwise be shadowed by the new one rather than replaced, and
 // the guest would hold two mounts where avar's records describe one.
-func mountScript(applied, desired []types.MountSpec) string {
+//
+// Nothing here is prefixed with sudo, because everything this package sends runs
+// as root already (guestShellArgv). A `sudo` that changes nothing would also be
+// a dependency on sudo being installed and configured in the guest, which a
+// minimal image need not have.
+//
+// Both sets arrive from types.NormalizeMounts and are therefore already ordered
+// deterministically, which is what makes one desired set produce one script;
+// only the lookup side needs indexing.
+func mountScript(applied, desired []types.MountSpec, guestUser string) string {
 	appliedByGuest := byGuestPath(applied)
 	desiredByGuest := byGuestPath(desired)
 
 	b := &strings.Builder{}
 	b.WriteString("set -e\n")
-	b.WriteString(drvfsOptionsExpr + "\n")
+	b.WriteString(drvfsOptionsExpr(guestUser) + "\n")
 
-	for _, guestPath := range sortedKeys(appliedByGuest) {
-		want, keep := desiredByGuest[guestPath]
-		if keep && want.HostPath == appliedByGuest[guestPath].HostPath {
+	for _, m := range applied {
+		if want, keep := desiredByGuest[m.GuestPath]; keep && want.HostPath == m.HostPath {
 			continue
 		}
-		fmt.Fprintf(b, "sudo umount %s\n", shellQuote(guestPath))
-		fmt.Fprintf(b, "sudo rmdir %s 2>/dev/null || true\n", shellQuote(guestPath))
+		fmt.Fprintf(b, "umount %s\n", shellQuote(m.GuestPath))
+		fmt.Fprintf(b, "rmdir %s 2>/dev/null || true\n", shellQuote(m.GuestPath))
 	}
 
-	for _, guestPath := range sortedKeys(desiredByGuest) {
-		m := desiredByGuest[guestPath]
-		if have, ok := appliedByGuest[guestPath]; ok && have.HostPath == m.HostPath {
+	for _, m := range desired {
+		if have, ok := appliedByGuest[m.GuestPath]; ok && have.HostPath == m.HostPath {
 			continue
 		}
-		fmt.Fprintf(b, "sudo install -d -m 0755 %s\n", shellQuote(guestPath))
-		fmt.Fprintf(b, "sudo mount -t drvfs %s %s -o \"$AVR_OPTS\"\n", shellQuote(m.HostPath), shellQuote(guestPath))
+		fmt.Fprintf(b, "install -d -m 0755 %s\n", shellQuote(m.GuestPath))
+		fmt.Fprintf(b, "mount -t drvfs %s %s -o \"$AVR_OPTS\"\n", shellQuote(m.HostPath), shellQuote(m.GuestPath))
 	}
 
 	b.WriteString(fstabScript(desired))
@@ -218,20 +240,27 @@ func mountScript(applied, desired []types.MountSpec) string {
 func fstabScript(desired []types.MountSpec) string {
 	b := &strings.Builder{}
 	b.WriteString("AVR_FSTAB=$(mktemp)\n")
-	fmt.Fprintf(b, "sudo awk 'BEGIN{skip=0} $0 == %s {skip=1; next} $0 == %s {skip=0; next} skip==0 {print}' %s > \"$AVR_FSTAB\" 2>/dev/null || true\n",
+	fmt.Fprintf(b, "awk '$0 == %s {skip=1; next} $0 == %s {skip=0; next} !skip {print}' %s > \"$AVR_FSTAB\" 2>/dev/null || true\n",
 		shellQuote(fstabBegin), shellQuote(fstabEnd), fstabPath)
-	fmt.Fprintf(b, "printf '%%s\\n' %s >> \"$AVR_FSTAB\"\n", shellQuote(fstabBegin))
+
+	// One redirection around the whole block rather than one per line: the
+	// appends belong together, and grouping them is also what makes a partial
+	// write impossible to mistake for a finished one.
+	b.WriteString("{\n")
+	fmt.Fprintf(b, "  printf '%%s\\n' %s\n", shellQuote(fstabBegin))
 	for _, m := range desired {
 		// fstab is whitespace-separated, so a path containing a space carries
 		// it as \040 — the same escaping /proc/mounts uses coming the other
 		// way. The options come from the variable because an fstab line is read
 		// by mount rather than by a shell and cannot expand anything itself.
-		fmt.Fprintf(b, "printf '%%s %%s drvfs %%s 0 0\\n' %s %s \"$AVR_OPTS\" >> \"$AVR_FSTAB\"\n",
+		fmt.Fprintf(b, "  printf '%%s %%s drvfs %%s 0 0\\n' %s %s \"$AVR_OPTS\"\n",
 			shellQuote(escapeFstabField(m.HostPath)),
 			shellQuote(escapeFstabField(m.GuestPath)))
 	}
-	fmt.Fprintf(b, "printf '%%s\\n' %s >> \"$AVR_FSTAB\"\n", shellQuote(fstabEnd))
-	fmt.Fprintf(b, "sudo install -m 0644 -o root -g root \"$AVR_FSTAB\" %s\n", fstabPath)
+	fmt.Fprintf(b, "  printf '%%s\\n' %s\n", shellQuote(fstabEnd))
+	b.WriteString("} >> \"$AVR_FSTAB\"\n")
+
+	fmt.Fprintf(b, "install -m 0644 \"$AVR_FSTAB\" %s\n", fstabPath)
 	b.WriteString("rm -f \"$AVR_FSTAB\"\n")
 	return b.String()
 }
@@ -309,17 +338,6 @@ func escapeFstabField(s string) string { return fstabEscaper.Replace(s) }
 // directory name and not syntax.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-// sortedKeys orders a mount map so one desired set produces one script, which is
-// what makes the script assertable in a test.
-func sortedKeys(m map[string]types.MountSpec) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // describeMounts renders a mount set for an error the user reads.

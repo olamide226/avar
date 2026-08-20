@@ -150,23 +150,27 @@ func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, targ
 	// Said after the environment is ready and before the user is handed a
 	// shell, so that it is the last thing on screen rather than something that
 	// scrolls past behind provisioning output.
-	adviseNativeWorkspace(app, p, target)
+	adviseNativeWorkspace(app, mount, target)
 
 	return guestCwd, nil
 }
 
-// adviseNativeWorkspace tells a Windows user, once per project, that their
-// project is on the slow side of the filesystem boundary (REQ-18.11).
+// adviseNativeWorkspace tells a user, once per project, that their project is on
+// the slow side of a filesystem boundary (REQ-18.11).
 //
-// It is gated on the backend rather than on the host, because that is what the
-// condition actually is: a project only crosses a filesystem boundary where the
-// guest reaches it through one, which is true of WSL and not of Lima, where a
-// project is shared at its own path and there is nothing to cross.
+// The condition is read off the mapping rather than off the backend's name, and
+// that is the whole point: a project crosses a filesystem boundary exactly when
+// the guest reaches it at a different path than the host does. Lima shares a
+// project at its own path — the two halves are equal and there is nothing to
+// cross — and WSL cannot. Asking `p.ID() == types.ProviderWSL2` would have
+// spelled the same condition as a backend's name, which is the one thing cmd/
+// may not know (REQ-17.3, REQ-18.14), and would have needed editing again for
+// the next backend that translates.
 //
 // Every failure is silent. This is advice on the way to a shell the user asked
 // for, and advice that can fail the command is worse than no advice.
-func adviseNativeWorkspace(app *App, p provider.Provider, target resolve.ResolvedTarget) {
-	if p.ID() != types.ProviderWSL2 || target.Project.AdvisedNativeFS {
+func adviseNativeWorkspace(app *App, mount types.MountSpec, target resolve.ResolvedTarget) {
+	if mount.HostPath == mount.GuestPath || target.Project.AdvisedNativeFS {
 		return
 	}
 	advice, heavy := workspace.Detect(target.Project.Path)

@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/olamide226/avar/internal/provider"
@@ -69,7 +70,7 @@ func (p *Provider) Shell(ctx context.Context, machine string, opts provider.Shel
 		return 0, err
 	}
 
-	d, err := p.newView().require(ctx, machine)
+	d, err := p.view().require(ctx, machine)
 	if err != nil {
 		return 0, err
 	}
@@ -170,16 +171,19 @@ func (p *Provider) shellArgv(machine string, opts provider.ShellOpts) []string {
 // cross, which is the whole of PROP-4 on this backend, and it is enforced by
 // WSL's own mechanism rather than by avar hoping nothing else forwards anything.
 func transportEnv(hostEnv []string, guest map[string]string) []string {
+	policy := foldedNames(guest)
 	out := make([]string, 0, len(hostEnv)+len(guest)+1)
 	for _, entry := range hostEnv {
 		name, _, ok := strings.Cut(entry, "=")
-		if !ok || strings.EqualFold(name, wslEnvVar) || guestNamed(guest, name) {
+		if !ok || strings.EqualFold(name, wslEnvVar) || policy[strings.ToLower(name)] {
 			continue
 		}
 		out = append(out, entry)
 	}
 
-	names := sortedNames(guest)
+	// Sorted so that one policy produces one command line, which is what makes
+	// it assertable in a test.
+	names := slices.Sorted(maps.Keys(guest))
 	for _, name := range names {
 		out = append(out, name+"="+guest[name])
 	}
@@ -202,26 +206,15 @@ func wslEnvList(names []string) string {
 	return strings.Join(entries, ":")
 }
 
-// guestNamed reports whether the policy has its own value for a host variable,
-// so the host's copy is dropped rather than appearing twice.
-func guestNamed(guest map[string]string, name string) bool {
-	for guestName := range guest {
-		if strings.EqualFold(guestName, name) {
-			return true
-		}
+// foldedNames indexes the policy's names for case-insensitive lookup, so that
+// deciding whether to drop a host variable is one map probe rather than a scan
+// of the whole policy for each of the host's hundred-odd variables.
+func foldedNames(guest map[string]string) map[string]bool {
+	out := make(map[string]bool, len(guest))
+	for name := range guest {
+		out[strings.ToLower(name)] = true
 	}
-	return false
-}
-
-// sortedNames orders an environment's names so that one execution produces one
-// command line, which is what makes it assertable in a test.
-func sortedNames(env map[string]string) []string {
-	names := make([]string, 0, len(env))
-	for name := range env {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return out
 }
 
 // runShell runs wsl.exe to completion and turns its outcome into the guest's

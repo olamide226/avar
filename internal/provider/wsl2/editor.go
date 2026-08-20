@@ -26,7 +26,7 @@ func (p *Provider) EditorTarget(ctx context.Context, machine, guestPath string) 
 		return provider.EditorTarget{}, err
 	}
 
-	d, err := p.newView().require(ctx, machine)
+	d, err := p.view().require(ctx, machine)
 	if err != nil {
 		return provider.EditorTarget{}, err
 	}

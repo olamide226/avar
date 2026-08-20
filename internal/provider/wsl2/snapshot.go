@@ -86,7 +86,7 @@ func (p *Provider) Snapshot(ctx context.Context, machine, name string, progress 
 		progress = types.DiscardProgress
 	}
 
-	d, err := p.newView().require(ctx, machine)
+	d, err := p.view().require(ctx, machine)
 	if err != nil {
 		return err
 	}
@@ -101,7 +101,7 @@ func (p *Provider) Snapshot(ctx context.Context, machine, name string, progress 
 		// silently would leave it nothing to ask about.
 		return fmt.Errorf("environment %s already has a snapshot called %q", machine, name)
 	}
-	if err := os.MkdirAll(p.snapshotDir(machine), distrosDirPerm); err != nil {
+	if err := os.MkdirAll(p.snapshotDir(machine), dirPerm); err != nil {
 		return fmt.Errorf("creating the snapshot directory for environment %s: %w", machine, err)
 	}
 
@@ -122,7 +122,7 @@ func (p *Provider) Snapshot(ctx context.Context, machine, name string, progress 
 		return fmt.Errorf("capturing a snapshot of environment %s: %w", machine, err)
 	}
 
-	if err := p.writeSnapshotMeta(machine, name, d); err != nil {
+	if err := p.writeSnapshotMeta(machine, name); err != nil {
 		_ = os.Remove(path)
 		return err
 	}
@@ -170,7 +170,7 @@ func (p *Provider) RestoreSnapshot(ctx context.Context, machine, name string, pr
 	// same way. Not requiring the distribution to exist costs nothing and means
 	// a restore interrupted after the unregister leaves a state that running
 	// the same command again recovers from.
-	d, found, err := p.newView().lookup(ctx, machine)
+	d, found, err := p.view().lookup(ctx, machine)
 	if err != nil {
 		return err
 	}
@@ -188,6 +188,7 @@ func (p *Provider) RestoreSnapshot(ctx context.Context, machine, name string, pr
 		if _, err := p.run(ctx, "--unregister", machine); err != nil {
 			return fmt.Errorf("restoring environment %s: removing the current one: %w", machine, err)
 		}
+		p.forget()
 	}
 	// `wsl --unregister` deletes the root filesystem but leaves the directory,
 	// and an import into a directory that still holds a disk fails. Clearing it
@@ -199,7 +200,9 @@ func (p *Provider) RestoreSnapshot(ctx context.Context, machine, name string, pr
 	// --import with --vhd copies the disk into the install location rather than
 	// registering the file where it lies, which is what lets the same snapshot
 	// be restored from again tomorrow.
-	if _, err := p.run(ctx, "--import", machine, p.installDir(machine), path, "--vhd"); err != nil {
+	_, err = p.run(ctx, "--import", machine, p.installDir(machine), path, "--vhd")
+	p.forget()
+	if err != nil {
 		return fmt.Errorf("restoring environment %s from snapshot %q: %w; the snapshot is still at %s, so running the same command again retries the restore",
 			machine, name, err, path)
 	}
@@ -270,7 +273,7 @@ func (p *Provider) ListSnapshots(ctx context.Context, machine string) ([]provide
 }
 
 // writeSnapshotMeta records what the snapshot is of.
-func (p *Provider) writeSnapshotMeta(machine, name string, d distribution) error {
+func (p *Provider) writeSnapshotMeta(machine, name string) error {
 	selector := types.EnvironmentSelector{}
 	if p.records != nil {
 		if rec, ok, err := p.records.Machine(machine); err == nil && ok {
@@ -288,7 +291,7 @@ func (p *Provider) writeSnapshotMeta(machine, name string, d distribution) error
 	if err != nil {
 		return fmt.Errorf("recording what snapshot %q of environment %s is: %w", name, machine, err)
 	}
-	if err := os.WriteFile(p.snapshotMetaPath(machine, name), append(body, '\n'), createLogPerm); err != nil {
+	if err := os.WriteFile(p.snapshotMetaPath(machine, name), append(body, '\n'), filePerm); err != nil {
 		return fmt.Errorf("recording what snapshot %q of environment %s is: %w", name, machine, err)
 	}
 	return nil

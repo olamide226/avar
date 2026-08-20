@@ -119,7 +119,6 @@ func ensureIdleScheduler(app *App) {
 //
 // It is a no-op when the plist is already there.
 func ensureLaunchdAgent(app *App) {
-
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -149,11 +148,21 @@ func ensureLaunchdAgent(app *App) {
 	// immediately rather than waiting for the next login.
 	_ = launchctl("load", plistPath)
 
+	printIdleNotice(app, "launchctl bootout gui/$(id -u)/"+launchdLabel)
+}
+
+// printIdleNotice is the one-time explanation, shared by both schedulers.
+//
+// Only the command that turns it off differs between them, so only that is a
+// parameter. Written twice, the two copies drift: this is user-facing copy
+// explaining a background process somebody did not ask for, and it has to say
+// the same thing on both hosts.
+func printIdleNotice(app *App, disableCommand string) {
 	fmt.Fprintf(app.Err, "avr: installed a background idle-check that stops Linux environments\n")
 	fmt.Fprintf(app.Err, "     after they have had no activity for a while, so they do not hold\n")
 	fmt.Fprintf(app.Err, "     host resources when you are not using them.\n")
-	fmt.Fprintf(app.Err, "     The check runs every 10 minutes. To disable it:\n")
-	fmt.Fprintf(app.Err, "       launchctl bootout gui/$(id -u)/%s\n", launchdLabel)
+	fmt.Fprintf(app.Err, "     The check runs every %d minutes. To disable it:\n", idleCheckMinutes)
+	fmt.Fprintf(app.Err, "       %s\n", disableCommand)
 	if store, err := app.Store(); err == nil {
 		fmt.Fprintf(app.Err, "     Or set idle_timeout = \"0\" in %s\n", store.ConfigPath())
 	}
@@ -176,12 +185,12 @@ func launchdPlistContent(bin string) string {
 		<string>idle-check</string>
 	</array>
 	<key>StartInterval</key>
-	<integer>600</integer>
+	<integer>%d</integer>
 	<key>RunAtLoad</key>
 	<false/>
 </dict>
 </plist>
-`, launchdLabel, bin)
+`, launchdLabel, bin, idleCheckMinutes*60)
 }
 
 // launchctl runs launchctl with the given arguments. If loading the agent
@@ -199,6 +208,12 @@ func launchctl(args ...string) error {
 // folder behind (design §3.8).
 const scheduledTaskName = "avar-idle-check"
 
+// scheduledTaskStamp records, inside avar's state directory, which binary the
+// Task Scheduler entry currently points at. Its presence is the cheap answer to
+// "is this already registered", and its contents are the cheap answer to "does
+// it still point at me".
+const scheduledTaskStamp = "idle-task"
+
 // idleCheckMinutes is how often the check runs, on both hosts. Ten minutes is
 // short enough that a forgotten environment is stopped within a coffee break and
 // long enough that the check itself is not a background cost.
@@ -213,36 +228,46 @@ const idleCheckMinutes = 10
 // trade. It also means the task can only see the environments that user owns,
 // which is the same boundary everything else in avar respects.
 //
-// Registration is unconditional and /F overwrites, so a task pointing at a
-// previous avr.exe is corrected the next time an environment is created — which
-// is what keeps it working after an upgrade moved the binary. The one-time
-// notice is printed only when the task was not there before, so an upgrade
-// corrects the task silently rather than announcing itself again.
+// What it does *not* do is run schtasks on every invocation. This is reached
+// from recordMachine, which runs on every `avr`, warm or cold — the macOS branch
+// costs one stat there and returns. Spawning two subprocesses instead (measured
+// at 50–150 ms on this host) would spend a fifth of REQ-17.1's whole latency
+// budget re-registering a task that has not changed, and rewrite the task store
+// on disk each time.
+//
+// So the stat is kept, and the file records the binary the task points at. That
+// is what lets registration still be corrected after an upgrade moves avr.exe —
+// the case the previous unconditional `/Create /F` existed for — without paying
+// for it when nothing has moved.
 //
 // Every failure is silent, exactly as the launchd path is. Idle auto-stop is a
 // convenience; a user who has just asked for a Linux shell should not be given
 // an error about a background timer instead.
 func ensureScheduledTask(app *App) {
-	schtasks, err := exec.LookPath("schtasks")
-	if err != nil {
-		return
-	}
 	bin, err := os.Executable()
 	if err != nil {
 		return
 	}
+	store, err := app.Store()
+	if err != nil {
+		return
+	}
+	stamp := filepath.Join(store.Root(), scheduledTaskStamp)
 
-	// The exit code alone answers "is it already there", which is the whole
-	// question: schtasks writes its output in the user's own language, so
-	// anything read from it would be a locale avar happens to have been
-	// written in.
-	query := exec.Command(schtasks, "/Query", "/TN", scheduledTaskName)
-	query.Stdout, query.Stderr = nil, nil
-	alreadyRegistered := query.Run() == nil
+	// The warm path: the task is registered and points at this binary.
+	if recorded, err := os.ReadFile(stamp); err == nil && string(recorded) == bin {
+		return
+	}
+
+	schtasks, err := exec.LookPath("schtasks")
+	if err != nil {
+		return
+	}
 
 	// The command is one string because Task Scheduler stores it as one; the
 	// binary path is quoted inside it so a path containing a space stays one
-	// argument when the scheduler runs it.
+	// argument when the scheduler runs it. /F overwrites, which is what makes
+	// this correct a task left by a previous install rather than fail on it.
 	action := fmt.Sprintf(`"%s" internal idle-check`, bin)
 	create := exec.Command(schtasks,
 		"/Create",
@@ -256,16 +281,26 @@ func ensureScheduledTask(app *App) {
 	if err := create.Run(); err != nil {
 		return
 	}
-	if alreadyRegistered {
+
+	// The stamp is written only after the task exists, so a failed
+	// registration is retried next time rather than remembered as done.
+	firstTime := !fileExists(stamp)
+	if err := os.WriteFile(stamp, []byte(bin), 0o600); err != nil {
+		return
+	}
+	if !firstTime {
+		// An upgrade corrects the task silently rather than announcing itself
+		// again to somebody who has already read this once.
 		return
 	}
 
-	fmt.Fprintf(app.Err, "avr: installed a background idle-check that stops Linux environments\n")
-	fmt.Fprintf(app.Err, "     after they have had no activity for a while, so they do not hold\n")
-	fmt.Fprintf(app.Err, "     host resources when you are not using them.\n")
-	fmt.Fprintf(app.Err, "     The check runs every %d minutes. To disable it:\n", idleCheckMinutes)
-	fmt.Fprintf(app.Err, "       schtasks /Delete /TN %s /F\n", scheduledTaskName)
-	if store, err := app.Store(); err == nil {
-		fmt.Fprintf(app.Err, "     Or set idle_timeout = \"0\" in %s\n", store.ConfigPath())
-	}
+	printIdleNotice(app, fmt.Sprintf("schtasks /Delete /TN %s /F", scheduledTaskName))
+}
+
+// fileExists reports whether a path is there, treating any error as absent —
+// which is the right answer for a marker file whose only job is to say "this has
+// happened before".
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

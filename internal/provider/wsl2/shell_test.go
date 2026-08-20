@@ -41,7 +41,7 @@ const testProjectID = "3fa9c2b1d0e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d
 func TestMapProjectPath_MapsAWindowsProjectOntoALinuxPath_REQ_18_5(t *testing.T) {
 	t.Parallel()
 
-	mount, guestCwd, err := mapProjectPath(testProjectID, `C:\Users\ola\code\app`, `C:\Users\ola\code\app\services\api`)
+	mount, guestCwd, err := (&Provider{}).MapProjectPath(testProjectID, `C:\Users\ola\code\app`, `C:\Users\ola\code\app\services\api`)
 	if err != nil {
 		t.Fatalf("MapProjectPath: %v", err)
 	}
@@ -106,11 +106,11 @@ func TestGuestRoot_DistinctProjectsGetDistinctPaths_PROP_14(t *testing.T) {
 func TestMapProjectPath_IsDeterministic_PROP_14(t *testing.T) {
 	t.Parallel()
 
-	first, _, err := mapProjectPath(testProjectID, `C:\Users\ola\code\app`, `C:\Users\ola\code\app`)
+	first, _, err := (&Provider{}).MapProjectPath(testProjectID, `C:\Users\ola\code\app`, `C:\Users\ola\code\app`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := mapProjectPath(testProjectID, `C:\Users\ola\code\app`, `C:\Users\ola\code\app`)
+	second, _, err := (&Provider{}).MapProjectPath(testProjectID, `C:\Users\ola\code\app`, `C:\Users\ola\code\app`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestMapProjectPath_RefusesAWorkingDirectoryOutsideTheProject_PROP_5(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, guestCwd, err := mapProjectPath(testProjectID, tc.root, tc.cwd); err == nil {
+			if _, guestCwd, err := (&Provider{}).MapProjectPath(testProjectID, tc.root, tc.cwd); err == nil {
 				t.Errorf("mapping %s under %s succeeded, giving %s", tc.cwd, tc.root, guestCwd)
 			}
 		})
@@ -187,10 +187,10 @@ func TestMapProjectPath_RefusesAWorkingDirectoryOutsideTheProject_PROP_5(t *test
 func TestMapProjectPath_RefusesWhatItCannotMap(t *testing.T) {
 	t.Parallel()
 
-	if _, _, err := mapProjectPath("", `C:\code\app`, `C:\code\app`); err == nil {
+	if _, _, err := (&Provider{}).MapProjectPath("", `C:\code\app`, `C:\code\app`); err == nil {
 		t.Error("a mount was planned with no project identity to name it")
 	}
-	if _, _, err := mapProjectPath(testProjectID, `code\app`, `code\app`); err == nil {
+	if _, _, err := (&Provider{}).MapProjectPath(testProjectID, `code\app`, `code\app`); err == nil {
 		t.Error("a relative project root was mapped")
 	}
 }
