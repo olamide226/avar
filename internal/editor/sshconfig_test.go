@@ -341,7 +341,10 @@ func TestAddInclude_CreatesTheConfigWhenThereIsNone(t *testing.T) {
 // welcome, so detection matches on the resolved path, not the literal text.
 func TestHasInclude_MatchesHowEverTheLineIsSpelled_REQ_13_1(t *testing.T) {
 	home := t.TempDir()
+	// os.UserHomeDir reads $HOME on Unix and %USERPROFILE% on Windows, and
+	// HasInclude resolves a leading "~/" through it.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	avarConfig := filepath.Join(home, ".avr", "ssh", "config")
 
 	for _, tc := range []struct {

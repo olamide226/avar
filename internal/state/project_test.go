@@ -15,6 +15,8 @@ import (
 func TestProjectID_EquivalentPathsShareOneIdentity_REQ_11_2(t *testing.T) {
 	t.Parallel()
 
+	requireSymlinks(t)
+
 	base := t.TempDir()
 	project := filepath.Join(base, "code", "my-project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
@@ -84,6 +86,8 @@ func TestProjectID_DistinctDirectoriesGetDistinctIdentities_REQ_11_2(t *testing.
 func TestProjectID_RequiresAnExistingDirectory_REQ_11_2(t *testing.T) {
 	t.Parallel()
 
+	requireSymlinks(t)
+
 	base := t.TempDir()
 
 	file := filepath.Join(base, "go.mod")
@@ -125,6 +129,8 @@ func TestProjectID_RequiresAnExistingDirectory_REQ_11_2(t *testing.T) {
 
 func TestResolveProjectPath_ReturnsTheResolvedAbsolutePath_REQ_11_2(t *testing.T) {
 	t.Parallel()
+
+	requireSymlinks(t)
 
 	base := t.TempDir()
 	project := filepath.Join(base, "proj")

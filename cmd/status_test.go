@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,15 @@ type testApp struct {
 
 func newTestApp(t *testing.T, p provider.Provider) *testApp {
 	t.Helper()
+
+	// The command layer picks its backend from the host and refuses a host it
+	// has no backend for, so on such a host these flow tests cannot run at all:
+	// every command fails in Resolve before it reaches the Fake. The skip clears
+	// itself — the moment Windows routes to the WSL2Provider these run there too
+	// (REQ-18.1).
+	if !provider.SupportedHost(runtime.GOOS) {
+		t.Skipf("avar has no backend for %s yet, so the command layer refuses before reaching the fake", runtime.GOOS)
+	}
 
 	store, err := state.Open(t.TempDir())
 	if err != nil {

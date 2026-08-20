@@ -1,3 +1,11 @@
+//go:build unix
+
+// The Lima dependency manager is macOS-only (REQ-17.6): it searches the Homebrew
+// binary directories, judges a candidate by its execute bit, and installs with
+// brew. Every one of those is a POSIX fact, so these tests run where Lima runs.
+// The rest of this package — version parsing, the prompt, the runner — is
+// portable and its tests are not constrained.
+
 package deps
 
 import (

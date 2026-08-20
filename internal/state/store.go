@@ -776,8 +776,8 @@ func writeJSONAtomic(path string, value any) error {
 
 // WriteFileAtomic replaces path with data such that no reader — and no crash —
 // can observe a half-written file: the bytes go to a temp file in the same
-// directory, are fsynced, and are then renamed over the target. rename(2)
-// within a directory is atomic, so an interrupted write leaves either the
+// directory, are fsynced, and are then replaced over the target by an operation
+// the platform guarantees is atomic, so an interrupted write leaves either the
 // previous file or the new one, never a mixture (REQ-17.5, PROP-7).
 //
 // It is exported because the durability rule belongs to this package and other
@@ -798,13 +798,14 @@ func writeFileAtomic(path string, data []byte) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("write %s: %w", tmpName, err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	// The replace is platform-specific because durability is: POSIX needs the
+	// directory entry flushed after the rename, and Windows has no directory
+	// to flush but can ask for a write-through replace instead.
+	if err := replaceFile(tmpName, path); err != nil {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
-	// Flush the directory entry too, so the rename itself survives a crash
-	// rather than just the bytes it points at.
-	return syncDir(dir)
+	return nil
 }
 
 func writeAndSync(f *os.File, data []byte) error {
@@ -820,18 +821,6 @@ func writeAndSync(f *os.File, data []byte) error {
 		return err
 	}
 	return f.Close()
-}
-
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("open %s to flush its directory entry: %w", dir, err)
-	}
-	defer func() { _ = d.Close() }()
-	if err := d.Sync(); err != nil {
-		return fmt.Errorf("flush directory %s: %w", dir, err)
-	}
-	return nil
 }
 
 // --- Helpers --------------------------------------------------------------

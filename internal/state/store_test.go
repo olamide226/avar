@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,10 +55,23 @@ func sharedMachine(name string) types.MachineRecord {
 	}
 }
 
-// share is the mount a Lima-style provider would have planned for a project
-// directory: the identity mapping, writable (REQ-6.1).
+// share is the mount the host's provider would have planned for a project
+// directory: on a POSIX host the identity mapping Lima applies, and on Windows
+// a deterministic Linux path, because a drive-letter path is not one and never
+// can be (REQ-6.1, REQ-18.5).
 func share(dir string) types.MountSpec {
-	return types.MountSpec{HostPath: dir, GuestPath: dir, Writable: true}
+	return types.MountSpec{HostPath: dir, GuestPath: guestPathFor(dir), Writable: true}
+}
+
+// guestPathFor stands in for Provider.MapProjectPath, which the state store has
+// no access to and does not need. What the store cares about is that the two
+// halves of a mount are each valid in their own vocabulary, so the mapping only
+// has to be absolute, normalized, and distinct per host directory.
+func guestPathFor(dir string) string {
+	if runtime.GOOS != "windows" {
+		return dir
+	}
+	return path.Clean("/mnt/avr/projects/" + strings.ReplaceAll(filepath.ToSlash(dir), ":", ""))
 }
 
 // shares is share for a whole set.
@@ -280,6 +295,13 @@ func TestStore_AtomicWriteSurvivesInterruption_REQ_17_5(t *testing.T) {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
+			// On Windows the registry cannot be opened during the instant it is
+			// being replaced, so an external reader sees a sharing violation where
+			// POSIX would have shown it the old file. The property under test is
+			// that it never sees a *partial* file, and that holds either way.
+			if replaceBlockedByReader(err) {
+				continue
+			}
 			if err != nil {
 				t.Errorf("read registry: %v", err)
 				reads <- observed
@@ -343,6 +365,8 @@ func TestStore_AtomicWriteSurvivesInterruption_REQ_17_5(t *testing.T) {
 // was — the store degrades to "no new information", never to "no information".
 func TestStore_FailedWriteLeavesThePreviousRecordIntact_REQ_17_5(t *testing.T) {
 	t.Parallel()
+
+	requireUnixPermissions(t)
 
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions, so the write cannot be made to fail this way")
@@ -698,7 +722,7 @@ func TestStore_MachineMountsOnlyGrow_REQ_6_4(t *testing.T) {
 	}
 	// The guest path travels with the mount: the store records where a project
 	// appears inside Linux and never invents it (REQ-18.5).
-	if got.Mounts[1].GuestPath != resolvedSecond || !got.Mounts[1].Writable {
+	if got.Mounts[1].GuestPath != guestPathFor(resolvedSecond) || !got.Mounts[1].Writable {
 		t.Errorf("mounts = %v, want the mapping the provider planned", got.Mounts)
 	}
 
@@ -723,7 +747,6 @@ func TestStore_MachineMountsOnlyGrow_REQ_6_4(t *testing.T) {
 	// would no longer describe what the guest can reach (PROP-5).
 	collision := share(first)
 	collision.HostPath = second
-	collision.GuestPath = first
 	if err := st.AddMount(rec.Name, collision); err == nil {
 		t.Error("AddMount accepted two host directories claiming one guest path")
 	}
@@ -732,6 +755,11 @@ func TestStore_MachineMountsOnlyGrow_REQ_6_4(t *testing.T) {
 	// silently rewritten: rewriting it would leave the guest path describing
 	// one directory and the host path another, so the pair would no longer map
 	// anything (PROP-1).
+	// The canonicalisation assertion below needs a symbolic link to make an
+	// uncanonical path with.
+	if !symlinksAllowed(t) {
+		return
+	}
 	viaLink := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(first, viaLink); err != nil {
 		t.Fatalf("symlink: %v", err)
@@ -794,6 +822,8 @@ func TestStore_DeleteMachineIsIdempotentAndDropsSessions_REQ_1_6(t *testing.T) {
 // writes host paths down).
 func TestStore_StateDirectoryAndFilesArePrivateToTheUser(t *testing.T) {
 	t.Parallel()
+
+	requireUnixPermissions(t)
 
 	st := newTestStore(t)
 	dir := mkdir(t, "proj")
@@ -904,7 +934,7 @@ func TestDefaultRoot_HonoursAVRHome(t *testing.T) {
 
 	t.Setenv(HomeEnv, "")
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	t.Setenv(homeEnvVar(), home)
 	got, err = DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot without %s: %v", HomeEnv, err)
@@ -1050,4 +1080,71 @@ func tempLeftovers(t *testing.T, dir string) []string {
 		t.Fatalf("glob temp files: %v", err)
 	}
 	return matches
+}
+
+// symlinksAllowed reports whether this host lets the test process create a
+// symbolic link.
+//
+// Windows only permits that to an administrator or on a machine with Developer
+// Mode enabled, so a plain user account cannot exercise these paths at all.
+// This is the non-skipping form, for an assertion that sits at the end of a
+// test whose earlier coverage is worth keeping.
+func symlinksAllowed(t *testing.T) bool {
+	t.Helper()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.Mkdir(target, dirPerm); err != nil {
+		t.Fatalf("create the symlink probe target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "probe")); err != nil {
+		t.Logf("skipping the symlink assertion: this host does not allow creating symbolic links (%v)", err)
+		return false
+	}
+	return true
+}
+
+// requireSymlinks skips a test that cannot run at all without a symbolic link.
+//
+// Skipping is honest where faking is not: the behaviour under test — that every
+// spelling of one directory resolves to one identity — is exactly the thing
+// that has no substitute (REQ-11.2). The skip names the reason, so a Windows
+// developer knows the coverage is missing rather than passing.
+func requireSymlinks(t *testing.T) {
+	t.Helper()
+
+	if !symlinksAllowed(t) {
+		t.Skip("this host does not allow creating symbolic links; on Windows that needs Developer Mode or an elevated shell")
+	}
+}
+
+// requireUnixPermissions skips a test whose subject is POSIX mode bits.
+//
+// Windows expresses access control as ACLs, not as mode bits: os.Stat there
+// reports 0777 for every directory whatever its real permissions are, and
+// os.Chmod can only toggle a file's read-only attribute. A test that chmods a
+// directory and expects the next write to fail therefore proves nothing on
+// Windows, and one that asserts mode 0700 asserts something the platform does
+// not model.
+//
+// The underlying requirement is not Unix-specific — avar's state directory
+// lists every project path the user works in and must stay private on both
+// hosts (REQ-9). What is Unix-specific is how it is expressed and how it is
+// checked, so the Windows half is a different test against ACLs, and it belongs
+// with the Windows state directory itself (task 36, REQ-18.13).
+func requireUnixPermissions(t *testing.T) {
+	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("access control is ACLs rather than mode bits on Windows; the equivalent check belongs with the Windows state directory")
+	}
+}
+
+// homeEnvVar names the environment variable os.UserHomeDir consults on this
+// host, so a test can move a fake home without knowing which one it is.
+func homeEnvVar() string {
+	if runtime.GOOS == "windows" {
+		return "USERPROFILE"
+	}
+	return "HOME"
 }

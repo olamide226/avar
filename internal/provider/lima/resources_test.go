@@ -1,3 +1,8 @@
+//go:build unix
+
+// See shell_test.go: LimaProvider is a macOS backend, so its behaviour tests
+// run where it runs.
+
 package lima
 
 import (
