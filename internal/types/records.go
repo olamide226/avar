@@ -54,6 +54,11 @@ type ProjectRecord struct {
 	PathKey string `json:"path_key,omitempty"`
 	// Isolated records that this project defaults to its own machine.
 	Isolated bool `json:"isolated"`
+	// AdvisedNativeFS records that avar has already told the user this project
+	// lives on the slow side of a filesystem boundary, so it does not tell them
+	// again. Dismissal is a decision, and repeating advice somebody has already
+	// considered and declined is how a tool stops being read (REQ-18.11).
+	AdvisedNativeFS bool `json:"advised_native_fs,omitempty"`
 	// Selector, when set, overrides global distro/arch defaults for this
 	// project.
 	Selector   *EnvironmentSelector `json:"selector,omitempty"`

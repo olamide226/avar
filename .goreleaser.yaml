@@ -1,8 +1,15 @@
 # GoReleaser configuration for avar.
 #
-# avar ships as a single self-contained binary (REQ-17.2) for macOS only
-# (REQ-17.6), installable via Homebrew with Lima declared as a dependency so
-# that Homebrew users never reach avar's own install prompt (REQ-8.5).
+# avar ships as a single self-contained binary per host (REQ-17.2, REQ-18.14):
+# a macOS universal binary installable with Homebrew, and an avr.exe archive for
+# each Windows architecture.
+#
+# The two are packaged differently because their dependency stories are
+# different. Lima is a package Homebrew can install, so the cask declares it and
+# a macOS user never reaches avar's own install prompt (REQ-8.5). WSL is part of
+# Windows and is set up with `wsl --install`, which no package manager can be
+# asked to do on avar's behalf, so the Windows archive carries the binary and
+# avar handles the dependency itself at first run (REQ-18.3).
 version: 2
 
 project_name: avar
@@ -19,7 +26,6 @@ builds:
     binary: avr
     env:
       - CGO_ENABLED=0
-    # macOS is the only supported host platform for the MVP (REQ-17.6).
     goos:
       - darwin
     goarch:
@@ -30,6 +36,30 @@ builds:
     ldflags:
       - -s -w -X main.version={{ .Version }}
     # Reproducible builds: derive timestamps from the commit, not the clock.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+
+  # The Windows build. It is a separate entry rather than another goos on the
+  # first because the two are packaged differently: this one is not part of the
+  # universal binary and ships as its own archive per architecture (REQ-18.14).
+  #
+  # Both architectures are built. Arm64 Windows is a real and growing target, and
+  # WSL 2 runs Linux on the host processor with no emulation to fall back on, so
+  # an Arm64 user given an amd64 avr.exe would be told their own machine's
+  # architecture is unsupported, which it is not.
+  - id: avr-windows
+    main: .
+    binary: avr
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
     flags:
       - -trimpath
@@ -57,6 +87,20 @@ archives:
     # shipped here until v0.1.0 was prepared: it is the working agreement for
     # people developing avar, not documentation for people running it, and it
     # only puzzles someone who unpacked a tarball to get a command.
+    files:
+      - README.md
+      - LICENSE
+
+  # Windows gets a zip rather than a tar.gz, because a zip is what Windows can
+  # open without installing anything, and one archive per architecture rather
+  # than a combined one, because there is no Windows equivalent of a universal
+  # binary to combine them into.
+  - id: avr-windows
+    ids:
+      - avr-windows
+    formats:
+      - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_windows_{{ .Arch }}"
     files:
       - README.md
       - LICENSE
@@ -132,8 +176,18 @@ release:
   footer: |
     ## Installation
 
+    **macOS**
+
     ```bash
     brew install --cask olamide226/tap/avar
     ```
 
     Lima is installed automatically as a dependency.
+
+    **Windows**
+
+    Download the `windows_amd64` or `windows_arm64` archive below, unzip it, and
+    put `avr.exe` somewhere on your PATH. avar needs WSL 2 and offers to set it
+    up the first time you run it.
+
+    Binaries are unsigned. Windows SmartScreen may warn on first run.

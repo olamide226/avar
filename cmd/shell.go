@@ -17,6 +17,7 @@ import (
 	"github.com/olamide226/avar/internal/resolve"
 	"github.com/olamide226/avar/internal/session"
 	"github.com/olamide226/avar/internal/types"
+	"github.com/olamide226/avar/internal/workspace"
 )
 
 func init() { registerGuest(runGuest) }
@@ -146,7 +147,45 @@ func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, targ
 		return "", err
 	}
 
+	// Said after the environment is ready and before the user is handed a
+	// shell, so that it is the last thing on screen rather than something that
+	// scrolls past behind provisioning output.
+	adviseNativeWorkspace(app, p, target)
+
 	return guestCwd, nil
+}
+
+// adviseNativeWorkspace tells a Windows user, once per project, that their
+// project is on the slow side of the filesystem boundary (REQ-18.11).
+//
+// It is gated on the backend rather than on the host, because that is what the
+// condition actually is: a project only crosses a filesystem boundary where the
+// guest reaches it through one, which is true of WSL and not of Lima, where a
+// project is shared at its own path and there is nothing to cross.
+//
+// Every failure is silent. This is advice on the way to a shell the user asked
+// for, and advice that can fail the command is worse than no advice.
+func adviseNativeWorkspace(app *App, p provider.Provider, target resolve.ResolvedTarget) {
+	if p.ID() != types.ProviderWSL2 || target.Project.AdvisedNativeFS {
+		return
+	}
+	advice, heavy := workspace.Detect(target.Project.Path)
+	if !heavy {
+		return
+	}
+
+	store, err := app.Store()
+	if err != nil {
+		return
+	}
+	// The dismissal is recorded before the message is printed, so that a user
+	// who interrupts the invocation still does not see it a second time.
+	if _, err := store.UpdateProject(target.Project.ID, func(rec *types.ProjectRecord) {
+		rec.AdvisedNativeFS = true
+	}); err != nil {
+		return
+	}
+	fmt.Fprintln(app.Err, advice.Message(target.Project.Path))
 }
 
 // recordMachine writes avar's own record of a machine the backend has just
