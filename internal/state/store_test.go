@@ -932,14 +932,20 @@ func TestDefaultRoot_HonoursAVRHome(t *testing.T) {
 		t.Errorf("ConfigPath() = %s, want it inside the state directory", st.ConfigPath())
 	}
 
+	// Without the override, the location is the platform's own: a dotted
+	// directory in $HOME on Unix, and the per-user application data directory
+	// on Windows, which is not under $HOME at all (REQ-18.13).
 	t.Setenv(HomeEnv, "")
 	home := t.TempDir()
 	t.Setenv(homeEnvVar(), home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("LocalAppData", filepath.Join(home, "AppData", "Local"))
+	}
 	got, err = DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot without %s: %v", HomeEnv, err)
 	}
-	if want := filepath.Join(home, ".avr"); got != want {
+	if want := defaultStateDirFor(home); got != want {
 		t.Errorf("DefaultRoot() = %s, want %s", got, want)
 	}
 }
@@ -1147,4 +1153,20 @@ func homeEnvVar() string {
 		return "USERPROFILE"
 	}
 	return "HOME"
+}
+
+// defaultStateDirFor is where avar keeps its state for a given home directory,
+// in the host's own convention.
+//
+// The two hosts differ in more than the directory name. A Unix tool's state
+// belongs in a dotted directory in the home directory, where a developer will
+// look for it; Windows has a per-user application data directory for exactly
+// this, and Local rather than Roaming, because avar's state describes *this*
+// machine's distributions and would be meaningless copied to another
+// (REQ-18.13).
+func defaultStateDirFor(home string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(home, "AppData", "Local", stateDirName)
+	}
+	return filepath.Join(home, stateDirName)
 }

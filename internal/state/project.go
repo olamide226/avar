@@ -11,13 +11,18 @@ import (
 	"strings"
 )
 
-// ProjectID is a project's stable identity: the SHA-256 (hex) of its resolved
-// absolute path.
+// ProjectID is a project's stable identity: the SHA-256 (hex) of its PathKey.
 //
-// Every spelling of the same directory — relative, trailing slash, "..", or
-// through a symlink — resolves to one path and therefore to one id. That is
-// what makes a project's remembered choices (isolation, selector overrides)
-// stick across invocations from different working directories.
+// Every spelling of the same directory resolves to one identity. What counts as
+// "the same directory" is the host's question, not avar's: on macOS a relative
+// path, a trailing slash, a "..", or a symlink all resolve to one path, and on
+// Windows a difference in drive-letter case or separator direction does too
+// (REQ-11.2, REQ-18.13, PROP-14). Resolution handles the first kind and PathKey
+// the second, so this function is the same on both.
+//
+// That is what makes a project's remembered choices — isolation, selector
+// overrides — stick across invocations from different working directories, and
+// what stops one project becoming two.
 func ProjectID(path string) (string, error) {
 	resolved, err := ResolveProjectPath(path)
 	if err != nil {
@@ -61,7 +66,10 @@ func ResolveProjectPath(path string) (string, error) {
 	return resolved, nil
 }
 
+// hashPath is the identity of a canonical path: the hash of its PathKey rather
+// than of the path itself, so that two spellings the host considers one
+// directory produce one identity.
 func hashPath(resolved string) string {
-	sum := sha256.Sum256([]byte(resolved))
+	sum := sha256.Sum256([]byte(PathKey(resolved)))
 	return hex.EncodeToString(sum[:])
 }

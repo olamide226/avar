@@ -40,8 +40,18 @@ type ProjectRecord struct {
 	// ID is the SHA-256 of the resolved absolute path (see state.ProjectID).
 	ID string `json:"id"`
 	// Path is the resolved absolute path: both the display name and the
-	// mount source.
+	// mount source. It keeps the spelling the filesystem gave, because that is
+	// what avar shows the user and what it shares into the guest.
 	Path string `json:"path"`
+	// PathKey is the normalized form of Path that ID is the hash of. On a
+	// case-sensitive host it is the path itself; on Windows it is case-folded
+	// and separator-normalized, so that two spellings of one directory cannot
+	// become two projects (REQ-18.13, PROP-14).
+	//
+	// It is stored rather than only computed so that projects.json says what
+	// each identity was derived from — an identity nothing explains is one
+	// nobody can check.
+	PathKey string `json:"path_key,omitempty"`
 	// Isolated records that this project defaults to its own machine.
 	Isolated bool `json:"isolated"`
 	// Selector, when set, overrides global distro/arch defaults for this

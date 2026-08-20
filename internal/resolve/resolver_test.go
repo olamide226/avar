@@ -93,8 +93,14 @@ func (f *fakeStore) UpdateProject(id string, mutate func(*types.ProjectRecord)) 
 }
 
 // fakeID mirrors state.ProjectID's hashing without touching the filesystem.
+//
+// It hashes state.PathKey rather than the path, because that is what identity
+// is: on Windows two spellings of one directory share a key and therefore an
+// id. Reimplementing the key here instead of calling it is how the fake would
+// drift from the real store — which is exactly the drift
+// TestResolve_AgainstRealStateStore_REQ_11_2 exists to catch, and did.
 func fakeID(path string) string {
-	sum := sha256.Sum256([]byte(path))
+	sum := sha256.Sum256([]byte(state.PathKey(path)))
 	return hex.EncodeToString(sum[:])
 }
 
