@@ -1,3 +1,22 @@
+//go:build windows
+
+// This backend's tests are Windows tests, for the same reason the Lima
+// backend's are Unix tests: they assert on Windows paths, and what counts as an
+// absolute path is the host's question, not avar's. `C:\Users\ola\code\app` is
+// absolute on Windows and a relative path everywhere else, so path/filepath —
+// and with it MapProjectPath, MountSpec.Validate and every mount the two plan —
+// answers differently off Windows. Verified by cross-compiling this package's
+// tests for linux/amd64 and running them under WSL: fourteen fail, all of them
+// on that one difference.
+//
+// Prefixing a drive letter is not available as a fix here the way it was for
+// the host-neutral packages. There the fixture was a stand-in for whatever the
+// host calls an absolute path; here the Windows path *is* the subject.
+//
+// What the macOS build claims for this package is therefore that it compiles —
+// which is what keeps `avr` linkable while both backends live in one binary —
+// not that a backend which cannot run there passes its behaviour tests.
+
 package wsl2
 
 import (
@@ -8,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -75,9 +95,16 @@ type fakeWSL struct {
 	// the distribution. False models an install that reports success and
 	// produces nothing.
 	installRegisters bool
+	// mountsSilentlyFail models the case Provider.SetMounts exists to catch: a
+	// mount command that reports success and mounts nothing.
+	mountsSilentlyFail bool
+	// mounted is what each distribution currently has mounted, guest path to
+	// host path, maintained from the scripts avar sends.
+	mounted map[string]map[string]string
 
 	calls      [][]string
 	provisions []string
+	scripts    []string
 }
 
 func newFakeWSL() *fakeWSL {
@@ -86,6 +113,7 @@ func newFakeWSL() *fakeWSL {
 		running:          map[string]bool{},
 		facts:            map[string]string{},
 		failOn:           map[string]error{},
+		mounted:          map[string]map[string]string{},
 		installRegisters: true,
 	}
 }
@@ -187,15 +215,87 @@ func (f *fakeWSL) guestCommand(args []string) (string, error) {
 		// `--exec /bin/true`, the start probe.
 		return "", nil
 	}
-	if strings.Contains(script, "os-id=") {
+	f.scripts = append(f.scripts, script)
+
+	// The verification script also reads /proc/mounts — that is how it proves
+	// the Windows drives are not mounted — so it is recognised first, by the
+	// facts it reports rather than by the file it happens to read.
+	switch {
+	case strings.Contains(script, "os-id="):
 		if facts, ok := f.facts[machine]; ok {
 			return facts, nil
 		}
 		return healthyFacts(), nil
+	case strings.Contains(script, "/proc/mounts"):
+		return f.reportMounts(machine), nil
+	case strings.Contains(script, "mount -t drvfs") || strings.Contains(script, "umount"):
+		f.applyMountScript(machine, script)
+		return "", nil
+	default:
+		f.provisions = append(f.provisions, script)
+		return "", nil
 	}
-	f.provisions = append(f.provisions, script)
-	return "", nil
 }
+
+// mountLine and umountLine recognise the two commands the mount script issues,
+// so that the fake's idea of what is mounted comes from what avar actually told
+// the guest to do rather than from what the test wished for.
+var (
+	mountLine  = regexp.MustCompile(`mount -t drvfs '((?:[^']|'\\'')*)' '((?:[^']|'\\'')*)'`)
+	umountLine = regexp.MustCompile(`umount '((?:[^']|'\\'')*)'`)
+)
+
+// applyMountScript updates the fake's mount table from the script avar sent.
+func (f *fakeWSL) applyMountScript(machine, script string) {
+	if f.mountsSilentlyFail {
+		return
+	}
+	if f.mounted[machine] == nil {
+		f.mounted[machine] = map[string]string{}
+	}
+	for _, line := range strings.Split(script, "\n") {
+		if m := mountLine.FindStringSubmatch(line); m != nil {
+			f.mounted[machine][unquoteShell(m[2])] = unquoteShell(m[1])
+			continue
+		}
+		if m := umountLine.FindStringSubmatch(line); m != nil {
+			delete(f.mounted[machine], unquoteShell(m[1]))
+		}
+	}
+}
+
+// reportMounts renders the mount table the way /proc/mounts would, escaping
+// included, so the parser is exercised rather than bypassed.
+func (f *fakeWSL) reportMounts(machine string) string {
+	targets := make([]string, 0, len(f.mounted[machine]))
+	for target := range f.mounted[machine] {
+		targets = append(targets, target)
+	}
+	sortStrings(targets)
+
+	b := &strings.Builder{}
+	for _, target := range targets {
+		fmt.Fprintf(b, "%s\t%s\n", escapeFstabField(f.mounted[machine][target]), escapeFstabField(target))
+	}
+	return b.String()
+}
+
+// lastGuestScript returns the most recent script containing want, which is how a
+// test asserts on what avar told the guest to do rather than on the fact that
+// something was sent.
+func (f *fakeWSL) lastGuestScript(t *testing.T, want string) string {
+	t.Helper()
+	for i := len(f.scripts) - 1; i >= 0; i-- {
+		if strings.Contains(f.scripts[i], want) {
+			return f.scripts[i]
+		}
+	}
+	t.Fatalf("no guest script contained %q; scripts were:\n%s", want, strings.Join(f.scripts, "\n---\n"))
+	return ""
+}
+
+// unquoteShell reverses shellQuote.
+func unquoteShell(s string) string { return strings.ReplaceAll(s, `'\''`, "'") }
 
 func (f *fakeWSL) names() []string {
 	out := make([]string, 0, len(f.registered))

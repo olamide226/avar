@@ -182,3 +182,30 @@ func MountHostPaths(in []MountSpec) []string {
 	}
 	return out
 }
+
+// EqualMappings reports whether two mount sets describe the same sharing,
+// ignoring which project each share serves.
+//
+// It exists because the two sets being compared can never agree on that field.
+// A desired set is built from project registrations and carries a ProjectID on
+// every entry; an applied set is read back from the backend, which knows which
+// directories it shares and never which project a directory belongs to, so its
+// entries carry none. Comparing them with EqualMounts therefore reports
+// "different" for two sets that describe the identical sharing — which, for a
+// caller checking whether its change landed, means a correct change looks like
+// a failed one.
+//
+// What is compared is the mapping: which host directory appears where, and
+// whether the guest may write to it. That is the whole of what a backend applies
+// and the whole of what PROP-5 asserts. Both sets are expected to be normalized.
+func EqualMappings(a, b []MountSpec) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].HostPath != b[i].HostPath || a[i].GuestPath != b[i].GuestPath || a[i].Writable != b[i].Writable {
+			return false
+		}
+	}
+	return true
+}

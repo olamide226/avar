@@ -273,3 +273,11 @@ func (p *Provider) run(ctx context.Context, args ...string) (string, error) {
 func (p *Provider) installDir(machine string) string {
 	return filepath.Join(p.distrosDir, machine)
 }
+
+// Provider implements provider.Provider against a local WSL 2 installation.
+//
+// The assertion is here rather than in a test because it is the claim the whole
+// Provider boundary was built for: a second backend that satisfies the same
+// contract without a line of command-layer code changing (REQ-17.3, REQ-18.14).
+// If it ever stops compiling, that claim has stopped being true.
+var _ provider.Provider = (*Provider)(nil)

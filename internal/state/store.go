@@ -65,6 +65,10 @@ const (
 	lockFile     = "lock"
 	sshDirName   = "ssh"
 	logsDirName  = "logs"
+	// distrosDirName holds the Linux distributions the WSL backend imports.
+	// It exists on every host so that the layout is one thing rather than two,
+	// and stays empty where nothing imports a distribution.
+	distrosDirName = "distros"
 )
 
 // Store is a handle on the State_Dir. It is safe for concurrent use by
@@ -171,6 +175,14 @@ func (s *Store) SSHDir() string { return s.path(sshDirName) }
 
 // LogsDir holds provisioning logs referenced from error messages (task 7).
 func (s *Store) LogsDir() string { return s.path(logsDirName) }
+
+// DistrosDir holds the WSL distributions avar imports on Windows.
+//
+// They live inside avar's own state directory rather than in WSL's default
+// location for two reasons: removing an environment can then reclaim its disk
+// with confidence that nothing else put a file there, and removing avar removes
+// every environment it made (REQ-18.7, REQ-5.6).
+func (s *Store) DistrosDir() string { return s.path(distrosDirName) }
 
 func (s *Store) path(name string) string { return filepath.Join(s.root, name) }
 
