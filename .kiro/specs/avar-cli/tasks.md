@@ -159,7 +159,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 5.5_
   - _writes: internal/session/session.go, internal/session/idle.go, cmd/internal_idle.go, internal/session/session_test.go_
 
-- [ ] 30. Implement `avr destroy`
+- [x] 30. Implement `avr destroy`  _(PR #45)_
   - `avr destroy` removes the current environment; `--all` removes every avar-managed environment; `--orphaned` removes isolated environments whose project directory no longer exists, naming the project each served. Destruction summary then interactive confirmation, bypassable with `--yes`, exactly as `avr reset` does it. Host project files untouched (Property 10). The machine's SSH host entry goes with it (`forgetSSHHost`), and its records with it.
   - Add `destroy` to the argv grammar's subcommand set — the split a user sees must not change as commands land, so the name is reserved even before the handler exists.
   - Found after Phase 2 was otherwise complete: every other lifecycle verb was specified and removal was not, so an environment could be created but never deliberately removed, and reclaiming its disk meant reaching for `limactl` (REQ-1.5).
@@ -167,7 +167,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 5.6, 5.7, 5.8_
   - _writes: cmd/destroy.go, cmd/destroy_test.go, internal/cli/grammar.go, internal/cli/grammar_test.go, e2e/z_destroy_test.go_
 
-- [ ] 31. Exercise the release pipeline before tagging
+- [x] 31. Exercise the release pipeline before tagging  _(PR #44, #47, #48)_
   - `.goreleaser.yaml` and `.github/workflows/release.yml` exist (task 14) and have never run. Three things are missing and would each fail a real release: the `homebrew-tap` repository does not exist, the `HOMEBREW_TAP_TOKEN` secret is not configured, and no tag has ever been pushed.
   - Order: `goreleaser release --snapshot --clean` locally (builds every artifact, publishes nothing) → create the tap repository and PAT secret → tag a prerelease (`v0.1.0-rc.1`) and verify the GitHub release, the archive, the checksums and the generated cask → only then tag `v0.1.0`
   - Decide and document the signing posture: released binaries are unsigned and unnotarised, so a direct tarball download hits Gatekeeper. The cask strips the quarantine attribute, which covers Homebrew users; anyone else needs to be told.
@@ -175,7 +175,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _writes: docs/releasing.md, .goreleaser.yaml (only if the dry run finds a defect)_
 
 - [ ] 32. Public-facing documentation
-  - [ ] 32.1 Rewrite the README for a public audience
+  - [x] 32.1 Rewrite the README for a public audience  _(PR #41, #42, #46)_
     - It currently reads as a project-status note. Needs: one-line pitch, install (Homebrew and direct), a sixty-second quickstart, a command table covering the whole surface, requirements, how it works, honest limitations, contributing, licence.
     - **Platform support must be stated honestly.** macOS is supported today; Windows via WSL 2 is Requirement 18, Phase 4, and not started. The two must be visibly separated so no reader concludes Windows works.
     - Limitations to state rather than omit: snapshots need an emulated environment (Lima's snapshots are QEMU-only), sixteen project directories per environment, unsigned binaries.
@@ -223,6 +223,14 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
 
 Gated on the MVP shipping. Every task below sits behind the Provider boundary
 established in tasks 27 and 28: none of them may add a Windows branch to `cmd/`.
+
+- [ ] 38. Make the existing packages build and pass their tests on a Windows host
+  - `go build ./...` does not compile on `windows/amd64` today: `internal/state` uses `syscall.Flock` for the advisory lock and `syscall.Kill(pid, 0)` for stale-session detection, and `internal/provider/lima` names `syscall.SIGWINCH` and `syscall.Kill`. None of that is Windows work in disguise — it is POSIX leaking through packages that are otherwise portable — but every task below is unreachable until it is fixed, because none of their tests can even be compiled.
+  - Split each on a build tag rather than branching at runtime: an exclusive-sharing file handle for the lock (released by the OS if `avr` is killed, which is what `flock` gives on the other side), `OpenProcess`/`GetExitCodeProcess` for process liveness, and a signal relay that forwards what Windows actually has. `internal/provider/lima` already carries `diskusage_other.go`, so compiling off-unix is an established intent of that package rather than a new one.
+  - Add a `windows-latest` CI job running lint, build and unit tests, so the Windows build cannot regress between Phase 4 tasks. Lima remains macOS-only and `provider.SupportedHost` still refuses Windows: what this task claims is that the code compiles and its pure logic is proven on both hosts, not that avar runs on Windows yet.
+  - Found on the first `go test ./...` of a Windows host, which did not reach a single test.
+  - _Requirements: 18.14, 17.5_
+  - _writes: internal/state/lock.go, internal/state/lock_unix.go, internal/state/lock_windows.go, internal/state/session.go, internal/state/session_unix.go, internal/state/session_windows.go, internal/provider/lima/shell.go, internal/provider/lima/signals_unix.go, internal/provider/lima/signals_other.go, .github/workflows/ci.yml_
 
 - [ ] 33. WSL capability detection and prerequisites
   - Probe WSL presence, version, and WSL 1 vs 2; offer install/upgrade where safe; describe elevation or restart requirements before acting; never register a partial environment
