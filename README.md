@@ -21,12 +21,13 @@ environment you pick.** No machine to name, no mounts to configure, no
 
 Inside Linux you get the same absolute path you were standing in, your files live
 and writable in both directions, real passwordless `sudo`, packages that persist
-between sessions, and any port you listen on reachable at `localhost` on macOS.
+between sessions, and any port you listen on reachable at `localhost` on the host.
 
 ## Install
 
-Homebrew is the recommended route: the cask installs Lima as a dependency and
-clears the quarantine attribute that would otherwise stop the first run.
+**macOS.** Homebrew is the recommended route: the cask installs Lima as a
+dependency and clears the quarantine attribute that would otherwise stop the
+first run.
 
 ```bash
 brew install --cask olamide226/tap/avar
@@ -35,6 +36,12 @@ brew install --cask olamide226/tap/avar
 This installs the latest stable release and Lima. Or download the archive for
 your Mac from the [releases page](https://github.com/olamide226/avar/releases)
 and put `avr` somewhere on your `PATH`.
+
+**Windows.** Download the `windows_amd64` or `windows_arm64` archive from the
+[releases page](https://github.com/olamide226/avar/releases), unzip it, and put
+`avr.exe` somewhere on your `PATH`. avar checks for WSL 2 on first run and
+offers to set it up. The binaries are unsigned, so SmartScreen may warn the
+first time.
 
 Homebrew installs both `avr` and its `avar` alias; they run the same command.
 The shorter `avr` name remains canonical and is used throughout this guide.
@@ -67,7 +74,7 @@ Then:
 ```bash
 avr uname -a          # confirm you are in Linux
 avr sudo apt install ripgrep   # packages persist between sessions
-avr npm run dev       # ports you listen on are reachable at localhost on macOS
+avr npm run dev       # ports you listen on are reachable at localhost
 avr status            # what exists, and what it is costing you
 avr stop              # give the memory back
 ```
@@ -145,10 +152,16 @@ environments over the same files.
 
 ## Requirements
 
-- macOS 13 or later, Apple Silicon or Intel.
-- [Lima](https://lima-vm.io), which the Homebrew cask installs as a dependency.
-  If you installed `avr` some other way and Lima is missing, avar offers to
-  install it with Homebrew on first run and waits for you to say yes.
+One of:
+
+- **macOS 13 or later**, Apple Silicon or Intel, plus [Lima](https://lima-vm.io).
+  The Homebrew cask installs Lima as a dependency. If you installed `avr` some
+  other way and Lima is missing, avar offers to install it with Homebrew on
+  first run and waits for you to say yes.
+- **Windows 11 22H2 or later**, x64 or Arm64, plus WSL 2. avar checks for it on
+  first run and offers `wsl --install --no-distribution`, which installs the
+  platform only and creates no Linux distribution of its own. Windows may ask
+  you to approve the change and may need a restart; avar says so before acting.
 
 Nothing else: `avr` is a single self-contained Go binary.
 
@@ -164,46 +177,61 @@ directory, so that you never have to name any of the three.
 
 These are real and current, not caveats about a beta.
 
-**Snapshots need an emulated environment.** Lima's snapshot support is a QEMU
+**Snapshots need an emulated environment, on macOS.** Lima's snapshot support is a QEMU
 feature. avar runs host-native environments under Apple's Virtualization
 framework (`vz`) deliberately, for VirtioFS speed and Rosetta, and `limactl
 snapshot` answers `unimplemented` there. So on an Apple Silicon Mac the everyday
 environment is exactly the one that cannot be snapshotted; `avr snapshot` says so
 rather than appearing to work. An emulated environment (`avr --arch amd64`) can
-be snapshotted, and `avr reset` works everywhere.
+be snapshotted, and `avr reset` works everywhere. On Windows this limitation
+does not apply.
 
-**Sixteen project directories per environment.** macOS caps how many
+**Sixteen project directories per environment, on macOS.** macOS caps how many
 directory-share devices one virtual machine may have. Measured against Lima
 2.2.0: nineteen project mounts start, twenty do not, and the failure is a bare
 "Internal Virtualization error" during boot with no way back. avar caps the set
 at sixteen, leaving headroom for the Rosetta share. Past that the least recently
 used project is unshared and you are told which; it stays a registered project
 and comes back on the next visit, paying the same one-time restart a first visit
-pays. The project you are entering is never the one dropped.
+pays. The project you are entering is never the one dropped. WSL has no such
+cap, because a project share there is a mount rather than a virtual device.
 
-**Released binaries are unsigned and unnotarised.** The Homebrew cask strips the
-quarantine attribute after install, so that route is unaffected. A tarball
+**Released binaries are unsigned.** On macOS the Homebrew cask strips the
+quarantine attribute after install, so that route is unaffected; a tarball
 downloaded directly from the releases page will be stopped by Gatekeeper until
-you clear it yourself.
+you clear it yourself. On Windows, SmartScreen may warn the first time you run
+`avr.exe`.
 
 ## Platform support
 
-**macOS is the supported platform.** macOS 13+, Apple Silicon or Intel. That is
-the whole list. Linux hosts, cloud and remote environments, and GUI applications
-are out of scope.
+**macOS 13+**, Apple Silicon or Intel, backed by [Lima](https://lima-vm.io).
+This is the platform avar has been used on.
+
+**Windows 11 22H2+**, x64 or Arm64, backed by WSL 2. The command grammar is
+identical — `avr`, `avr npm test`, `avr status`, `avr code` and the rest behave
+the same way — because the backend sits behind the same provider boundary. Two
+honest caveats:
+
+- It has been built and unit-tested but **not yet exercised end to end against a
+  real WSL installation.** No avar environment has been provisioned on Windows
+  outside a test double. Treat it as ready to try, not as proven.
+- Each environment runs on the host's own processor. WSL 2 has no CPU emulation,
+  so `--arch` cannot ask for the architecture your machine is not, and avar says
+  so before downloading anything rather than after.
+
+Linux hosts, cloud and remote environments, and GUI applications are out of
+scope.
 
 ### Roadmap
 
 Nothing in this section exists. Each item is specified or sketched; none of it is
 implemented, and there are no dates.
 
-- **Windows hosts via WSL 2** — Requirement 18, Phase 4 of the plan. **Work has
-  not started:** there is no WSL provider in the codebase, and `avr` does not run
-  on Windows at all. It is a design on paper behind avar's provider boundary,
-  nothing more.
-- Post-MVP work: a Linux-native workspace mode, `.avr.toml` and `avr init`,
-  `avr ports` and `avr open`, more editors, and a second backend behind the
-  provider interface.
+- A Linux-native workspace mode, so a project can live on the Linux filesystem
+  and be synchronised rather than shared. On Windows this is what the
+  cross-filesystem notice points at once it is built.
+- `.avr.toml` and `avr init`, `avr ports` and `avr open`, more editors, and a
+  second backend behind the provider interface.
 
 ## Development
 
