@@ -83,3 +83,57 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+  # The WSL end-to-end suite against a real WSL 2 installation.
+  #
+  # It is a separate job, and `continue-on-error` for now, because WSL 2 on a
+  # hosted runner rests on nested virtualization that GitHub provides but does
+  # not support: it works today and carries no promise that it will keep
+  # working. A red cross here should tell us that before it blocks anybody's
+  # merge. Once it has proven itself over a few weeks, drop continue-on-error
+  # and it becomes a real gate.
+  #
+  # Running it at all is worth doing because the cost is far lower than the
+  # 45-minute timeout suggests. Measured on a developer machine: the whole suite
+  # is 68-88 seconds, of which the cold-start test — which downloads a root
+  # filesystem and provisions it — is 34 seconds and every other test is under
+  # three. A fresh runner has nothing cached, so budget more than that for the
+  # download, but this is not a suite that needs sampling or splitting.
+  #
+  # These tests are what turned Phase 4 from unit-tested-against-a-fake into
+  # exercised-against-the-tool, and they found four defects that twenty-nine
+  # unit tests had agreed did not exist. Running them only when somebody
+  # remembers is how that happens again.
+  wsl-e2e:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Report the WSL the runner has
+        shell: bash
+        run: wsl.exe --version || echo "no usable WSL on this runner"
+
+      # PROP-6 — that avar never stops a distribution it does not own — can only
+      # be checked against a distribution avar does not own. A runner has none,
+      # so one is installed here. Without it that test skips, and a security
+      # property that skips reports green while testing nothing.
+      #
+      # --no-launch keeps the first-run wizard away; the test starts it itself.
+      - name: Install a distribution avar does not own
+        shell: bash
+        run: wsl.exe --install Ubuntu-24.04 --no-launch --web-download || echo "could not install one; the PROP-6 check will fail loudly"
+
+      # AVR_E2E_REQUIRE_FOREIGN turns that test's skip into a failure. Here the
+      # environment is arranged, so a missing foreign distribution means the
+      # arrangement broke rather than that the host happens to be bare.
+      - name: E2E against real WSL
+        shell: bash
+        env:
+          AVR_E2E_REQUIRE_FOREIGN: "1"
+        run: go test -tags=e2e -timeout=45m -count=1 ./e2e/...

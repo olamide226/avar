@@ -314,6 +314,15 @@ here so the phase's history matches what is on `main`.
   - _Properties: 21_
   - _writes: cmd/purity_test.go_
 
+- [ ] 40. Run the WSL end-to-end suite in CI
+  - The suite is what turned Phase 4 from unit-tested-against-a-fake into exercised-against-the-tool, and it found four defects that twenty-nine unit tests had agreed did not exist. It runs only when somebody remembers, which is how that happens again.
+  - **The cost is far lower than the 45-minute timeout implies.** Measured on a developer machine: the whole suite is 68–88 seconds, of which the cold-start test — which downloads a root filesystem and provisions it — is 34 seconds, and every other test is under three. There is nothing to sample or split. A fresh runner has nothing cached, so budget more for the download.
+  - A separate `windows-latest` job, `continue-on-error` at first: WSL 2 on a hosted runner rests on nested virtualization that GitHub provides but does not support. It works today and carries no promise of continuing to. Drop `continue-on-error` once it has proven itself, and it becomes a real gate.
+  - **The job must install a distribution avar does not own.** PROP-6 — that avar never stops somebody else's environment — cannot be checked without one, and a runner has none. `AVR_E2E_REQUIRE_FOREIGN` turns that test's skip into a failure so the arrangement breaking is visible rather than silent.
+  - _Requirements: 18.1, 18.14, 17.5_
+  - _Properties: 6_
+  - _writes: .github/workflows/ci.yml, e2e/wsl_shell_test.go_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.
