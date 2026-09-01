@@ -16,10 +16,15 @@ import (
 // cannot be acted on safely by a host running the other one.
 type ProviderID string
 
-// ProviderLima is the macOS backend, and the only one that exists today. A
-// second backend adds its own constant next to this one; nothing else in the
-// shared vocabulary has to change (REQ-17.3, REQ-18.14).
+// ProviderLima is the macOS backend, driving Lima.
 const ProviderLima ProviderID = "lima"
+
+// ProviderWSL2 is the Windows backend, driving WSL 2 (REQ-18.1).
+//
+// It is a second constant beside the first and nothing else in the shared
+// vocabulary changed to admit it, which is what the provider boundary was for
+// (REQ-17.3, REQ-18.14).
+const ProviderWSL2 ProviderID = "wsl2"
 
 // providerIDPattern constrains an id to a short, lower-case, separator-free
 // token: it is written into avar's state files and read back by later versions,
