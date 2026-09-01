@@ -10,8 +10,9 @@
 //
 // The operations are split by capability rather than gathered into one large
 // interface. Provider is the core set every backend must be able to do at all;
-// Snapshotter, EditorTargetProvider and PortDiagnoser describe abilities a
-// backend either genuinely has or genuinely lacks. A caller that needs a
+// Snapshotter, EditorTargetProvider, NativeWorkspacer and PortDiagnoser
+// describe abilities a backend either genuinely has or genuinely lacks. A
+// caller that needs a
 // capability type-asserts for it and tells the user plainly when the backend
 // does not offer it, instead of every backend being forced to declare methods
 // it can only stub out.
@@ -340,6 +341,74 @@ type EditorTargetProvider interface {
 	// not a file path, and the caller owns where it lands — implementations
 	// never write to the user's SSH configuration (REQ-13.3).
 	EditorTarget(ctx context.Context, machine, guestPath string) (EditorTarget, error)
+}
+
+// NativeWorkspacer is implemented by backends that can hold a second copy of a
+// project on the guest's own filesystem and reconcile it with the host's
+// (REQ-14.1, REQ-14.2, REQ-14.3).
+//
+// It is separate from Provider because whether it is worth doing at all is a
+// property of the backend. avar shares a project rather than copying it, and on
+// a backend where the share is a local filesystem the guest reads at native
+// speed there is nothing for a second copy to buy — Lima's virtio-fs share is
+// that case today. A backend translating between two operating systems'
+// filesystems is the case that needs it, and it says so by implementing this.
+//
+// The three methods are one operation split so that the decision is not the
+// backend's. MapNativeWorkspace plans where the copy lives, ScanNativeWorkspace
+// reports what both copies hold, and ApplyNativeWorkspace carries out work
+// somebody else decided on. What follows from a scan — which side changed,
+// whether the two are in conflict, what the next baseline is — is computed by
+// internal/workspace from the manifests alone, so the rule that neither copy is
+// ever silently overwritten lives in a pure function with no virtual machine
+// behind it.
+type NativeWorkspacer interface {
+	// MapNativeWorkspace converts a canonical host project root and a host
+	// working directory beneath it into the guest-native copy of that project
+	// and the guest directory a native-mode session starts in.
+	//
+	// It is a pure function of its arguments, exactly as MapProjectPath is:
+	// deterministic, no filesystem access, no subprocess. It plans; it creates
+	// nothing. The returned workspace names both guest paths, because the
+	// share the project is normally reached through is what the copy is made
+	// from and is not replaced by it.
+	//
+	// The same constraints apply as to MapProjectPath: hostRoot and hostCwd are
+	// absolute host paths, hostCwd lies within hostRoot, and a hostCwd outside
+	// it is rejected rather than mapped.
+	MapNativeWorkspace(projectID, hostRoot, hostCwd string) (ws types.NativeWorkspace, guestCwd string, err error)
+
+	// ScanNativeWorkspace reports what each copy holds and what the last
+	// completed synchronization recorded that they agreed on.
+	//
+	// It is a read-only query that changes nothing, and it requires the machine
+	// to be running because both copies are read from inside the guest. A
+	// workspace that does not exist yet is not an error: the result says so and
+	// the caller creates it.
+	//
+	// Entries neither copy can carry — symbolic links, device nodes, names the
+	// backend cannot represent unambiguously — are reported in Skipped rather
+	// than omitted, because a file the user believes is synchronized and is not
+	// is the worst outcome this feature has.
+	ScanNativeWorkspace(ctx context.Context, machine string, ws types.NativeWorkspace) (types.WorkspaceScan, error)
+
+	// ApplyNativeWorkspace carries out one direction's synchronization and then
+	// records the baseline it leaves behind.
+	//
+	// Order is a contract, not an implementation detail. Every copy and delete
+	// completes before the baseline is written, and each file arrives at its
+	// destination whole — written aside and moved into place — so an
+	// interrupted synchronization leaves the previous baseline describing a
+	// destination that holds some of the new files and none of them
+	// half-written. Repeating the command then converges rather than
+	// compounding, and no file is ever in a state that makes avar report a
+	// conflict the user did not cause (REQ-17.5, REQ-14.3).
+	//
+	// On a nil return every entry in sync has been applied and the baseline is
+	// durable. Progress is reported as it goes, because copying a project is
+	// the second slow path a user sits and waits through; progress is never
+	// nil.
+	ApplyNativeWorkspace(ctx context.Context, machine string, ws types.NativeWorkspace, sync types.WorkspaceSync, progress types.ProgressSink) error
 }
 
 // PortDiagnoser is implemented by backends that can explain the state of

@@ -102,6 +102,7 @@ func NewRootCommand(version string, inv cli.Invocation, app *App) *cobra.Command
 	flags.StringSlice("env", nil, "forward host env var to a guest session: NAME or NAME=value (repeatable)")
 	flags.String("env-file", "", "file of KEY=value lines to forward to a guest session (.env format)")
 	flags.Bool("ssh-agent", false, "forward the host SSH agent socket for a guest session")
+	flags.Bool("native-fs", false, "run in a copy of the project on the Linux filesystem, for speed")
 	flags.BoolP("help", "h", false, "show how to use avr")
 	flags.BoolP("version", "v", false, "show the avr version")
 
@@ -119,6 +120,8 @@ const commandIndex = `Management commands:
   restore <name>                 Restore this environment from a snapshot
   reset [--yes]                  Recreate this environment from a clean OS
   isolate [on|off [--yes]]       Show or change this project's isolation default
+  sync [--to-host|--to-guest]    Review or apply changes between a project's
+                                 host copy and its Linux-native one
   destroy [--all|--orphaned] [--yes]
                                  Remove environments after confirmation
   code                           Open this project in VS Code over Remote-SSH
@@ -172,6 +175,11 @@ var publicCommandHelp = map[string]commandHelp{
 		usage:       "avr [selector flags] stop [--all]",
 		description: "Stop the selected environment, or every Linux environment avar manages.",
 		flags:       "  --all   stop every Linux environment avar manages",
+	},
+	"sync": {
+		usage:       "avr [selector flags] sync [--to-host | --to-guest] [--yes]",
+		description: "Show what differs between this project's host copy and the Linux-native copy `avr --native-fs` keeps, and apply one side's changes to the other. With no direction it changes nothing. Files both copies changed are reported and never overwritten.",
+		flags:       "  --to-host    apply the Linux copy's changes to the host copy\n  --to-guest   apply the host copy's changes to the Linux copy\n  --yes        skip the confirmation prompt",
 	},
 	"version": {
 		usage:       "avr version",

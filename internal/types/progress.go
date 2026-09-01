@@ -14,6 +14,9 @@ const (
 	ProgressMounting ProgressKind = "mounting"
 	// ProgressStopping reports a machine shutdown.
 	ProgressStopping ProgressKind = "stopping"
+	// ProgressSyncing reports files being copied between a project's host
+	// copy and its guest-native one (REQ-14.1, REQ-14.2).
+	ProgressSyncing ProgressKind = "syncing"
 	// ProgressWarning reports a condition the user should know about but
 	// which does not stop the operation, such as CPU emulation.
 	ProgressWarning ProgressKind = "warning"

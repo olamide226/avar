@@ -109,6 +109,9 @@ Linux — whose own flags avar never reads.
 | `avr isolate` | Report whether this project defaults to its own environment |
 | `avr isolate on` | Give this project its own environment from now on |
 | `avr isolate off` | Return this project to the shared environment and offer to delete its machine (`--yes` to delete unattended) |
+| `avr --native-fs` | Run in a copy of the project on the Linux filesystem, for dependency-heavy work. Windows only, where the project is otherwise reached across a filesystem boundary |
+| `avr sync` | Show what differs between the project's host copy and its Linux-native copy, and change nothing |
+| `avr sync --to-host` | Apply the Linux copy's changes to the host copy, after showing them (`--to-guest` goes the other way, `--yes` skips the prompt) |
 | `avr code` | Open the current project in VS Code, running in the Linux environment over Remote-SSH |
 | `avr version`, `avr help` | Also spelled `--version` and `--help` |
 
@@ -195,6 +198,19 @@ used project is unshared and you are told which; it stays a registered project
 and comes back on the next visit, paying the same one-time restart a first visit
 pays. The project you are entering is never the one dropped. WSL has no such
 cap, because a project share there is a mount rather than a virtual device.
+
+**A Linux-native workspace is a second copy, and copies diverge.** `avr --native-fs`
+exists because WSL reaches a Windows directory through a translation layer, and a
+`npm install` that stats a hundred thousand files pays for every crossing. The
+cost is that the project then exists twice. avar compares the two by content
+against what they last agreed on, so it can tell which side changed; it carries a
+one-sided change without asking, shows you every change before applying one you
+asked for, and when both sides changed the same file it says so and touches
+neither. Build output (`node_modules`, `target`, `__pycache__` and the like) is
+never copied back — keeping it in Linux is the point. Empty directories and
+symbolic links are not synchronized; the latter are reported rather than dropped
+quietly. Deleting the environment deletes the Linux copy with it, so run
+`avr sync` before `avr reset` or `avr destroy`.
 
 **Released binaries are unsigned.** On macOS the Homebrew cask strips the
 quarantine attribute after install, so that route is unaffected; a tarball

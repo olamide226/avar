@@ -84,11 +84,15 @@ func Detect(projectRoot string) (Advice, bool) {
 
 // Message is what the user reads.
 //
-// It says what is happening, why, and what to do about it today — and what it
-// recommends is something the user can actually act on now. Linux-native
-// workspace mode is Requirement 14 and is not built, so recommending it would be
-// pointing at a flag that does not exist; the advice is therefore the one that
-// works today, which is also the one Microsoft gives.
+// It says what is happening, why, and what to do about it — and what it
+// recommends is something the user can act on in the next command they type.
+// That was not true when this message was first written: Linux-native workspace
+// mode was Requirement 14 and unbuilt, so the advice deliberately stopped at
+// describing the problem rather than naming a flag that did not exist. Now that
+// `--native-fs` is real, naming it is the second half of REQ-18.11 — "accepting
+// that recommendation SHALL use Requirement 14's reviewable synchronization and
+// conflict-safety rules" — and the message and the test that guards it moved
+// together with the flag.
 //
 // It is written to be read once and dismissed. A user who has read it and
 // decided their project is fine on the Windows side has made a legitimate choice
@@ -99,8 +103,10 @@ func (a Advice) Message(projectPath string) string {
 		"     Linux reaches it through a translation layer, so anything that touches many\n" +
 		"     files — installing packages, building, running tests — will be markedly\n" +
 		"     slower here than it would be on a Linux filesystem.\n" +
-		"     Keeping the project inside your Linux environment's own filesystem avoids\n" +
-		"     it entirely; keeping it at " + projectPath + " is fine if you mostly edit\n" +
+		"     `avr --native-fs` keeps a copy of the project on this environment's own\n" +
+		"     filesystem and runs there instead; `avr sync` shows you what changed and\n" +
+		"     brings it back, and never overwrites either copy without asking.\n" +
+		"     Keeping the project at " + projectPath + " is fine if you mostly edit\n" +
 		"     rather than build.\n" +
 		"     This is said once per project."
 }

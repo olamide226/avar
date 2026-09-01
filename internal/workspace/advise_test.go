@@ -117,8 +117,11 @@ func TestDetect_NeverFails_REQ_18_11(t *testing.T) {
 }
 
 // The message has to say what is happening, why, and what the user can do about
-// it — today. Linux-native workspace mode is Requirement 14 and is not built, so
-// recommending it would point at a flag that does not exist.
+// it — today. Until Requirement 14 was built this test asserted the opposite of
+// what it asserts now: that the message did *not* mention --native-fs, because
+// recommending a flag that did not exist is not advice. The flag exists, so
+// REQ-18.11's second clause is now reachable and the recommendation has to name
+// the thing that carries it out.
 func TestMessage_IsActionableToday_REQ_18_11(t *testing.T) {
 	t.Parallel()
 
@@ -139,14 +142,16 @@ func TestMessage_IsActionableToday_REQ_18_11(t *testing.T) {
 		// That it is said once, so a user who ignores it knows it will not
 		// keep interrupting them.
 		"once per project",
+		// The recommendation REQ-18.11 asks for, named so the user can act on
+		// it without going to look for it.
+		"--native-fs",
+		// And the half that makes accepting it safe: work done in Linux comes
+		// back through a reviewable synchronization (REQ-14.2, REQ-14.3).
+		"avr sync",
 	} {
 		if !strings.Contains(message, want) {
 			t.Errorf("the message does not mention %q:\n%s", want, message)
 		}
-	}
-	// A flag that does not exist is not advice.
-	if strings.Contains(message, "--native-fs") {
-		t.Errorf("the message recommends a flag avar does not have:\n%s", message)
 	}
 }
 

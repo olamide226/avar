@@ -54,7 +54,7 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 	// before attaching rather than in main.
 	setupCtx, stopSetup := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 
-	guestCwd, err := prepareEnvironment(setupCtx, app, p, target, progressTo(app.Err))
+	guestCwd, err := runSetup(setupCtx, app, p, target, inv)
 	stopSetup()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -109,13 +109,41 @@ func attachSession(app *App, machine string) func() {
 	return func() { session.Detach(store, machine, pid) }
 }
 
+// runSetup gets everything ready for a guest session and returns the directory
+// it should start in.
+//
+// It is the whole of what differs between an ordinary session and a
+// Linux-native one (REQ-14.1). The environment, the project's registration and
+// the mount are identical either way — native mode does not replace the share,
+// it copies through it — so the only thing --native-fs changes here is which of
+// the two guest directories the session runs in, and the advisory that
+// recommends the flag is not shown to somebody who has just used it.
+func runSetup(ctx context.Context, app *App, p provider.Provider, target resolve.ResolvedTarget, inv cli.Invocation) (string, error) {
+	progress := progressTo(app.Err)
+
+	mount, guestCwd, err := prepareEnvironment(ctx, app, p, target, progress)
+	if err != nil {
+		return "", err
+	}
+
+	if inv.NativeFS {
+		return enterNativeWorkspace(ctx, app, p, target, progress)
+	}
+
+	// Said after the environment is ready and before the user is handed a
+	// shell, so that it is the last thing on screen rather than something that
+	// scrolls past behind provisioning output.
+	adviseNativeWorkspace(app, mount, target)
+	return guestCwd, nil
+}
+
 // prepareEnvironment brings the target machine up and makes the project
 // visible inside it, returning the mount and the directory the guest should
 // start in.
-func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, target resolve.ResolvedTarget, progress types.ProgressSink) (string, error) {
+func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, target resolve.ResolvedTarget, progress types.ProgressSink) (types.MountSpec, string, error) {
 	mount, guestCwd, err := p.MapProjectPath(target.Project.ID, target.Project.Path, target.HostCwd)
 	if err != nil {
-		return "", err
+		return types.MountSpec{}, "", err
 	}
 
 	// The spec is addressed to the backend that is about to execute it. That
@@ -129,7 +157,7 @@ func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, targ
 		Kind:     target.Kind,
 		Mounts:   []types.MountSpec{mount},
 	}, progress); err != nil {
-		return "", err
+		return types.MountSpec{}, "", err
 	}
 
 	// The record is written only now, because the backend has confirmed the
@@ -139,20 +167,14 @@ func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, targ
 	// provider is given read-only access to avar's records precisely so a
 	// backend cannot invent ownership for itself.
 	if err := recordMachine(app, target, mount); err != nil {
-		return "", err
+		return types.MountSpec{}, "", err
 	}
 
 	guestCwd, err = ensureMounted(ctx, app, p, target.MachineName, mount, guestCwd, progress)
 	if err != nil {
-		return "", err
+		return types.MountSpec{}, "", err
 	}
-
-	// Said after the environment is ready and before the user is handed a
-	// shell, so that it is the last thing on screen rather than something that
-	// scrolls past behind provisioning output.
-	adviseNativeWorkspace(app, mount, target)
-
-	return guestCwd, nil
+	return mount, guestCwd, nil
 }
 
 // adviseNativeWorkspace tells a user, once per project, that their project is on

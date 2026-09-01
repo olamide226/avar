@@ -302,14 +302,16 @@ func (p *Provider) installDir(machine string) string {
 // (REQ-17.3, REQ-18.14). If it stops compiling, that claim has stopped being
 // true.
 //
-// The three optional ones are claims about what WSL can do, and they are all
+// The four optional ones are claims about what WSL can do, and they are all
 // yes: it can export and import a distribution's disk, VS Code can attach to a
-// distribution, and a guest port's reachability can be probed. A backend that
-// could not do one of these would say so by leaving the assertion out rather
-// than by stubbing the methods (design §3.0).
+// distribution, a guest port's reachability can be probed, and a project can be
+// held on the distribution's own filesystem instead of reached across DrvFS. A
+// backend that could not do one of these would say so by leaving the assertion
+// out rather than by stubbing the methods (design §3.0).
 var (
 	_ provider.Provider             = (*Provider)(nil)
 	_ provider.Snapshotter          = (*Provider)(nil)
 	_ provider.EditorTargetProvider = (*Provider)(nil)
+	_ provider.NativeWorkspacer     = (*Provider)(nil)
 	_ provider.PortDiagnoser        = (*Provider)(nil)
 )
