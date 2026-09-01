@@ -113,7 +113,7 @@ func (p *Provider) createFromBase(ctx context.Context, spec provider.MachineSpec
 	}
 
 	// Step 3: start the clone.
-	startLog := io.MultiWriter(logFile, &progressLines{machine: spec.Name, sink: progress})
+	startLog := io.MultiWriter(logFile, &provider.ProgressWriter{Machine: spec.Name, Sink: progress})
 	if err := p.runner.Stream(ctx, startLog, p.limactl, "start", "--tty=false", spec.Name); err != nil {
 		return p.abandonCreate(ctx, spec, logPath,
 			fmt.Errorf("starting the cloned %s environment (machine %s): %w",

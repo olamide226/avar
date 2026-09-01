@@ -17,7 +17,7 @@
 // same command again, and avar must not have half-created anything in the
 // meantime (REQ-18.3, PROP-13).
 //
-// The tool speaks UTF-16. See decodeWSLOutput.
+// The tool speaks UTF-16. See DecodeWSLOutput.
 
 package deps
 
@@ -228,7 +228,7 @@ func (m *WSLManager) probeVersion(ctx context.Context, path string) (Version, er
 	if err != nil {
 		return Version{}, fmt.Errorf("asking %s for its version: %w", path, err)
 	}
-	version, err := ParseVersion(decodeWSLOutput(out))
+	version, err := ParseVersion(DecodeWSLOutput(out))
 	if err != nil {
 		return Version{}, fmt.Errorf("reading the WSL version from %s --version: %w", path, err)
 	}
@@ -452,15 +452,12 @@ const wslManualInstructions = "Set up WSL " + MinWSLVersion + " or newer, then r
 	"Both may ask you to approve the change, and the first may need a restart.\n" +
 	"Microsoft's instructions: https://learn.microsoft.com/windows/wsl/install"
 
-// DecodeWSLOutput turns the bytes wsl.exe wrote into text.
+// DecodeWSLOutput turns the bytes wsl.exe wrote into text, decoding UTF-16 when
+// that is what it produced.
 //
 // It is exported because the WSL2Provider parses the same tool's output, and a
 // second copy of this is how one of the two ends up reading distribution names
 // as runs of NUL-separated characters.
-func DecodeWSLOutput(b []byte) string { return decodeWSLOutput(b) }
-
-// decodeWSLOutput turns the bytes wsl.exe wrote into text, decoding UTF-16 when
-// that is what it produced.
 //
 // wsl.exe writes UTF-16LE when its output is redirected — which it always is,
 // for avar — and it writes it with no byte-order mark, so nothing declares the
@@ -473,7 +470,7 @@ func DecodeWSLOutput(b []byte) string { return decodeWSLOutput(b) }
 // that distinction is unambiguous: no output avar reads contains a NUL byte in
 // UTF-8, and UTF-16LE text made of ASCII is half NUL bytes, all at odd offsets.
 // A byte-order mark, where one is present, is authoritative and is consumed.
-func decodeWSLOutput(b []byte) string {
+func DecodeWSLOutput(b []byte) string {
 	switch {
 	case len(b) >= 2 && b[0] == 0xFF && b[1] == 0xFE:
 		return decodeUTF16(b[2:], false)

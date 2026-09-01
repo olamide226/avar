@@ -63,20 +63,49 @@ func (d distribution) state() types.MachineState {
 
 // view is one invocation's picture of what WSL has.
 //
-// It is loaded at most once per view and never cached across invocations: a
-// command reads the world, decides, and exits (design §3.6). Callers that need
-// to see a change they just made forget the view first.
+// It is loaded at most once and never cached across invocations: a command reads
+// the world, decides, and exits (design §3.6). Everything that changes what WSL
+// has — starting, terminating, importing, unregistering — forgets it, so the
+// next question is asked of WSL again.
+//
+// One view per invocation rather than one per method call is the difference
+// between three listings and nine. Measured on a warm Windows 11 host, the three
+// cost ~130 ms; a warm `avr` asks the same three questions from Status, from
+// EnsureMachine and from Shell, milliseconds apart, and gets identical answers.
+// At ~390 ms that alone was most of REQ-17.1's ~500 ms budget for the whole
+// invocation.
 type view struct {
 	provider *Provider
-	loaded   bool
 	distros  map[string]distribution
 }
 
-func (p *Provider) newView() *view { return &view{provider: p} }
+// view returns the invocation's shared picture, creating it on first use.
+//
+// It lives on the Provider because the Provider is itself per-invocation —
+// cmd.App builds one behind a sync.Once and the process exits — so this caches
+// within an invocation and cannot cache across one, which is exactly the line
+// the project draws.
+func (p *Provider) view() *view {
+	if p.shared == nil {
+		p.shared = &view{provider: p}
+	}
+	return p.shared
+}
+
+// forget drops the loaded picture. Every operation that changes what WSL has
+// calls it, so a later question in the same invocation sees the change.
+func (p *Provider) forget() {
+	if p.shared != nil {
+		p.shared.distros = nil
+	}
+}
 
 // load reads the three listings and reconciles them into one picture.
+//
+// The loaded map doubles as the "have I loaded" flag: a successful load always
+// produces a non-nil map, even for a host with no distributions at all.
 func (v *view) load(ctx context.Context) error {
-	if v.loaded {
+	if v.distros != nil {
 		return nil
 	}
 
@@ -93,15 +122,15 @@ func (v *view) load(ctx context.Context) error {
 		return err
 	}
 
-	v.distros = make(map[string]distribution, len(registered))
+	distros := make(map[string]distribution, len(registered))
 	for _, name := range registered {
-		v.distros[name] = distribution{
+		distros[name] = distribution{
 			Name:       name,
 			Running:    running[name],
 			WSLVersion: versions[name],
 		}
 	}
-	v.loaded = true
+	v.distros = distros
 	return nil
 }
 
@@ -140,9 +169,6 @@ func (v *view) all(ctx context.Context) ([]distribution, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
-
-// forget drops the loaded picture so the next question is asked of WSL again.
-func (v *view) forget() { v.loaded = false }
 
 // listNames reports every registered distribution.
 func (p *Provider) listNames(ctx context.Context) ([]string, error) {

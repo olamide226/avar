@@ -279,8 +279,8 @@ func (p *Provider) create(ctx context.Context, spec provider.MachineSpec, progre
 	// sink so that a verbose run can show it. os/exec guarantees that a single
 	// writer used for both stdout and stderr is written to by one goroutine at
 	// a time, so the tee needs no lock of its own.
-	lines := &progressLines{machine: spec.Name, sink: progress}
-	defer lines.flush()
+	lines := &provider.ProgressWriter{Machine: spec.Name, Sink: progress}
+	defer lines.Flush()
 
 	runErr := p.runner.Stream(ctx, io.MultiWriter(logFile, lines), p.limactl,
 		"start", "--name", spec.Name, "--tty=false", configPath)

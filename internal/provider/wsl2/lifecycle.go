@@ -1,14 +1,12 @@
 package wsl2
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/olamide226/avar/internal/deps"
@@ -22,13 +20,12 @@ import (
 // half-imported distribution registered is exactly what PROP-7 forbids.
 const cleanupTimeout = 2 * time.Minute
 
-// distrosDirPerm keeps imported distributions private to the user. A
-// distribution's virtual disk is its whole filesystem, including anything the
-// user's projects put there.
+// dirPerm and filePerm keep everything avar writes on Windows private to the
+// user. A distribution's virtual disk is its whole filesystem, including
+// whatever the user's projects put there, and a snapshot is a copy of one.
 const (
-	distrosDirPerm = 0o700
-	logsDirPerm    = 0o700
-	createLogPerm  = 0o600
+	dirPerm  = 0o700
+	filePerm = 0o600
 )
 
 // EnsureMachine brings the distribution described by spec into a running state,
@@ -55,12 +52,12 @@ func (p *Provider) EnsureMachine(ctx context.Context, spec provider.MachineSpec,
 		progress = types.DiscardProgress
 	}
 	// Refuse an impossible environment before anything is downloaded (REQ-18.6).
-	if err := p.checkSupported(spec.Selector); err != nil {
+	entry, err := p.checkSupported(spec.Selector)
+	if err != nil {
 		return err
 	}
 
-	v := p.newView()
-	existing, found, err := v.lookup(ctx, spec.Name)
+	existing, found, err := p.view().lookup(ctx, spec.Name)
 	if err != nil {
 		return err
 	}
@@ -77,7 +74,7 @@ func (p *Provider) EnsureMachine(ctx context.Context, spec provider.MachineSpec,
 		progress.Progress(types.ProgressEvent{Kind: types.ProgressStarting, Machine: spec.Name})
 		return p.start(ctx, spec.Name)
 	default:
-		return p.create(ctx, spec, progress)
+		return p.create(ctx, spec, entry, progress)
 	}
 }
 
@@ -86,6 +83,7 @@ func (p *Provider) start(ctx context.Context, machine string) error {
 	if _, err := p.run(ctx, "--distribution", machine, "--user", "root", "--exec", "/bin/true"); err != nil {
 		return fmt.Errorf("starting environment %s: %w", machine, err)
 	}
+	p.forget()
 	return nil
 }
 
@@ -98,17 +96,12 @@ func (p *Provider) start(ctx context.Context, machine string) error {
 // distribution with avar's name and, having no record of the failure, could
 // treat it as ready. Removing it means the next invocation finds either a
 // working environment or nothing at all (REQ-1.6, REQ-18.12, PROP-7).
-func (p *Provider) create(ctx context.Context, spec provider.MachineSpec, progress types.ProgressSink) error {
-	entry, err := lookupRegistry(spec.Selector)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(p.distrosDir, distrosDirPerm); err != nil {
+func (p *Provider) create(ctx context.Context, spec provider.MachineSpec, entry registryEntry, progress types.ProgressSink) error {
+	if err := os.MkdirAll(p.distrosDir, dirPerm); err != nil {
 		return fmt.Errorf("creating avar's environment directory %s: %w", p.distrosDir, err)
 	}
 	dir := p.installDir(spec.Name)
-	if err := os.MkdirAll(dir, distrosDirPerm); err != nil {
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return fmt.Errorf("creating the directory for environment %s at %s: %w", spec.Name, dir, err)
 	}
 
@@ -143,8 +136,10 @@ func (p *Provider) install(ctx context.Context, machine string, entry registryEn
 	}
 	defer func() { _ = logFile.Close() }()
 
-	lines := &progressLines{machine: machine, sink: progress}
-	defer lines.flush()
+	// The decoder is passed rather than assumed: wsl.exe writes UTF-16, so a
+	// line forwarded raw reaches the user as NUL-separated letters.
+	lines := &provider.ProgressWriter{Machine: machine, Sink: progress, Decode: deps.DecodeWSLOutput}
+	defer lines.Flush()
 
 	args := []string{
 		"--install", entry.Distro,
@@ -156,7 +151,11 @@ func (p *Provider) install(ctx context.Context, machine string, entry registryEn
 		// works and fetches the same, WSL-verified image.
 		"--web-download",
 	}
-	if err := p.runner.Stream(ctx, io.MultiWriter(logFile, lines), p.wsl, args...); err != nil {
+	err = p.runner.Stream(ctx, io.MultiWriter(logFile, lines), p.wsl, args...)
+	// Whether it worked or not, WSL may now have a registration it did not have
+	// before, so the picture avar holds of what exists is stale either way.
+	p.forget()
+	if err != nil {
 		return fmt.Errorf("installing environment %s from WSL's %q distribution: %w; the full output is in %s", machine, entry.Distro, err, logPath)
 	}
 	return nil
@@ -191,7 +190,7 @@ func (p *Provider) provision(ctx context.Context, machine string, sel types.Envi
 
 	// The version check comes last because it needs the distribution running,
 	// which the read above has just ensured.
-	v := p.newView()
+	v := p.view()
 	d, err := v.require(ctx, machine)
 	if err != nil {
 		return err
@@ -238,7 +237,7 @@ func (p *Provider) Stop(ctx context.Context, machine string, progress types.Prog
 		progress = types.DiscardProgress
 	}
 
-	v := p.newView()
+	v := p.view()
 	d, err := v.require(ctx, machine)
 	if err != nil {
 		return err
@@ -258,6 +257,7 @@ func (p *Provider) terminate(ctx context.Context, machine string) error {
 	if _, err := p.run(ctx, "--terminate", machine); err != nil {
 		return fmt.Errorf("stopping environment %s: %w", machine, err)
 	}
+	p.forget()
 	return nil
 }
 
@@ -277,7 +277,7 @@ func (p *Provider) Delete(ctx context.Context, machine string) error {
 		return err
 	}
 
-	v := p.newView()
+	v := p.view()
 	_, found, err := v.lookup(ctx, machine)
 	if err != nil {
 		return err
@@ -286,6 +286,7 @@ func (p *Provider) Delete(ctx context.Context, machine string) error {
 		if _, err := p.run(ctx, "--unregister", machine); err != nil {
 			return fmt.Errorf("removing environment %s: %w", machine, err)
 		}
+		p.forget()
 	}
 
 	dir := p.installDir(machine)
@@ -307,7 +308,7 @@ func (p *Provider) Status(ctx context.Context) ([]types.MachineStatus, error) {
 		return nil, fmt.Errorf("listing avar's environments: %w", err)
 	}
 
-	distros, err := p.newView().all(ctx)
+	distros, err := p.view().all(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -388,11 +389,11 @@ func (p *Provider) diskUsedGB(machine string) float64 {
 // createLog opens the install log for a machine. Its path is named in the error
 // a failed install returns, so the user has somewhere to look (design §6).
 func (p *Provider) createLog(machine string) (string, *os.File, error) {
-	if err := os.MkdirAll(p.logsDir, logsDirPerm); err != nil {
+	if err := os.MkdirAll(p.logsDir, dirPerm); err != nil {
 		return "", nil, fmt.Errorf("creating avar's log directory %s: %w", p.logsDir, err)
 	}
 	path := filepath.Join(p.logsDir, machine+"-create.log")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, createLogPerm)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, filePerm)
 	if err != nil {
 		return "", nil, fmt.Errorf("opening the install log %s: %w", path, err)
 	}
@@ -418,72 +419,4 @@ func (e *wsl1Error) Error() string {
 
 func (e *wsl1Error) Unwrap() []error {
 	return []error{deps.ErrWSL1, provider.ErrUnsupportedCapability}
-}
-
-// progressLines forwards backend output to a ProgressSink one complete line at a
-// time.
-//
-// Installing a distribution is the one slow path a user sits and waits through —
-// it downloads a whole root filesystem — so its output has to be available live
-// rather than only afterwards. Lines are emitted as ProgressLog events and the
-// presentation layer decides whether verbose mode is on; nothing here writes to
-// a terminal.
-type progressLines struct {
-	machine string
-	sink    types.ProgressSink
-	buf     []byte
-}
-
-// maxProgressLine bounds one forwarded line, so a download indicator written
-// without newlines cannot grow the buffer without bound.
-const maxProgressLine = 4096
-
-func (w *progressLines) Write(p []byte) (int, error) {
-	if w.sink == nil {
-		return len(p), nil
-	}
-	w.buf = append(w.buf, p...)
-	for {
-		newline := bytes.IndexByte(w.buf, '\n')
-		if newline < 0 {
-			break
-		}
-		w.emit(w.buf[:newline])
-		w.buf = w.buf[newline+1:]
-	}
-	if len(w.buf) > maxProgressLine {
-		w.emit(w.buf[:maxProgressLine])
-		w.buf = w.buf[maxProgressLine:]
-	}
-	return len(p), nil
-}
-
-// flush emits whatever the tool wrote without a trailing newline, which is where
-// a failing tool's last word tends to be.
-func (w *progressLines) flush() {
-	if w.sink == nil || len(w.buf) == 0 {
-		return
-	}
-	w.emit(w.buf)
-	w.buf = nil
-}
-
-// emit forwards one line, decoded, dropping blank ones so that verbose output is
-// not mostly empty.
-//
-// The decode is not optional: wsl.exe writes UTF-16, so a line forwarded raw
-// reaches the user as NUL-separated letters. Decoding per line rather than per
-// stream is safe because UTF-16LE encodes '\n' as 0A 00, so a byte 0x0A at an
-// even offset is a real line break and the half-character left behind is the
-// following NUL, which the decoder skips as padding.
-func (w *progressLines) emit(line []byte) {
-	text := strings.TrimRight(deps.DecodeWSLOutput(line), "\r\x00")
-	if strings.TrimSpace(text) == "" {
-		return
-	}
-	w.sink.Progress(types.ProgressEvent{
-		Kind:    types.ProgressLog,
-		Machine: w.machine,
-		Message: text,
-	})
 }

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/olamide226/avar/internal/provider"
@@ -71,7 +72,7 @@ func (p *Provider) PortDiagnostics(ctx context.Context, machine string) ([]provi
 		return nil, err
 	}
 
-	d, ok, err := p.newView().lookup(ctx, machine)
+	d, ok, err := p.view().lookup(ctx, machine)
 	if err != nil {
 		return nil, err
 	}
@@ -87,12 +88,34 @@ func (p *Provider) PortDiagnostics(ctx context.Context, machine string) ([]provi
 		return nil, fmt.Errorf("reading the listening ports of environment %s: %w", machine, err)
 	}
 
-	ports := parseListeningPorts(out)
-	diagnostics := make([]provider.PortDiagnostic, 0, len(ports))
-	for _, port := range ports {
-		diagnostics = append(diagnostics, probeHostPort(ctx, port))
+	return probeAll(ctx, parseListeningPorts(out)), nil
+}
+
+// probeAll asks about every port at once and returns the answers in the order
+// the ports were listed.
+//
+// Concurrently, because the probes are independent and each can cost the whole
+// timeout: a guest with a dozen listeners and forwarding switched off is three
+// seconds of `avr status` waiting in series for twelve refusals that could have
+// been waited for together. Run at once, the timeout bounds the set rather than
+// each member of it.
+//
+// The results are written into their own slots rather than appended, so the
+// order is the ports' and not the scheduler's — `avr status` prints them, and a
+// listing that reorders itself between runs is one nobody can read.
+func probeAll(ctx context.Context, ports []int) []provider.PortDiagnostic {
+	diagnostics := make([]provider.PortDiagnostic, len(ports))
+
+	var wg sync.WaitGroup
+	for i, port := range ports {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			diagnostics[i] = probeHostPort(ctx, port)
+		}()
 	}
-	return diagnostics, nil
+	wg.Wait()
+	return diagnostics
 }
 
 // parseListeningPorts reads the port numbers out of /proc/net/tcp local
