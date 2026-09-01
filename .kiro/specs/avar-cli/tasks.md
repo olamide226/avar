@@ -225,8 +225,13 @@ Gated on the MVP shipping. Every task below sits behind the Provider boundary
 established in tasks 27 and 28: none of them may add a Windows branch to `cmd/`.
 
 **Status: shipped** (PRs #52–#60). `avr.exe` provisions and drives avar-owned WSL 2
-distributions, and the boundary held — no file under `cmd/` names a backend, which
-task 38b had to restore once after Phase 4 broke it.
+distributions, and the boundary held — **no command's behaviour branches on which
+backend is in use.** The only backend names in `cmd/` are the composition root's
+in `app.go`, which imports both packages and maps a provider ID to an
+implementation; something has to, and Property 21 names that exempt set. What
+task 38b had to restore was the real rule: `cmd/shell.go` was the last place a
+command's behaviour turned on `p.ID() == types.ProviderWSL2`, and it now reads
+the condition off the `MountSpec` instead.
 
 One requirement is knowingly incomplete: **REQ-18.11's second clause**, which says
 accepting the cross-filesystem recommendation routes to Requirement 14's reviewable
@@ -300,6 +305,14 @@ here so the phase's history matches what is on `main`.
   - Two lessons recorded in `docs/lessons.md`, both about test doubles and over-broad checks.
   - _Requirements: 18.3, 18.5, 18.6, 9.3, 1.2, 1.4, 2.5, 5.1, 6.4, 10.3, 17.1_
   - _writes: e2e/{harness,wsl_shell,wsl_prereq,cleanup_darwin}_test.go, e2e/*_test.go (build tags), Makefile, README.md, docs/lessons.md, internal/provider/wsl2/*, internal/deps/wsl.go_
+
+- [ ] 39. Enforce Property 21's provider-purity rule with an actual static check
+  - Property 21 says *"static dependency checks SHALL find no WSL-specific imports outside the WSL provider, Windows dependency checker, platform adapter, scheduler adapter, or Windows-only terminal files"*, and design §7 lists it among the tests. **No such check exists** — grepping for one returns nothing, and the property is enforced today only by a reviewer noticing.
+  - That is the shape `docs/lessons.md` already records for `Reconcile`: a thing the spec says happens, that nothing makes happen. It is not hypothetical here — Phase 4 broke this boundary (`cmd/shell.go` branching on `types.ProviderWSL2`), it survived into a merged PR, and task 38b restored it only because a human read the diff.
+  - A test in `cmd/` that walks its own package's imports with `go/parser` or `golang.org/x/tools/go/packages` and fails on any `internal/provider/<backend>` import outside the exempt set is enough, and needs no new dependency if the standard library form is used. The exempt set is Property 21's own list; `cmd/app.go` is the composition root and is exempt by design.
+  - _Requirements: 17.3, 18.14_
+  - _Properties: 21_
+  - _writes: cmd/purity_test.go_
 
 ## Notes
 
