@@ -487,9 +487,24 @@ func decodeWSLOutput(b []byte) string {
 }
 
 // looksLikeUTF16LE reports whether b is UTF-16LE text with no byte-order mark,
-// by looking for the NUL that follows every ASCII character in that encoding. An
-// odd-length buffer cannot be UTF-16 at all, and valid UTF-8 with no NUL in it
-// is taken at face value.
+// by counting the NUL that follows every U+0000–U+00FF character in that
+// encoding. An odd-length buffer cannot be UTF-16 at all, and valid UTF-8 with
+// no NUL in it is taken at face value.
+//
+// The count is a proportion rather than a requirement that every odd byte be
+// NUL, because that stricter form only holds while the text is entirely
+// Latin-1. A single character outside it breaks the run: 名 is U+540D, which
+// encodes to 8D 54, so its odd byte is 0x54 and detection would fail for the
+// whole buffer — falling through to string(b), which is the NUL-interleaved
+// garbage this function exists to prevent. That is not hypothetical for the
+// caller that matters: `wsl --list --quiet` is nothing but distribution names,
+// and a user may name their own in any script.
+//
+// Comparing the two parities is what separates UTF-16LE from UTF-16BE, which
+// puts its NULs at the even offsets instead. Both are still unambiguous against
+// UTF-8, which is the property actually relied on: the output avar reads
+// carries no NUL byte at all when it is UTF-8, so it can never reach the
+// threshold.
 func looksLikeUTF16LE(b []byte) bool {
 	if len(b) < 2 || len(b)%2 != 0 {
 		return false
@@ -497,13 +512,26 @@ func looksLikeUTF16LE(b []byte) bool {
 	if utf8.Valid(b) && !bytes.ContainsRune(b, 0) {
 		return false
 	}
-	for i := 1; i < len(b); i += 2 {
-		if b[i] != 0 {
-			return false
+	var odd, even int
+	for i := 0; i+1 < len(b); i += 2 {
+		if b[i] == 0 {
+			even++
+		}
+		if b[i+1] == 0 {
+			odd++
 		}
 	}
-	return true
+	pairs := len(b) / 2
+	return odd*10 >= pairs*utf16NULThreshold && odd > even
 }
+
+// utf16NULThreshold is the proportion of code units, in tenths, that must carry
+// a NUL at the odd offset for a buffer to be read as UTF-16LE. Three in ten is
+// far below what any realistic wsl.exe output produces — even a list of
+// entirely non-Latin distribution names reaches half, because the CRLF ending
+// every line is two code units that are themselves Latin-1 — and far above the
+// zero that UTF-8 output produces.
+const utf16NULThreshold = 3
 
 // decodeUTF16 decodes b as UTF-16 in the given byte order.
 func decodeUTF16(b []byte, bigEndian bool) string {

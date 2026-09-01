@@ -536,6 +536,28 @@ func TestDecodeWSLOutput_ReadsWhatWSLActuallyWrites_REQ_18_2(t *testing.T) {
 			want: "Distribution par défaut : Ubuntu",
 		},
 		{
+			// A French name keeps its NUL at the odd offset, because é is
+			// U+00E9 and still fits in a byte. A Japanese one does not: 名 is
+			// U+540D, so its odd byte is 0x54 and a detector requiring every
+			// odd byte to be NUL would read this whole buffer as UTF-8 and
+			// return NUL-interleaved garbage. The CRLF ending each line is
+			// what keeps the proportion well above the threshold.
+			name: "distribution names outside Latin-1",
+			in:   utf16LE("名前\r\nUbuntu-24.04\r\n"),
+			want: "名前\r\nUbuntu-24.04\r\n",
+		},
+		{
+			// Every code unit outside Latin-1 and no line ending to help: the
+			// proportion of odd NULs is zero, so this is not detected as
+			// UTF-16 and is returned as bytes. Documented rather than fixed —
+			// wsl.exe terminates its lines, so avar never reads such a buffer,
+			// and the alternative is guessing between two encodings on no
+			// evidence.
+			name: "unterminated non-Latin-1 is below the threshold",
+			in:   utf16LE("名前"),
+			want: string(utf16LE("名前")),
+		},
+		{
 			// Odd length cannot be UTF-16, so it is text whatever it looks
 			// like — better a mangled byte than a dropped one.
 			name: "odd length is not UTF-16",

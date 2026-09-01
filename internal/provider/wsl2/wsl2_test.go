@@ -117,6 +117,24 @@ func (f *fakeWSL) Stream(_ context.Context, w io.Writer, name string, args ...st
 	return err
 }
 
+// exitStatusError is a wsl.exe that ran and exited non-zero, which is a
+// different thing from a wsl.exe that could not be run at all. The real runner
+// reports the first as *exec.ExitError; the fake cannot construct one of those,
+// because it wraps an os.ProcessState only a real process produces, so it
+// reports the status the same way the interface asks for it.
+//
+// The distinction is the point rather than a detail: avar treats a status with
+// empty output as "nothing is running", and everything else as a broken WSL. A
+// fake that returned a bare error here would let the narrow case be written as
+// the broad one and still pass.
+type exitStatusError struct {
+	code int
+	msg  string
+}
+
+func (e exitStatusError) Error() string { return e.msg }
+func (e exitStatusError) ExitCode() int { return e.code }
+
 // failure reports the error a test asked for on this invocation.
 func (f *fakeWSL) failure(args []string) error {
 	for _, arg := range args {
@@ -132,7 +150,7 @@ func (f *fakeWSL) respond(args []string) (string, error) {
 	switch {
 	case has(args, "--list") && has(args, "--running"):
 		if len(f.runningNames()) == 0 {
-			return "", errors.New("there are no running distributions")
+			return "", exitStatusError{code: 1, msg: "there are no running distributions"}
 		}
 		return strings.Join(f.runningNames(), "\r\n") + "\r\n", nil
 	case has(args, "--list") && has(args, "--verbose"):
@@ -917,6 +935,30 @@ func TestListRunning_NoRunningDistributionsIsNotAFailure(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].State != types.StateStopped {
 		t.Fatalf("Status = %v, want the environment reported as stopped", got)
+	}
+}
+
+// The empty-set answer is recognised narrowly, so a WSL that is actually broken
+// reports as broken rather than as idle.
+//
+// The two are indistinguishable from the exit status alone, which is why the
+// wider reading is tempting and wrong: a failure to run wsl.exe at all reports
+// no status, and turning that into "nothing is running" would send a user whose
+// service is stopped to look at their environment instead of their WSL.
+func TestListRunning_ABrokenWSLIsNotReportedAsIdle(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeWSL()
+	f.register(testMachine, 2, false)
+	f.failOn = map[string]error{"--running": errors.New("the WSL service could not be reached")}
+	p := newProvider(t, f, recorded(testMachine))
+
+	_, err := p.Status(context.Background())
+	if err == nil {
+		t.Fatal("Status reported success on a WSL that could not answer, want the failure surfaced")
+	}
+	if !strings.Contains(err.Error(), "the WSL service could not be reached") {
+		t.Errorf("error = %v, want it to carry what actually went wrong", err)
 	}
 }
 
