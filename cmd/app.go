@@ -189,11 +189,12 @@ func (a *App) backend(ctx context.Context) (provider.Provider, error) {
 			return nil, err
 		}
 		p, err := wsl2.New(wsl2.Options{
-			WSL:        wsl,
-			Runner:     deps.NewRunner(),
-			Records:    store,
-			DistrosDir: store.DistrosDir(),
-			LogsDir:    store.LogsDir(),
+			WSL:          wsl,
+			Runner:       deps.NewRunner(),
+			Records:      store,
+			DistrosDir:   store.DistrosDir(),
+			LogsDir:      store.LogsDir(),
+			SnapshotsDir: store.SnapshotsDir(),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("prepare the WSL backend: %w", err)
