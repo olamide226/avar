@@ -20,14 +20,17 @@ func SupportedHost(goos string) bool {
 
 // providerForHost maps a GOOS value onto the backend that serves it.
 //
-// Adding a host means adding a row, not a branch somewhere in cmd/. The Windows
-// row is deliberately absent until the WSL2Provider exists (Phase 4): claiming a
-// provider avar cannot construct would turn a clear "unsupported host" message
-// into a failure much further in.
+// Adding a host means adding a row, not a branch somewhere in cmd/. Each row is
+// a claim that avar can construct that backend on that host, so a row is added
+// in the change that makes the claim true and not before: an entry for a
+// provider avar cannot build would turn a clear "unsupported host" message into
+// a failure much further in.
 func providerForHost(goos string) (types.ProviderID, bool) {
 	switch goos {
 	case "darwin":
 		return types.ProviderLima, true
+	case "windows":
+		return types.ProviderWSL2, true
 	default:
 		return "", false
 	}
@@ -36,7 +39,7 @@ func providerForHost(goos string) (types.ProviderID, bool) {
 // HostProviderID returns the backend for the host avar is running on.
 //
 // It fails before any dependency work, so an unsupported host is told plainly
-// that avar does not support it rather than being sent to install Lima and
+// that avar does not support it rather than being sent to install a runtime and
 // discovering the same thing more slowly (Req 17.6).
 func HostProviderID() (types.ProviderID, error) {
 	return providerIDFor(runtime.GOOS)
@@ -46,8 +49,8 @@ func providerIDFor(goos string) (types.ProviderID, error) {
 	id, ok := providerForHost(goos)
 	if !ok {
 		return "", fmt.Errorf(
-			"avr does not support %s: it runs on macOS, where it uses Lima. "+
-				"Windows support through WSL 2 is planned but not built yet", hostName(goos))
+			"avr does not support %s: it runs on macOS, where it uses Lima, "+
+				"and on Windows, where it uses WSL 2", hostName(goos))
 	}
 	return id, nil
 }

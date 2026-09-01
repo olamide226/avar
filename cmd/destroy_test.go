@@ -22,7 +22,7 @@ func TestDestroy_RemovesTheCurrentEnvironment_REQ_5_6(t *testing.T) {
 	f := fake.New()
 	app := newTestApp(t, f)
 	target, label := resolvedTarget(t, app)
-	seedMachine(t, f, target, ubuntu(), types.KindShared, "/Users/ola/code/app")
+	seedMachine(t, f, target, ubuntu(), types.KindShared, hostPath("/Users/ola/code/app"))
 
 	if err := runDestroy(context.Background(), app.App, destroyInvocation("--yes")); err != nil {
 		t.Fatalf("avr destroy --yes: %v", err)
@@ -102,11 +102,11 @@ func TestDestroy_AllRemovesEveryEnvironment_REQ_5_7(t *testing.T) {
 	f := fake.New()
 	app := newTestApp(t, f)
 	shared, _ := resolvedTarget(t, app)
-	seedMachine(t, f, shared, ubuntu(), types.KindShared, "/Users/ola/code/a")
+	seedMachine(t, f, shared, ubuntu(), types.KindShared, hostPath("/Users/ola/code/a"))
 	const other = "avr-debian-13-arm64"
 	seedMachine(t, f, other,
 		types.EnvironmentSelector{Distro: types.DistroDebian, Version: "13", Arch: types.HostArch()},
-		types.KindShared, "/Users/ola/code/b")
+		types.KindShared, hostPath("/Users/ola/code/b"))
 
 	if err := runDestroy(context.Background(), app.App, destroyInvocation("--all", "--yes")); err != nil {
 		t.Fatalf("avr destroy --all --yes: %v", err)
@@ -264,13 +264,21 @@ func seedIsolated(t *testing.T, app *testApp, f *fake.Fake, projectDir string) s
 	name := "avr-prj-" + project.ID[:10] + "-ubuntu-24.04-" + string(types.HostArch())
 	seedMachine(t, f, name, ubuntu(), types.KindIsolated, projectDir)
 
+	// The recorded mount is the one the backend planned, not one this helper
+	// makes up. Writing it by hand would assume the host path is also the guest
+	// path, which is true on Lima and false on WSL (REQ-18.5, PROP-1).
+	mount, _, err := f.MapProjectPath(project.ID, projectDir, projectDir)
+	if err != nil {
+		t.Fatalf("planning the mount for %s: %v", projectDir, err)
+	}
+
 	if err := app.store.PutMachine(types.MachineRecord{
 		Name:      name,
 		Provider:  types.ProviderLima,
 		Selector:  ubuntu(),
 		Kind:      types.KindIsolated,
 		ProjectID: project.ID,
-		Mounts:    []types.MountSpec{{ProjectID: project.ID, HostPath: projectDir, GuestPath: projectDir, Writable: true}},
+		Mounts:    []types.MountSpec{mount},
 	}); err != nil {
 		t.Fatalf("recording the isolated machine %s: %v", name, err)
 	}
@@ -284,7 +292,7 @@ func TestDestroy_ForgetsTheMachineRecord_REQ_5_6(t *testing.T) {
 	app := newTestApp(t, f)
 
 	target, _ := resolvedTarget(t, app)
-	seedMachine(t, f, target, ubuntu(), types.KindShared, "/Users/ola/code/app")
+	seedMachine(t, f, target, ubuntu(), types.KindShared, hostPath("/Users/ola/code/app"))
 	if err := app.store.PutMachine(types.MachineRecord{
 		Name: target, Provider: types.ProviderLima, Selector: ubuntu(), Kind: types.KindShared,
 	}); err != nil {
@@ -336,7 +344,7 @@ func TestDestroy_SummaryNamesLiveSessions_REQ_5_6(t *testing.T) {
 	app.Stdin = strings.NewReader("no\n")
 
 	target, _ := resolvedTarget(t, app)
-	seedMachine(t, f, target, ubuntu(), types.KindShared, "/Users/ola/code/app")
+	seedMachine(t, f, target, ubuntu(), types.KindShared, hostPath("/Users/ola/code/app"))
 	// Sessions live in avar's records, not in anything a backend reports:
 	// the backend has no idea what an avr session is.
 	if err := app.store.PutMachine(types.MachineRecord{

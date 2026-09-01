@@ -26,7 +26,7 @@ func TestReset_DeletesAndRecreatesWithYes_REQ_10_3(t *testing.T) {
 	app.Stdin = strings.NewReader("")
 
 	target, label := resolvedTarget(t, app)
-	seedMachine(t, f, target, ubuntu(), types.KindShared, "/Users/ola/code/app")
+	seedMachine(t, f, target, ubuntu(), types.KindShared, hostPath("/Users/ola/code/app"))
 
 	if err := runReset(context.Background(), app.App, resetInvocation("--yes")); err != nil {
 		t.Fatalf("avr reset --yes: %v", err)
@@ -209,7 +209,7 @@ func TestProp_ResetScoping_PROP_10(t *testing.T) {
 	app.Stdin = strings.NewReader("")
 
 	target, _ := resolvedTarget(t, app)
-	seedMachine(t, f, target, ubuntu(), types.KindShared, "/Users/ola/code/app")
+	seedMachine(t, f, target, ubuntu(), types.KindShared, hostPath("/Users/ola/code/app"))
 	// A second, unrelated machine the user also has.
 	seedMachine(t, f, "avr-fedora-42-arm64", types.EnvironmentSelector{
 		Distro: types.DistroFedora, Version: "42", Arch: types.HostArch(),
@@ -245,14 +245,14 @@ func TestReset_IsolatedEnvironment_REQ_10_3_REQ_11_4(t *testing.T) {
 	// Seed the shared machine first so that the project isolation select above
 	// does not mistake it for the target.
 	sharedName, _ := resolvedTarget(t, app)
-	seedMachine(t, f, sharedName, ubuntu(), types.KindShared, "/Users/ola/code/other")
+	seedMachine(t, f, sharedName, ubuntu(), types.KindShared, hostPath("/Users/ola/code/other"))
 
 	// Now set up as an isolated project targeting its own machine.
 	target, _ := resolvedTarget(t, app)
 	isolatedSelector := types.EnvironmentSelector{
 		Distro: types.DistroUbuntu, Version: "24.04", Arch: types.HostArch(), Isolated: true,
 	}
-	seedMachine(t, f, target, isolatedSelector, types.KindIsolated, "/Users/ola/code/isolated-proj")
+	seedMachine(t, f, target, isolatedSelector, types.KindIsolated, hostPath("/Users/ola/code/isolated-proj"))
 
 	if err := runReset(context.Background(), app.App, resetInvocation("--yes")); err != nil {
 		t.Fatalf("avr reset --yes: %v", err)

@@ -13,6 +13,7 @@ import (
 	"github.com/olamide226/avar/internal/deps"
 	"github.com/olamide226/avar/internal/provider"
 	"github.com/olamide226/avar/internal/provider/lima"
+	"github.com/olamide226/avar/internal/provider/wsl2"
 	"github.com/olamide226/avar/internal/resolve"
 	"github.com/olamide226/avar/internal/state"
 	"github.com/olamide226/avar/internal/types"
@@ -177,6 +178,25 @@ func (a *App) backend(ctx context.Context) (provider.Provider, error) {
 		})
 		if err != nil {
 			return nil, fmt.Errorf("prepare the Lima backend: %w", err)
+		}
+		return p, nil
+	case types.ProviderWSL2:
+		// Only the WSL check runs here, and it never mentions Lima, Docker
+		// Desktop, or any other runtime: one host, one dependency (REQ-18.2,
+		// PROP-13).
+		wsl, err := deps.EnsureWSL(ctx, a.Err)
+		if err != nil {
+			return nil, err
+		}
+		p, err := wsl2.New(wsl2.Options{
+			WSL:        wsl,
+			Runner:     deps.NewRunner(),
+			Records:    store,
+			DistrosDir: store.DistrosDir(),
+			LogsDir:    store.LogsDir(),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("prepare the WSL backend: %w", err)
 		}
 		return p, nil
 	default:

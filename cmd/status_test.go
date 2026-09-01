@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -409,4 +410,18 @@ func machineLine(t *testing.T, out, fragment string) string {
 	}
 	t.Fatalf("no line mentioning %q in:\n%s", fragment, out)
 	return ""
+}
+
+// hostPath renders a POSIX-shaped test path in the host's own vocabulary.
+//
+// A project directory is absolute in the host's syntax by definition, so a
+// fixture that hard-codes "/Users/ola/code/app" is a macOS fixture: on Windows
+// that string is relative and the resolver is right to refuse it. Prefixing the
+// drive keeps each flow test testing the flow it was written for rather than the
+// platform's idea of "absolute" (REQ-18.13).
+func hostPath(posix string) string {
+	if runtime.GOOS != "windows" {
+		return posix
+	}
+	return `C:` + filepath.FromSlash(posix)
 }

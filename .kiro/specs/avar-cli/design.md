@@ -16,7 +16,7 @@ avar is a single Go codebase that presents a **directory-centric, shell-first** 
 | Backend coupling | **Capability-segregated `Provider`; LimaProvider and WSL2Provider implement the same core contract** | Command-layer code references neither Lima nor WSL. Future OrbStack/SSH/cloud providers slot in without changing the CLI (Req 17.3, 18.14). |
 | Environment model | **One shared environment per (provider, distro, arch); per-project environments only under `--isolate`** | Including provider in identity prevents cross-host collisions. Shared-by-default gives instant warm starts and package persistence; isolation is opt-in and remembered per project (Req 4.3, 11, 18.6). |
 | VM stack per arch | **Host-native arch → `vmType: vz` (+ Rosetta binfmt enabled); foreign arch (`--arch amd64` on Apple Silicon) → `vmType: qemu`** | vz gives VirtioFS and near-native speed. Rosetta inside the arm64 VM covers "run this x86 binary" cheaply; a full qemu x86_64 VM covers "the whole OS must be amd64," with a one-time performance warning (Req 4.6). |
-| File sharing | **Provider-neutral `MountSpec{HostPath, GuestPath}` mappings** | Lima maps both paths identically. WSL disables automatic drive mounting in avar-owned distributions and mounts only registered project paths through DrvFS at `/mnt/avr/projects/<Project_Identity>`. This preserves live edits without pretending `C:\...` can equal a Linux path (Req 6, 9.3, 18.5). |
+| File sharing | **Provider-neutral `MountSpec{HostPath, GuestPath}` mappings** | Lima maps both paths identically. WSL disables automatic drive mounting in avar-owned distributions and mounts only registered project paths through DrvFS at `/mnt/avr/projects/<name>-<Project_Identity prefix>`. This preserves live edits without pretending `C:\...` can equal a Linux path (Req 6, 9.3, 18.5). |
 | Shell transport | **Lima: `limactl shell`; Windows: `wsl.exe --distribution … --cd … --exec …`** | Both transports remain behind `Provider.Shell`, inherit console streams directly, and return guest exit codes without shell-string interpolation (Req 1–3, 18.8). |
 | State | **Versioned flat files in the platform State_Dir** | `~/.avr/` on macOS and `%LocalAppData%\avar\` on Windows. Human-inspectable records plus atomic replace and an operation journal give crash recovery without a database (Req 17.5, 18.12–18.13). |
 | No daemon | **avar is CLI-only; idle checks use a per-user OS scheduler** | `launchd` on macOS and Task Scheduler on Windows invoke the same internal command. No resident avar service is introduced (Req 5.5). |
@@ -78,7 +78,7 @@ graph TD
 2. **Select provider**: `internal/platform` maps the host OS to one provider ID (`lima` or `wsl2`). Unsupported hosts fail before state or dependency mutation.
 3. **Resolve**: `Resolver` computes the Environment_Selector from flags → project record/config → defaults and includes ProviderID in environment identity. Project_Identity hashes the platform-canonical host path (§3.2).
 4. **Ensure deps**: the selected dependency checker validates Lima on macOS or WSL 2 on Windows; no unrelated runtime is checked or installed.
-5. **Plan mapping**: the provider maps `(project root, cwd)` to a `MountSpec` plus GuestCwd. Lima preserves the path; WSL uses a deterministic `/mnt/avr/projects/<Project_Identity>` root.
+5. **Plan mapping**: the provider maps `(project root, cwd)` to a `MountSpec` plus GuestCwd. Lima preserves the path; WSL uses a deterministic root beneath `/mnt/avr/projects/`.
 6. **Ensure environment**: Provider creates (first use) or starts the target and reconciles the desired mount set. Slow or restart-requiring work is explained through `ProgressSink`.
 7. **Attach**: `Provider.Shell` applies the explicit environment policy and starts the interactive shell or one-shot argv at GuestCwd. No command is assembled as a shell string; the guest exit code is propagated.
 8. **Record**: session start/end is stored in the platform State_Dir, driving idle stop and `avr status`.
@@ -297,7 +297,7 @@ type EditorTarget struct {
 `MapProjectPath` rules:
 
 - Lima: `HostPath == GuestPath`; GuestCwd is the host cwd.
-- WSL: the project root maps to `/mnt/avr/projects/<Project_Identity>` and GuestCwd appends the validated relative path from project root to host cwd. Path traversal outside the root is rejected.
+- WSL: the project root maps to `/mnt/avr/projects/<name>-<Project_Identity prefix>` and GuestCwd appends the validated relative path from project root to host cwd. Path traversal outside the root is rejected.
 
 Sentinel errors (`ErrNotOwned`, `ErrMachineNotFound`, `ErrMachineNotRunning`, `ErrSnapshotNotFound`, `ErrUnsupportedCapability`, `ErrRestartRequired`) let orchestration react to conditions instead of matching message text; §6 maps them onto user-facing behavior.
 
@@ -353,8 +353,8 @@ Using imported distributions avoids first-launch username prompts and prevents a
 |---|---|
 | List and version check | `wsl.exe --list --quiet`, `--list --running --quiet`, and `--list --verbose`. The parser decodes UTF-16 when present and extracts avar's no-whitespace names plus the numeric WSL version from the right, avoiding localized header/state matching. |
 | Start / ensure | A no-output probe through `wsl.exe --distribution <name> --user root --exec /bin/true`; WSL starts a stopped distribution on demand. Marker and WSL-2 checks run on cold start and reconciliation, not every warm attach. |
-| Path mapping | `MapProjectPath` maps a registered host root to `/mnt/avr/projects/<Project_Identity>` and preserves the cwd's relative suffix. |
-| Mounts | Reconcile selective DrvFS mounts as root with argv-safe execution (no interpolated shell string). `/proc/self/mountinfo` is the applied source of truth. Automatic drive mounting remains disabled, so avar does not expose an entire drive merely to share one project. |
+| Path mapping | `MapProjectPath` maps a registered host root to `/mnt/avr/projects/<name>-<Project_Identity prefix>` and preserves the cwd’s relative suffix. The directory is named for the project before it is identified by its hash: this path is the user’s working directory, and it appears in their shell prompt, their editor’s title bar and every error any tool prints, so sixty-four hexadecimal characters there is a real cost for no correctness gained. The truncation is the same length the resolver already uses to name a per-project machine, and the hash half is never omitted — it is what keeps two projects called `api` distinct (Prop 14). |
+| Mounts | Reconcile selective DrvFS mounts as root with argv-safe execution (no interpolated shell string). `/proc/mounts` is the applied source of truth: it is kernel-defined, identical across the supported distributions, and never localized, and it carries the DrvFS options avar plans against. (Amended from `/proc/self/mountinfo`, which the implementation does not read.) Automatic drive mounting remains disabled, so avar does not expose an entire drive merely to share one project. |
 | Shell / command | `wsl.exe --distribution <name> --user <avar-user> --cd <GuestCwd> --exec <argv...>`. The pinned WSL minimum must advertise `--cd`; args are passed as distinct Windows process arguments. Interactive mode execs the user's login shell. |
 | Stop | `wsl.exe --terminate <name>`; never `wsl --shutdown`, which would stop user-owned distributions too. |
 | Delete / reset | Ownership guard → `wsl.exe --unregister <name>` → remove the avar-owned install directory only after unregister succeeds. Reset reimports the pinned clean rootfs. |

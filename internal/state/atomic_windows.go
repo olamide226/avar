@@ -11,9 +11,11 @@ import (
 )
 
 // replaceRetryFor and replaceRetryInterval bound the wait for a reader to let
-// go of the file being replaced. A tenth of a second is far longer than a
-// scanner needs to read a few kilobytes of JSON, and short enough that a
-// genuine permission failure is still reported promptly.
+// go of the file being replaced. A second is far longer than a scanner needs to
+// read a few kilobytes of JSON, even on a machine under load, and it is a delay
+// only a failing write ever pays: the retry stops the moment the replacement
+// succeeds, so the common path never waits at all. A genuine permission failure
+// is reported a second late, on a path that then aborts the invocation anyway.
 const (
 	replaceRetryFor      = 1 * time.Second
 	replaceRetryInterval = 10 * time.Millisecond

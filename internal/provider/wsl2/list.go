@@ -2,6 +2,7 @@ package wsl2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -152,13 +153,38 @@ func (p *Provider) listNames(ctx context.Context) ([]string, error) {
 	return parseQuietList(out), nil
 }
 
+// exitCoder is an error carrying the exit status of a process that ran.
+// *exec.ExitError is the one the real runner produces; the interface is what is
+// matched on so that a test double can report a status the way the tool does,
+// rather than a bare error that only says something went wrong.
+type exitCoder interface{ ExitCode() int }
+
 // listRunningNames reports the distributions that are running, as a set.
 func (p *Provider) listRunningNames(ctx context.Context) (map[string]bool, error) {
 	out, err := p.run(ctx, "--list", "--running", "--quiet")
 	if err != nil {
-		// WSL reports "there are no running distributions" by failing, which
-		// is an answer rather than an error: nothing is running.
-		return map[string]bool{}, nil
+		// WSL reports "there are no running distributions" by exiting non-zero
+		// with nothing on standard output, so that one failure is an answer
+		// rather than an error: nothing is running.
+		//
+		// It is recognised narrowly, because everything else that can fail here
+		// — wsl.exe gone mid-invocation, the service stopped, a permissions
+		// problem, a cancelled context — would otherwise become the assertion
+		// that no distribution is running. EnsureMachine survives that, since
+		// its found-but-not-running branch calls start and start is idempotent;
+		// Shell does not, and would refuse a distribution it believes is
+		// stopped with a message saying EnsureMachine was skipped, which tells
+		// a user whose WSL is broken to look in the wrong place entirely.
+		//
+		// An exit status means the tool ran and reported one, which is what the
+		// empty-set answer looks like; a failure to run it at all reports no
+		// status. A context that is already done is checked first, because
+		// cancelling one kills the child and so produces a status too.
+		var status exitCoder
+		if ctx.Err() == nil && errors.As(err, &status) && len(parseQuietList(out)) == 0 {
+			return map[string]bool{}, nil
+		}
+		return nil, fmt.Errorf("listing the running WSL distributions: %w", err)
 	}
 	running := make(map[string]bool)
 	for _, name := range parseQuietList(out) {
