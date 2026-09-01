@@ -84,6 +84,43 @@ isolation settles it:
 git archive <ref> | tar -x -C <tmpdir> && cd <tmpdir> && go build ./... && go test ./...
 ```
 
+### Squash-merging the bottom of a stack breaks every branch above it
+
+Phase 4 arrived as nine stacked pull requests, #52 through #60, each based on the one
+below it. All nine reported mergeable. Merging them bottom-up with squash produced two
+distinct failures, neither of which is visible from the queue beforehand.
+
+**The branches above lose their shared ancestor.** A squash replaces the parent PR's
+commits with one new commit that is not an ancestor of anything. The branches above it
+still carry the originals, so the merge base for each drops back to before the series
+began, and git three-way merges the whole stack against a `main` that already contains
+its squashed equivalent. Files a lower PR *added* and a higher one *modified* come back
+as add/add conflicts. #55 conflicted this way after #52-#54 landed, having been
+mergeable an hour earlier, and #56 through #60 each needed
+`git rebase --onto main <parent-tip>` to replay their own single commit.
+
+**Deleting the merged branch closes the PR based on it.** GitHub retargets a child PR
+to `main` when the base branch disappears, but not always, and when it does not it
+*closes* the PR — and it cannot be reopened while the base ref is missing. Recovering
+#53 meant recreating `chore/windows-portability` at its old SHA, reopening, retargeting
+to `main`, and deleting the branch again. Note that `delete_branch_on_merge` does this
+whether or not `--delete-branch` is passed.
+
+So, when merging a stack:
+
+- **Retarget each child to `main` before merging its parent**, not after. A PR already
+  based on `main` is indifferent to its old base branch being deleted.
+- **Expect to rebase every remaining branch**, `--onto main`, dropping the commits that
+  the squash already landed. This is not optional cleanup: without it the PR's diff
+  double-counts its parents' changes.
+- **Prove the rebase changed nothing before force-pushing.** `git diff <rebased>
+  <original-branch>` must be empty. A rebase that silently drops a hunk looks exactly
+  like one that did not, and force-pushing is the point of no return.
+
+None of this argues against squash — the history it leaves is the one this repository
+wants. It argues that a stack is merged deliberately, in order, with the child
+retargeted first, rather than by merging what the queue says is mergeable.
+
 ---
 
 ## Specification
