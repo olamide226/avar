@@ -1,13 +1,6 @@
-// Package deps makes avar's Lima dependency invisible.
-//
-// avar drives Lima as a subprocess, so `limactl` is a hard requirement. This
-// package locates it, gates on MinLimaVersion, and — only with the user's
-// explicit consent — installs Lima with Homebrew. A user who has never heard of
-// Lima should never have to read a README to get past a missing dependency.
-//
-// Nothing here builds a command line for a shell to interpret. Every subprocess
-// is executed as an argv, so no path, version string, or tool output can turn
-// into shell syntax.
+// Lima is avar's macOS backend. This file locates limactl, gates it on
+// MinLimaVersion, and offers to install it with Homebrew (REQ-8.1-8.4).
+
 package deps
 
 import (
