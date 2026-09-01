@@ -167,10 +167,10 @@ func recordMachine(app *App, target resolve.ResolvedTarget, mount types.MountSpe
 		return err
 	}
 
-	// The first time a new machine is created, install the per-user launchd
-	// agent that runs idle-check periodically. It is a one-time notice; the
-	// agent is a no-op if already present.
-	ensureLaunchdAgent(app)
+	// A new machine is the point at which idle stopping starts to matter, so
+	// the periodic idle-check is scheduled here. What that means differs by
+	// host and is ensureIdleScheduler's business, not this caller's.
+	ensureIdleScheduler(app)
 	return nil
 }
 

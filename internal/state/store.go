@@ -89,9 +89,9 @@ func WithLockTimeout(d time.Duration) Option {
 }
 
 // DefaultRoot reports the State_Dir the real CLI uses: $AVR_HOME when set,
-// otherwise ~/.avr. This is the only place the environment is consulted; a
-// Store resolves its root once, at construction, so nothing deeper down can
-// disagree about where state lives.
+// otherwise the platform's own answer (see defaultStateDir). This is the only
+// place the environment is consulted; a Store resolves its root once, at
+// construction, so nothing deeper down can disagree about where state lives.
 func DefaultRoot() (string, error) {
 	if v := strings.TrimSpace(os.Getenv(HomeEnv)); v != "" {
 		abs, err := filepath.Abs(v)
@@ -100,11 +100,7 @@ func DefaultRoot() (string, error) {
 		}
 		return abs, nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("locate your home directory for avar's state directory: %w; set %s to choose one explicitly", err, HomeEnv)
-	}
-	return filepath.Join(home, ".avr"), nil
+	return defaultStateDir()
 }
 
 // OpenDefault opens the State_Dir reported by DefaultRoot.
@@ -142,24 +138,6 @@ func Open(root string, opts ...Option) (*Store, error) {
 		}
 	}
 	return s, nil
-}
-
-// tightenPerm removes group and other permissions from an existing directory.
-// A state directory created by an older version, a broken umask, or a stray
-// chmod must not stay readable by other local users: it lists every project
-// path the user works in.
-func tightenPerm(dir string) error {
-	info, err := os.Stat(dir)
-	if err != nil {
-		return fmt.Errorf("inspect avar state directory %s: %w", dir, err)
-	}
-	if info.Mode().Perm()&0o077 == 0 {
-		return nil
-	}
-	if err := os.Chmod(dir, dirPerm); err != nil {
-		return fmt.Errorf("restrict permissions on avar state directory %s: %w", dir, err)
-	}
-	return nil
 }
 
 // Root is the State_Dir this store owns.
@@ -350,7 +328,13 @@ func (t *Tx) EnsureProject(path string) (types.ProjectRecord, error) {
 	if !ok {
 		rec = types.ProjectRecord{ID: id, Path: resolved, CreatedAt: now}
 	}
+	// Path is refreshed from the filesystem every time and PathKey with it: the
+	// path is the spelling to show the user and to share into the guest, and the
+	// key is what that spelling hashes to. A record written by an older avar has
+	// no key, and gets one here rather than through a migration, because it is
+	// derived rather than remembered.
 	rec.Path = resolved
+	rec.PathKey = PathKey(resolved)
 	rec.LastUsedAt = now
 	t.projects[id] = rec
 	t.projectsDirty = true

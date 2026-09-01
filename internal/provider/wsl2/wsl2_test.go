@@ -101,6 +101,8 @@ type fakeWSL struct {
 	// mounted is what each distribution currently has mounted, guest path to
 	// host path, maintained from the scripts avar sends.
 	mounted map[string]map[string]string
+	// listeners are the TCP ports a guest process is listening on.
+	listeners []int
 
 	calls      [][]string
 	provisions []string
@@ -226,6 +228,8 @@ func (f *fakeWSL) guestCommand(args []string) (string, error) {
 			return facts, nil
 		}
 		return healthyFacts(), nil
+	case strings.Contains(script, "/proc/net/tcp"):
+		return f.reportListeners(), nil
 	case strings.Contains(script, "/proc/mounts"):
 		return f.reportMounts(machine), nil
 	case strings.Contains(script, "mount -t drvfs") || strings.Contains(script, "umount"):
@@ -1231,4 +1235,15 @@ func sortStrings(in []string) {
 			in[j], in[j-1] = in[j-1], in[j]
 		}
 	}
+}
+
+// reportListeners renders the listening sockets the way /proc/net/tcp writes
+// them — hexadecimal, on the wildcard address — so the parser is exercised
+// rather than bypassed.
+func (f *fakeWSL) reportListeners() string {
+	b := &strings.Builder{}
+	for _, port := range f.listeners {
+		fmt.Fprintf(b, "00000000:%04X\n", port)
+	}
+	return b.String()
 }

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/session"
@@ -90,19 +91,34 @@ func runIdleCheck(ctx context.Context, app *App) error {
 	return nil
 }
 
-// ensureLaunchdAgent installs a per-user launchd agent that invokes `avr
-// internal idle-check` every 10 minutes, printing a one-time notice the first
-// time it does so. It is called when a machine is first created so that idle
-// auto-stop is active from the moment there is anything to stop.
+// ensureIdleScheduler asks the host's own scheduler to invoke `avr internal
+// idle-check` every ten minutes, printing a one-time notice the first time it
+// does so.
 //
-// The function is a no-op when the plist already exists or when the user is
-// not on macOS. launchd is macOS-only; the Windows build will schedule the
-// same `avr internal idle-check` through Task Scheduler instead (design §1),
-// which is why the guard is on the scheduler and not on the feature.
-func ensureLaunchdAgent(app *App) {
-	if runtime.GOOS != "darwin" {
-		return
+// It is called when an environment is first created, so idle auto-stop is active
+// from the moment there is anything to stop, and it is the whole of avar's
+// answer to running work in the background: there is no avar daemon on either
+// host, only a scheduled invocation of avar itself (REQ-5.5, design §1).
+//
+// The scheduler is the only part that differs. Everything it schedules — which
+// environments are idle, what the timeout is, whether a session is attached — is
+// the same code on both, which is why the branch is here and not inside the
+// feature.
+func ensureIdleScheduler(app *App) {
+	switch runtime.GOOS {
+	case "darwin":
+		ensureLaunchdAgent(app)
+	case "windows":
+		ensureScheduledTask(app)
 	}
+}
+
+// ensureLaunchdAgent installs a per-user launchd agent. The plist lives in
+// ~/Library/LaunchAgents/ so launchd picks it up at the next login; avar loads
+// it immediately so no logout is needed.
+//
+// It is a no-op when the plist is already there.
+func ensureLaunchdAgent(app *App) {
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -175,4 +191,81 @@ func launchctl(args ...string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run()
+}
+
+// scheduledTaskName is the Windows Task Scheduler entry that invokes `avr
+// internal idle-check`. It is a single name at the root rather than a task in a
+// folder, so that removing avar removes exactly one thing and leaves no empty
+// folder behind (design §3.8).
+const scheduledTaskName = "avar-idle-check"
+
+// idleCheckMinutes is how often the check runs, on both hosts. Ten minutes is
+// short enough that a forgotten environment is stopped within a coffee break and
+// long enough that the check itself is not a background cost.
+const idleCheckMinutes = 10
+
+// ensureScheduledTask registers the Windows Task Scheduler entry that invokes
+// `avr internal idle-check`.
+//
+// The task runs as the signed-in user with their own token, which is what makes
+// it work without elevation: a per-user task needs no administrator, and asking
+// for one in order to stop a Linux environment nobody is using would be a poor
+// trade. It also means the task can only see the environments that user owns,
+// which is the same boundary everything else in avar respects.
+//
+// Registration is unconditional and /F overwrites, so a task pointing at a
+// previous avr.exe is corrected the next time an environment is created — which
+// is what keeps it working after an upgrade moved the binary. The one-time
+// notice is printed only when the task was not there before, so an upgrade
+// corrects the task silently rather than announcing itself again.
+//
+// Every failure is silent, exactly as the launchd path is. Idle auto-stop is a
+// convenience; a user who has just asked for a Linux shell should not be given
+// an error about a background timer instead.
+func ensureScheduledTask(app *App) {
+	schtasks, err := exec.LookPath("schtasks")
+	if err != nil {
+		return
+	}
+	bin, err := os.Executable()
+	if err != nil {
+		return
+	}
+
+	// The exit code alone answers "is it already there", which is the whole
+	// question: schtasks writes its output in the user's own language, so
+	// anything read from it would be a locale avar happens to have been
+	// written in.
+	query := exec.Command(schtasks, "/Query", "/TN", scheduledTaskName)
+	query.Stdout, query.Stderr = nil, nil
+	alreadyRegistered := query.Run() == nil
+
+	// The command is one string because Task Scheduler stores it as one; the
+	// binary path is quoted inside it so a path containing a space stays one
+	// argument when the scheduler runs it.
+	action := fmt.Sprintf(`"%s" internal idle-check`, bin)
+	create := exec.Command(schtasks,
+		"/Create",
+		"/TN", scheduledTaskName,
+		"/TR", action,
+		"/SC", "MINUTE",
+		"/MO", strconv.Itoa(idleCheckMinutes),
+		"/F",
+	)
+	create.Stdout, create.Stderr = nil, nil
+	if err := create.Run(); err != nil {
+		return
+	}
+	if alreadyRegistered {
+		return
+	}
+
+	fmt.Fprintf(app.Err, "avr: installed a background idle-check that stops Linux environments\n")
+	fmt.Fprintf(app.Err, "     after they have had no activity for a while, so they do not hold\n")
+	fmt.Fprintf(app.Err, "     host resources when you are not using them.\n")
+	fmt.Fprintf(app.Err, "     The check runs every %d minutes. To disable it:\n", idleCheckMinutes)
+	fmt.Fprintf(app.Err, "       schtasks /Delete /TN %s /F\n", scheduledTaskName)
+	if store, err := app.Store(); err == nil {
+		fmt.Fprintf(app.Err, "     Or set idle_timeout = \"0\" in %s\n", store.ConfigPath())
+	}
 }
