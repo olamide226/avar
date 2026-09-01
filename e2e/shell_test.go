@@ -1,95 +1,18 @@
-//go:build e2e
+//go:build e2e && darwin
 
-// Package e2e exercises avar against a real Lima installation.
-//
-// These tests provision actual virtual machines, so they are behind a build tag
-// and run only via `make e2e`. They are deliberately absent from `make test`
-// and from CI: a unit suite that takes eight minutes and needs a hypervisor is
-// a suite people stop running.
-//
-// They share one machine on purpose. Provisioning is the slow part, and the
-// warm path — machine already running — is what REQ-17.1's latency budget is
-// about, so the first test pays for creation and the rest measure what a user
-// actually experiences. They are written to survive being run twice in a row.
+// See harness_test.go for what these tests are and how they are run. This file
+// is the Lima half: it exercises avar against a real Lima installation on macOS.
+
 package e2e
 
 import (
-	"bytes"
-	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
-
-// avrBinary is built once for the whole suite.
-var avrBinary string
-
-func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "avr-e2e-*")
-	if err != nil {
-		panic("create a temporary directory for the avr binary: " + err.Error())
-	}
-	defer os.RemoveAll(dir)
-
-	avrBinary = filepath.Join(dir, "avr")
-	build := exec.Command("go", "build", "-o", avrBinary, ".")
-	build.Dir = ".."
-	if out, err := build.CombinedOutput(); err != nil {
-		panic("build avr for the end-to-end suite: " + err.Error() + "\n" + string(out))
-	}
-
-	os.Exit(m.Run())
-}
-
-// avr runs the built binary in dir and returns its output and exit code.
-//
-// Stdin is deliberately not a terminal, so these runs take the non-PTY path —
-// the same one a script or a pipeline gets (REQ-2.3).
-func avr(t *testing.T, dir string, env []string, args ...string) (stdout, stderr string, code int) {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, avrBinary, args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
-
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-
-	err := cmd.Run()
-	code = cmd.ProcessState.ExitCode()
-	if err != nil && code < 0 {
-		t.Fatalf("avr %v in %s did not run: %v\nstderr:\n%s", args, dir, err, errBuf.String())
-	}
-	return out.String(), errBuf.String(), code
-}
-
-// project makes a directory for a test to stand in. t.TempDir is not used:
-// avar mounts the project into the guest, and macOS's per-test temporary paths
-// are long, symlinked through /var, and awkward to reason about when the same
-// path has to exist inside Linux.
-func project(t *testing.T, name string) string {
-	t.Helper()
-
-	dir := filepath.Join(os.Getenv("HOME"), "avr-e2e", name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create the project directory %s: %v", dir, err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-
-	resolved, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		t.Fatalf("resolve %s: %v", dir, err)
-	}
-	return resolved
-}
 
 // The cold path: no machine yet, so this provisions one and then runs the
 // command, all within the single invocation (REQ-1.2).

@@ -192,12 +192,17 @@ func (m *WSLManager) EnsureWSL(ctx context.Context) (WSL, error) {
 	case err != nil:
 		// wsl.exe is there but cannot report a version avar can read. That is
 		// the optional component with no Store package behind it, or the
-		// platform disabled — either way an install, not an update.
-		return m.offerSetup(ctx, path, wslInstallQuestion, "install", "--install", "--no-distribution")
+		// platform disabled — either way an install, not an update. There is no
+		// version to name in a refusal, so there is no better one to give.
+		return m.offerSetup(ctx, path, wslInstallQuestion, "install", nil, "--install", "--no-distribution")
 	case version.AtLeast(minWSL):
 		return WSL{Path: path, Version: version}, nil
 	default:
-		return m.offerSetup(ctx, path, wslUpdateQuestion, "update", "--update")
+		// Here there is. A user who declines the update, or a script that has
+		// nobody to ask, should be told which version they have and which one
+		// avar needs — "WSL 2 is not usable" is true and useless.
+		tooOld := &WSLVersionTooOldError{Found: version, Minimum: minWSL, Path: path}
+		return m.offerSetup(ctx, path, wslUpdateQuestion, "update", tooOld, "--update")
 	}
 }
 
@@ -243,12 +248,25 @@ func (m *WSLManager) probeVersion(ctx context.Context, path string) (Version, er
 // disabled the change does not take effect until Windows restarts. Asking the
 // tool again is how avar tells "set up and ready" from "set up, restart pending"
 // without reading a localized sentence (REQ-18.3).
-func (m *WSLManager) offerSetup(ctx context.Context, path, question, action string, args ...string) (WSL, error) {
+//
+// refusal, when non-nil, is what the user is told if avar does not act: because
+// they said no, or because there is nobody to ask. It exists so that a refusal
+// can be specific where avar knows something specific: "WSL 1.2.5 is too old,
+// avar needs 2.0.0" rather than "WSL 2 is not usable". Passing nil falls back to
+// the generic message, which is right when there is nothing more to say.
+func (m *WSLManager) offerSetup(ctx context.Context, path, question, action string, refusal error, args ...string) (WSL, error) {
+	declineWith := func(reason WSLNotInstalledReason) error {
+		if refusal != nil {
+			return refusal
+		}
+		return &WSLNotInstalledError{Reason: reason}
+	}
+
 	// A script, a CI job, or a hook has nobody to answer the prompt. Waiting
 	// would hang it, and acting anyway would be an unconsented change to the
 	// machine, so the default is to decline and say what to run.
 	if !m.interactive()() {
-		return WSL{}, &WSLNotInstalledError{Reason: WSLReasonNonInteractive}
+		return WSL{}, declineWith(WSLReasonNonInteractive)
 	}
 
 	confirmed, err := m.confirm()(ctx, question)
@@ -256,7 +274,7 @@ func (m *WSLManager) offerSetup(ctx context.Context, path, question, action stri
 		return WSL{}, fmt.Errorf("asking whether to %s WSL: %w", action, err)
 	}
 	if !confirmed {
-		return WSL{}, &WSLNotInstalledError{Reason: WSLReasonDeclined}
+		return WSL{}, declineWith(WSLReasonDeclined)
 	}
 	if err := ctx.Err(); err != nil {
 		return WSL{}, fmt.Errorf("setting WSL up with wsl %s: %w", strings.Join(args, " "), err)

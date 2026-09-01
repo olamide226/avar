@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build e2e && darwin
 
 // Package e2e exercises the full environment matrix against real Lima machines.
 package e2e

@@ -109,8 +109,32 @@ func (p *Provider) AppliedMounts(ctx context.Context, machine string) ([]types.M
 // every invocation, and its own verification would fail every time. `index`
 // rather than a regex also spares the slashes any escaping.
 var readMountsScript = fmt.Sprintf(
-	"awk '$3 == \"drvfs\" && index($2, \"%s/\") == 1 {print $1 \"\\t\" $2}' /proc/mounts\n",
-	GuestProjectRoot)
+	"awk '%s && index($2, \"%s/\") == 1 {print $1 \"\\t\" $2}' /proc/mounts\n",
+	drvfsPredicate, GuestProjectRoot)
+
+// drvfsPredicate is the awk test for "this mount is a Windows directory".
+//
+// It is not `$3 == "drvfs"`, and that mistake is worth recording because it
+// failed in two directions at once. WSL 2 serves DrvFS over the 9P protocol, so
+// /proc/mounts reports the *filesystem type* as `9p` and names DrvFS only inside
+// the options, as `aname=drvfs`:
+//
+//	C:\134Users\134ola\134app /mnt/avr/projects/app-a7c3d378e1 9p rw,...,aname=drvfs;path=C:\Users\ola\app;metadata;...
+//
+// Matching on the type therefore found none of avar's own shares — so
+// AppliedMounts reported nothing applied and SetMounts failed its own
+// verification on a mount that had landed perfectly — and, far worse, it found
+// none of the Windows *drives* either, so the confinement check in verifyScript
+// would have passed a guest with the whole of C: mounted. A security check that
+// cannot see what it is checking for is worse than no check at all.
+//
+// Both spellings are accepted because WSL 1 and some configurations do report
+// the type as drvfs, and there is no reason to be wrong about those instead.
+//
+// It is one constant used by both scripts for the same reason the project root
+// is: two copies of a predicate this subtle would drift, and the direction they
+// drift in is silent.
+const drvfsPredicate = `($3 == "drvfs" || index($4, "aname=drvfs") > 0)`
 
 // SetMounts makes mounts the complete set of project shares the guest has.
 //

@@ -141,17 +141,16 @@ func (p *Provider) install(ctx context.Context, machine string, entry registryEn
 	lines := &provider.ProgressWriter{Machine: machine, Sink: progress, Decode: deps.DecodeWSLOutput}
 	defer lines.Flush()
 
-	args := []string{
+	base := []string{
 		"--install", entry.Distro,
 		"--name", machine,
 		"--location", p.installDir(machine),
 		"--no-launch",
-		// The Store requires a signed-in Store account and is unavailable on
-		// some Windows editions; the web download is the channel that always
-		// works and fetches the same, WSL-verified image.
-		"--web-download",
 	}
-	err = p.runner.Stream(ctx, io.MultiWriter(logFile, lines), p.wsl, args...)
+	out := io.MultiWriter(logFile, lines)
+
+	err = p.installWithRetries(ctx, machine, base, out)
+
 	// Whether it worked or not, WSL may now have a registration it did not have
 	// before, so the picture avar holds of what exists is stale either way.
 	p.forget()
@@ -159,6 +158,73 @@ func (p *Provider) install(ctx context.Context, machine string, entry registryEn
 		return fmt.Errorf("installing environment %s from WSL's %q distribution: %w; the full output is in %s", machine, entry.Distro, err, logPath)
 	}
 	return nil
+}
+
+// installAttempts and installRetryPause bound how hard avar tries.
+//
+// Three is enough for the failure this exists for and few enough that a machine
+// with no network at all still fails promptly rather than after a minute of
+// hopeful waiting. The pause is there so a retry is not simply the same instant
+// re-tried.
+const (
+	installAttempts   = 3
+	installRetryPause = 2 * time.Second
+)
+
+// installWithRetries runs the install, retrying a failure that left nothing
+// behind.
+//
+// The reason is measured rather than defensive. `wsl --install` fetches a
+// distribution list from raw.githubusercontent.com before it downloads anything,
+// and on a corporate network that request is intermittently reset: on the host
+// this backend was first provisioned against, the same URL failed once and
+// succeeded on the next attempt, seconds apart. Failing the whole invocation on
+// the first reset would make avar unusable on exactly the networks it is meant
+// for, and would tell the user their distribution does not exist.
+//
+// --web-download is on every attempt, including the first, and that is a
+// separate decision from the retry. It asks WSL to fetch the image directly
+// rather than through the Store, which is what makes provisioning work at all on
+// a machine that has no Store — every Windows Server install, and any machine
+// whose policy disables it. That condition is deterministic and known in
+// advance, unlike the reset, so making the first attempt the one that discovers
+// it would mean every such machine pays a guaranteed failure plus
+// installRetryPause, and is told "the download did not start; retrying" about
+// something that will never start.
+//
+// Putting the flag only on the later attempts would not buy a shorter retry
+// either: the reset happens while fetching the *distribution list*, which both
+// channels do, so it is the second attempt that fixes it and not the flag.
+//
+// A retry only happens when nothing was registered. A failure *after* the
+// distribution appears is not transient, and retrying it would fail with
+// ERROR_ALREADY_EXISTS and bury the real cause under a second one.
+func (p *Provider) installWithRetries(ctx context.Context, machine string, base []string, out io.Writer) error {
+	args := append(append([]string(nil), base...), "--web-download")
+
+	var err error
+	for attempt := 1; attempt <= installAttempts; attempt++ {
+		if err = p.runner.Stream(ctx, out, p.wsl, args...); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+
+		p.forget()
+		if _, registered, lookupErr := p.view().lookup(ctx, machine); lookupErr == nil && registered {
+			return err
+		}
+		if attempt < installAttempts {
+			fmt.Fprintf(out, "avar: the download did not start; retrying (%d of %d)\n", attempt+1, installAttempts)
+			select {
+			case <-ctx.Done():
+				return err
+			case <-time.After(installRetryPause):
+			}
+		}
+	}
+	return err
 }
 
 // provision configures the guest, restarts it so the configuration takes
@@ -203,7 +269,7 @@ func (p *Provider) provision(ctx context.Context, machine string, sel types.Envi
 
 // readGuestFacts runs the verification script and parses what it reported.
 func (p *Provider) readGuestFacts(ctx context.Context, machine string) (guestFacts, error) {
-	script := fmt.Sprintf(verifyScript, markerPath, p.guestUser)
+	script := fmt.Sprintf(verifyScript, markerPath, p.guestUser, GuestProjectRoot)
 	out, err := p.run(ctx, guestShellArgv(machine, script)...)
 	if err != nil {
 		return guestFacts{}, err
