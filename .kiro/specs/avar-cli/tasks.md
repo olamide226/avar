@@ -177,7 +177,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
 - [ ] 32. Public-facing documentation
   - [x] 32.1 Rewrite the README for a public audience  _(PR #41, #42, #46)_
     - It currently reads as a project-status note. Needs: one-line pitch, install (Homebrew and direct), a sixty-second quickstart, a command table covering the whole surface, requirements, how it works, honest limitations, contributing, licence.
-    - **Platform support must be stated honestly.** macOS is supported today; Windows via WSL 2 is Requirement 18, Phase 4, and not started. The two must be visibly separated so no reader concludes Windows works.
+    - **Platform support must be stated honestly.** macOS is supported today; Windows via WSL 2 is Requirement 18, Phase 4, and not started. The two must be visibly separated so no reader concludes Windows works. *(Superseded by Phase 4: Windows now works and the README says so, stating that it has had far less mileage than the macOS path rather than claiming parity. The rule this bullet expresses — describe each platform as it actually is — is what kept the README honest through the whole of Phase 4, in both directions.)*
     - Limitations to state rather than omit: snapshots need an emulated environment (Lima's snapshots are QEMU-only), sixteen project directories per environment, unsigned binaries.
     - _Requirements: 17.2_
     - _writes: README.md, CONTRIBUTING.md_
@@ -224,7 +224,24 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
 Gated on the MVP shipping. Every task below sits behind the Provider boundary
 established in tasks 27 and 28: none of them may add a Windows branch to `cmd/`.
 
-- [ ] 38. Make the existing packages build and pass their tests on a Windows host
+**Status: shipped** (PRs #52–#60). `avr.exe` provisions and drives avar-owned WSL 2
+distributions, and the boundary held — **no command's behaviour branches on which
+backend is in use.** The only backend names in `cmd/` are the composition root's
+in `app.go`, which imports both packages and maps a provider ID to an
+implementation; something has to, and Property 21 names that exempt set. What
+task 38b had to restore was the real rule: `cmd/shell.go` was the last place a
+command's behaviour turned on `p.ID() == types.ProviderWSL2`, and it now reads
+the condition off the `MountSpec` instead.
+
+One requirement is knowingly incomplete: **REQ-18.11's second clause**, which says
+accepting the cross-filesystem recommendation routes to Requirement 14's reviewable
+synchronization. Requirement 14 is task 21 and is not built, so the advisory today
+recommends what works rather than a flag avar does not have. Task 21 owns closing it.
+
+Everything else Requirement 18 asks for is implemented and has been exercised
+against a real WSL 2 installation (task 38c), not only against a fake.
+
+- [x] 38. Make the existing packages build and pass their tests on a Windows host
   - `go build ./...` does not compile on `windows/amd64` today: `internal/state` uses `syscall.Flock` for the advisory lock and `syscall.Kill(pid, 0)` for stale-session detection, and `internal/provider/lima` names `syscall.SIGWINCH` and `syscall.Kill`. None of that is Windows work in disguise — it is POSIX leaking through packages that are otherwise portable — but every task below is unreachable until it is fixed, because none of their tests can even be compiled.
   - Split each on a build tag rather than branching at runtime: an exclusive-sharing file handle for the lock (released by the OS if `avr` is killed, which is what `flock` gives on the other side), `OpenProcess`/`GetExitCodeProcess` for process liveness, and a signal relay that forwards what Windows actually has. `internal/provider/lima` already carries `diskusage_other.go`, so compiling off-unix is an established intent of that package rather than a new one.
   - Add a `windows-latest` CI job running lint, build and unit tests, so the Windows build cannot regress between Phase 4 tasks. Lima remains macOS-only and `provider.SupportedHost` still refuses Windows: what this task claims is that the code compiles and its pure logic is proven on both hosts, not that avar runs on Windows yet.
@@ -232,35 +249,75 @@ established in tasks 27 and 28: none of them may add a Windows branch to `cmd/`.
   - _Requirements: 18.14, 17.5_
   - _writes: internal/state/{lock,lock_unix,lock_windows,session,session_unix,session_windows,store,atomic_unix,atomic_windows}.go, internal/provider/lima/{shell,signals_unix,signals_other}.go, go.mod, .github/workflows/ci.yml, docs/lessons.md, and the test files that hard-code POSIX host paths or macOS-only behaviour: internal/{types,resolve,mounts,state,deps,editor}/*_test.go, internal/provider/{fake,lima}/*_test.go, cmd/status_test.go_
 
-- [ ] 33. WSL capability detection and prerequisites
+- [x] 33. WSL capability detection and prerequisites
   - Probe WSL presence, version, and WSL 1 vs 2; offer install/upgrade where safe; describe elevation or restart requirements before acting; never register a partial environment
   - _Requirements: 18.2, 18.3, 18.4_
   - _writes: internal/deps/wsl.go, internal/deps/wsl_test.go_
 
-- [ ] 34. WSL2Provider: distribution lifecycle
+- [x] 34. WSL2Provider: distribution lifecycle
   - Import avar-owned root filesystems with a reserved name prefix plus a registry record; never touch a user-managed distribution; reject unsupported architectures before provisioning
   - _Requirements: 18.6, 18.7, 18.12_
   - _writes: internal/provider/wsl2/*_
 
-- [ ] 35. WSL2Provider: path mapping and execution
+- [x] 35. WSL2Provider: path mapping and execution
   - `MapProjectPath` to `/mnt/avr/projects/<Project_Identity>` via DrvFS with automatic drive mounting disabled; `wsl.exe --distribution … --cd … --exec …` preserving streams, PTY, resize, signals and exit codes
+  - Shipped as `/mnt/avr/projects/<name>-<Project_Identity prefix>` — `app-3fa9c2b1d0`, not sixty-four hexadecimal characters. This path is the user's working directory and appears in their prompt, their editor's title bar and every error any tool prints, so it is named for the project before it is identified by its hash. The hash half is never dropped, which is what keeps two `api` directories distinct (PROP-14). design §3.2 and §3.6 amended in the same PR (#55).
+  - There is no 128+signal case in exit-status handling: a Windows process has an exit code and no signal status, so 18.8's "where Windows and WSL expose an equivalent" is what licenses the omission rather than it being a gap.
   - _Requirements: 18.5, 18.8_
   - _writes: internal/provider/wsl2/path.go, internal/provider/wsl2/shell.go, + tests_
+  - _also wrote: internal/provider/wsl2/{mounts,console_windows,console_other}.go, internal/types/mount.go (EqualMappings), internal/provider/select.go, cmd/app.go, internal/state/store.go (DistrosDir), .kiro/specs/avar-cli/design.md_
 
-- [ ] 36. Windows state, ports, and editor integration
+- [x] 36. Windows state, ports, and editor integration
   - Per-user non-roaming state dir; case-insensitive `PathKey` so drive-letter and separator spellings cannot duplicate a project; localhost forwarding diagnostics; `avr code` through the `wsl+<distro>` remote authority with no SSH config
+  - Two manifest deviations, both deliberate. The path key shipped as `internal/state/pathkey_{windows,unix}.go` rather than `path_windows.go`, alongside `dir_{windows,unix}.go` and `perm_{windows,unix}.go`, because the state directory's location and its access control are separate host questions from path identity and mode bits are not how Windows expresses permissions. And the editor target shipped as `internal/provider/wsl2/editor.go` rather than `internal/editor/wsl.go`: `avr code` needed no command-layer change at all, because the backend returns `wsl+<distro>` and no SSH material and `cmd/code.go` writes SSH configuration only when a backend hands it some (PROP-17). Putting it under `internal/editor` would have created the Windows branch REQ-18.14 forbids.
+  - The POSIX `PathKey` is the resolved path with nothing added, which is not an inconsistency with design §3.2's prefixed Windows key: every project identity avar has written on macOS is the hash of exactly that string, and prefixing it would orphan every existing record for nothing gained. The Windows key has no history to keep.
   - _Requirements: 18.9, 18.10, 18.13_
   - _writes: internal/state/path_windows.go, internal/provider/wsl2/portdiag.go, internal/editor/wsl.go, + tests_
+  - _also wrote: internal/state/{pathkey,dir,perm}_{windows,unix}.go, internal/provider/wsl2/editor.go, cmd/internal_idle.go (Task Scheduler), internal/types/records.go, internal/state/project.go_
 
-- [ ] 37. Windows packaging and cross-filesystem guidance
+- [x] 37. Windows packaging and cross-filesystem guidance
   - Self-contained `avr.exe` for supported Windows architectures; once-per-project dismissible recommendation for Linux-native workspace mode when a workload would suffer from cross-filesystem I/O
-  - _Requirements: 18.11, 18.14_
+  - **REQ-18.11 is satisfied in one half only.** The advisory is detected, shown once per project and dismissible; its second clause — "accepting that recommendation SHALL use Requirement 14's reviewable synchronization" — cannot be honoured until task 21 builds Linux-native workspace mode. Recommending a flag avar does not have would be worse than useless, so the message carries Microsoft's own advice instead, and `TestMessage_IsActionableToday_REQ_18_11` asserts it does not name `--native-fs` until task 21 lands. **Task 21 must revisit this.**
+  - _Requirements: 18.11 (partial), 18.14_
   - _writes: .goreleaser.yaml, .github/workflows/release.yml, internal/workspace/advise.go_
+  - _also wrote: README.md, cmd/shell.go, internal/types/records.go_
+
+Three pieces of Phase 4 shipped without a task describing them. They are recorded
+here so the phase's history matches what is on `main`.
+
+- [x] 38a. WSL2Provider: snapshot and restore
+  - REQ-18.12 names snapshot and restore among what the WSL backend must implement, and no task description mentioned them — task 34 cited the requirement and built only the lifecycle, so `avr snapshot` on Windows reported a gap nobody had chosen.
+  - A snapshot is the distribution's disk exported as a VHD rather than a tar, so permissions, symbolic links, sparse files and extended attributes survive. design §3.6 amended: the export flag is `--format vhd`; `--vhd` is reserved for an import.
+  - design §5's pre-restore rollback export is **deliberately not implemented**, and §5 is amended to say so. It is a full copy of the disk paid on every restore to insure against a rare import failure whose recovery can fail identically. Restore is made retryable instead — it does not require the distribution to exist — which costs nothing. The residual risk is stated in the design, the code and the error message.
+  - Restore verifies the imported disk (marker, account, sudo, confinement) but not its release, since a snapshot holds the release it held.
+  - _Requirements: 10.1, 10.2, 10.4, 18.12_
+  - _writes: internal/provider/wsl2/snapshot.go, internal/provider/wsl2/provision.go, cmd/app.go, internal/state/store.go, .kiro/specs/avar-cli/design.md, + tests_
+
+- [x] 38b. Bring the Windows warm path inside REQ-17.1's budget
+  - Measured at ~570–670 ms against a ~500 ms budget: `wsl --list` costs ~130 ms per sweep and was paid three times, because `Status`, `EnsureMachine` and `Shell` each built their own view milliseconds apart, plus two `schtasks` subprocesses on every invocation. The view is now one per invocation, held on the Provider and dropped by `forget()` after any mutation; scheduler registration became a stat of a stamp file. ~310–410 ms removed.
+  - Also fixed two defects: every project share was handed to root (`id -u` with no argument in a script that already runs as root, so `uid=0,gid=0` reached both the mount and `/etc/fstab`), and `cmd/shell.go` branched on `p.ID() == types.ProviderWSL2` — a backend name in the one layer that may not know one (REQ-17.3). The condition is now read off the mapping: a project crosses a boundary exactly when `HostPath != GuestPath`.
+  - _Requirements: 17.1, 17.3, 18.5, 18.11, 18.14, 9.3_
+  - _writes: cmd/{internal_idle,shell}.go, internal/provider/progress.go, internal/provider/lima/{progress,clone,lima}.go, internal/provider/wsl2/*, internal/deps/wsl.go_
+
+- [x] 38c. E2E tests against real WSL 2
+  - Sixteen tests behind the `e2e` tag, run by `make e2e` on a Windows host, including a cold start that downloads a root filesystem and provisions it. Three cover a machine with no WSL or one too old, reached through a stub `wsl.exe` earlier on PATH, and assert both what the user is told and that nothing was registered.
+  - Found four defects unit tests could not: `/proc/mounts` reports DrvFS as `9p` with `aname=drvfs` and not as type `drvfs` — which made `AppliedMounts` see nothing *and* would have passed a guest with all of `C:` mounted; `/mnt/wsl` and `/mnt/wslg` are WSL's own tmpfs and were being refused as Windows drives; `wsl --install` needs retrying against an intermittently reset distribution-list fetch; and a refused update named neither the version found nor `wsl --update`.
+  - Two lessons recorded in `docs/lessons.md`, both about test doubles and over-broad checks.
+  - _Requirements: 18.3, 18.5, 18.6, 9.3, 1.2, 1.4, 2.5, 5.1, 6.4, 10.3, 17.1_
+  - _writes: e2e/{harness,wsl_shell,wsl_prereq,cleanup_darwin}_test.go, e2e/*_test.go (build tags), Makefile, README.md, docs/lessons.md, internal/provider/wsl2/*, internal/deps/wsl.go_
+
+- [ ] 39. Enforce Property 21's provider-purity rule with an actual static check
+  - Property 21 says *"static dependency checks SHALL find no WSL-specific imports outside the WSL provider, Windows dependency checker, platform adapter, scheduler adapter, or Windows-only terminal files"*, and design §7 lists it among the tests. **No such check exists** — grepping for one returns nothing, and the property is enforced today only by a reviewer noticing.
+  - That is the shape `docs/lessons.md` already records for `Reconcile`: a thing the spec says happens, that nothing makes happen. It is not hypothetical here — Phase 4 broke this boundary (`cmd/shell.go` branching on `types.ProviderWSL2`), it survived into a merged PR, and task 38b restored it only because a human read the diff.
+  - A test in `cmd/` that walks its own package's imports with `go/parser` or `golang.org/x/tools/go/packages` and fails on any `internal/provider/<backend>` import outside the exempt set is enough, and needs no new dependency if the standard library form is used. The exempt set is Property 21's own list; `cmd/app.go` is the composition root and is exempt by design.
+  - _Requirements: 17.3, 18.14_
+  - _Properties: 21_
+  - _writes: cmd/purity_test.go_
 
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.
-- E2E tests (tasks 8, 9, 11, 12, 15–17) require a macOS machine with virtualization; they run via `make e2e`, not in default CI.
+- E2E tests (tasks 8, 9, 11, 12, 15–17) require a macOS machine with virtualization; the Windows half (task 38c) requires WSL 2. Both run via `make e2e`, which selects the half that applies by build tag, and neither runs in default CI.
 - Backlog explicitly deferred beyond Phase 4 (out of MVP charter, Req 17.6): cloud/remote environments, collaboration, team policies, Kubernetes, marketplace, desktop GUI, Linux hosts.
 - Distro image versions and the minimum Lima version are pinned in one file (`internal/resolve/matrix.go` / `internal/deps/lima.go`) so upgrades are single-point changes.
 - Development targets **Lima 2.x**. The pinned minimum in `internal/deps` is `2.0.0` (PR #12), matching the version avar's generated configurations are actually validated against.

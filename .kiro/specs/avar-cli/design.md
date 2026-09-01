@@ -438,7 +438,6 @@ type PendingOperation struct {
     Machine    string          `json:"machine"`
     Kind       string          `json:"kind"` // create | restore | delete
     Stage      string          `json:"stage"`
-    Rollback   string          `json:"rollback,omitempty"`
     StartedAt  time.Time       `json:"started_at"`
 }
 ```
@@ -449,7 +448,7 @@ type PendingOperation struct {
 - `MachineRecord` is written only after the selected provider verifies a usable environment and is removed only after provider deletion succeeds. External destructive work is preceded by a `PendingOperation`.
 - Reconciliation may adopt an interrupted create only when prefix, operation journal, and on-guest marker agree. A prefix-only Lima VM or WSL distribution is reported for manual inspection and never mutated.
 - Mount mappings grow through project registration; `avr status` renders host and guest paths when they differ. Pruning remains a post-MVP concern.
-- Windows snapshot/restore keeps a durable rollback artifact until the restored environment passes marker, user, WSL-version, and mount checks and the journal is committed.
+- Windows restore is retryable rather than rolled back. It does not require the distribution to exist, so a restore interrupted after the unregister leaves a state the same command recovers from, and the snapshot it restores from is copied rather than consumed. The restored environment is still verified — marker, account, passwordless sudo and an empty Windows-drive mount set — before it is handed to a user; its release is deliberately not checked, because a snapshot holds the release it held.
 
 **Validation constraints**: environment names match `^avr-[a-z0-9.-]+$`; project paths must be platform-absolute, exist, and be directories at registration time; `MountSpec.GuestPath` must be absolute and normalized; WSL guest mappings must stay beneath `/mnt/avr/projects/`; distro/version pairs must be in the provider's supported matrix.
 
@@ -564,7 +563,7 @@ _For any_ supported Windows architecture, the release build SHALL produce a self
 | Concurrent `avr` invocations racing on create | file lock around ensure-machine | Second invocation waits on lock, then re-checks state (create becomes start/no-op). |
 | `sessions.json` stale pids (crash) | pid liveness probe on read | Prune silently. |
 | Snapshot/restore name errors | provider `ListSnapshots` | Unknown name → list available (Req 10.2). |
-| WSL restore fails after unregister | pending restore journal + durable rollback VHDX | Remove only the partial avar target, reimport rollback, verify it, and retain both journal and artifacts if automatic rollback fails so the next invocation can recover (Req 18.12). |
+| WSL restore fails after unregister | the snapshot itself, which `--import` copies rather than consumes | Report the failure naming the snapshot's path and say that running the same command again retries the restore. There is no rollback artifact to reimport and none is created: restore is idempotent instead, so it does not require the distribution to exist and re-running it is the recovery. Clear the install directory before importing, since `--unregister` leaves it behind and an import into a non-empty one fails. If the import keeps failing the pre-restore environment is gone — the stated residual risk, and what the user asked for when they asked to restore (Req 18.12). |
 | Existing WSL registration collides with generated avar name | quiet distro list + missing ownership record/marker | Return `ErrNotOwned`; never unregister, reuse, or rename the existing registration (Req 18.7). |
 | WSL output encoding/localization differs | UTF-8/UTF-16 decoder + right-anchored numeric parsing | If required fields cannot be established without localized text matching, fail read-only with the raw output stored in a diagnostic log; perform no lifecycle mutation. |
 | `code` CLI or required remote integration missing | PATH and editor-target launch probe | Give platform-appropriate VS Code guidance; WSL flow never falls back to SSH (Req 13.2, 18.10). |
@@ -589,7 +588,7 @@ _For any_ supported Windows architecture, the release build SHALL produce a self
 **Integration tests — FakeProvider/FakeRunner**:
 
 - Full provider-neutral command flows (`avr` first-run, mount-add flow, `stop --all`, isolation remembering, reset scoping, editor launch) assert call sequences without a VM.
-- WSL2Provider tests run on ordinary Windows CI against a fake `wsl.exe` runner and temporary State_Dir, asserting exact argv arrays for import, selective mounts, shell, terminate, export/import, unregister, and rollback. Tests reject any use of `wsl --shutdown` and any operation against a non-recorded distro.
+- WSL2Provider tests run on ordinary Windows CI against a fake `wsl.exe` runner and temporary State_Dir, asserting exact argv arrays for import, selective mounts, shell, terminate, export/import and unregister. Tests reject any use of `wsl --shutdown` and any operation against a non-recorded distro.
 - Static import/lint rules fail if WSL-specific packages appear in `cmd/` or `internal/resolve` (Property 21).
 
 **End-to-end tests — real Lima** (separate `make e2e`, runs on a mac runner, not in unit CI):
@@ -605,7 +604,7 @@ _For any_ supported Windows architecture, the release build SHALL produce a self
 - Cold `avr true`, warm exit-42 propagation, interactive smoke, Ctrl-C, and piped stdio (Properties 3, 8).
 - Invoke from nested `C:\...` paths with spaces/Unicode, verify guest cwd mapping, and modify files from both sides (Properties 1, 14).
 - Confirm automatic drives are not mounted by avar configuration and only registered project mappings appear (Property 5).
-- Snapshot/restore and isolated reset restore guest package state while host project hashes remain unchanged; inject failure after unregister and verify rollback (Properties 7, 10, 16).
+- Snapshot/restore and isolated reset restore guest package state while host project hashes remain unchanged; interrupt a restore after the unregister and verify that re-running the same command recovers, since restore is retryable rather than rolled back (Properties 7, 10, 16).
 - Guest server on port 3000 is reachable from Windows localhost; a forced conflict remains diagnostic-only (Property 19).
 - Assert guest environment lacks a Windows secret marker and Windows PATH entries (Property 4).
 
