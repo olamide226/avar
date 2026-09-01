@@ -404,10 +404,14 @@ const keepAliveFor = "600"
 func runningForeignDistribution(t *testing.T) string {
 	t.Helper()
 
-	name := ""
+	// Whether the distribution was already running decides what may be cleaned
+	// up afterwards, so it is recorded here rather than re-derived later: by
+	// then this function has started a process inside it and the answer would
+	// have changed.
+	name, alreadyRunning := "", false
 	for candidate := range runningDistributions(t) {
 		if !strings.HasPrefix(candidate, types.MachineNamePrefix) {
-			name = candidate
+			name, alreadyRunning = candidate, true
 			break
 		}
 	}
@@ -437,14 +441,21 @@ func runningForeignDistribution(t *testing.T) string {
 		t.Fatalf("holding %q open so PROP-6 can be checked against it: %v", name, err)
 	}
 	t.Cleanup(func() {
+		// The keep-alive is unconditionally this test's to kill: it started it.
 		if keepAlive.Process != nil {
 			_ = keepAlive.Process.Kill()
 		}
 		_ = keepAlive.Wait()
-		// Terminating is safe and is not what PROP-6 forbids: this test owns
-		// the process it started, and a distribution with nothing running in it
-		// is one WSL would reap anyway.
-		_ = exec.Command("wsl.exe", "--terminate", name).Run()
+
+		// The distribution is not. Terminating one this test found already
+		// running would kill whatever the developer had in it — a build, an
+		// editor, an unsaved shell — and doing that here would be absurd: this
+		// is the test for "avar never stops a distribution it does not own".
+		// It is also the failure docs/lessons.md records from the Lima suite, a
+		// suite that damaged the machine it ran on.
+		if !alreadyRunning {
+			_ = exec.Command("wsl.exe", "--terminate", name).Run()
+		}
 	})
 
 	if !waitForRunning(t, name) {
@@ -593,14 +604,33 @@ func cleanupBackend() {
 // these tests exist to check avar against reality: reading the evidence with the
 // code under test would make a decoder bug invisible in exactly the tests meant
 // to catch it.
+//
+// Independent, however, must not mean carrying the defect the production
+// decoder was fixed for. Requiring every odd byte to be NUL holds only while the
+// text is entirely Latin-1: 名 is U+540D, which encodes to 8D 54, so one
+// character outside it breaks the run for the whole buffer. Here that would mean
+// a distribution named in a non-Latin script becoming invisible to
+// runningDistributions and registeredDistributions — and the PROP-6 check
+// skipping on a machine that does have a foreign distribution. So this counts
+// NULs by parity, the way looksLikeUTF16LE does, for the same reason.
 func decodeUTF16(b []byte) string {
 	if len(b) < 2 || len(b)%2 != 0 {
 		return string(b)
 	}
-	for i := 1; i < len(b); i += 2 {
-		if b[i] != 0 {
-			return string(b)
+	var odd, even int
+	for i := 0; i+1 < len(b); i += 2 {
+		if b[i] == 0 {
+			even++
 		}
+		if b[i+1] == 0 {
+			odd++
+		}
+	}
+	// Three in ten is far below what any real wsl.exe listing produces — the
+	// CRLF ending every line is itself two Latin-1 code units — and far above
+	// the zero that UTF-8 output produces. odd > even separates LE from BE.
+	if pairs := len(b) / 2; odd*10 < pairs*3 || odd <= even {
+		return string(b)
 	}
 	units := make([]uint16, 0, len(b)/2)
 	for i := 0; i+1 < len(b); i += 2 {

@@ -142,13 +142,26 @@ jobs:
       # property that skips reports green while testing nothing.
       #
       # --no-launch keeps the first-run wizard away; the test starts it itself.
+      #
+      # Bounded because it is otherwise unbounded: a step with no
+      # timeout-minutes inherits the six-hour job default, and with
+      # continue-on-error a hang here would burn that while reporting a cross
+      # nobody is gated on. It took 13 minutes on the first real run, so 25 is
+      # roughly double the observed cost and still an order of magnitude below
+      # the default.
       - name: Install a distribution avar does not own
         shell: bash
+        timeout-minutes: 25
         run: wsl.exe --install Ubuntu-24.04 --no-launch --web-download || echo "could not install one; the PROP-6 check will fail loudly"
 
       # AVR_E2E_REQUIRE_FOREIGN turns that test's skip into a failure. Here the
       # environment is arranged, so a missing foreign distribution means the
       # arrangement broke rather than that the host happens to be bare.
+      # The 45m timeout stays, and is now justified by measurement rather than
+      # by caution: this suite took 19m24s here against 68-88s on a developer
+      # machine. Tightening it to the 15-20m that the local numbers suggest
+      # would have failed this very run. It is the Makefile's figure too, and
+      # the two should stay in step.
       - name: E2E against real WSL
         shell: bash
         env:
