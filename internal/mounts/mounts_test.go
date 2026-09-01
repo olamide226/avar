@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +36,7 @@ func TestEnsure_AlreadyShared_ReturnsImmediately_REQ_17_1(t *testing.T) {
 	fk.AddMachine("avr-ubuntu-24.04-arm64", selector, types.KindShared, types.StateRunning)
 
 	// Seed the machine with an existing mount.
-	existing := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
+	existing := types.MountSpec{HostPath: hostPath("/Users/dev/proj-a"), GuestPath: "/Users/dev/proj-a", Writable: true}
 	mustSetMounts(t, ctx, fk, "avr-ubuntu-24.04-arm64", []types.MountSpec{existing})
 	fk.Reset()
 
@@ -69,12 +71,12 @@ func TestEnsure_NewProject_NoSessions_AppliesMount(t *testing.T) {
 	fk := fake.New()
 	fk.AddMachine("avr-ubuntu-24.04-arm64", selector, types.KindShared, types.StateRunning)
 
-	existing := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
+	existing := types.MountSpec{HostPath: hostPath("/Users/dev/proj-a"), GuestPath: "/Users/dev/proj-a", Writable: true}
 	mustSetMounts(t, ctx, fk, "avr-ubuntu-24.04-arm64", []types.MountSpec{existing})
 	fk.Reset()
 
 	// Add a second project.
-	newMount := types.MountSpec{HostPath: "/Users/dev/proj-b", GuestPath: "/Users/dev/proj-b", Writable: true}
+	newMount := types.MountSpec{HostPath: hostPath("/Users/dev/proj-b"), GuestPath: "/Users/dev/proj-b", Writable: true}
 	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, nil, types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("Ensure for a new project: %v", err)
@@ -120,7 +122,7 @@ func TestEnsure_AppliedSetEqualsRegisteredRoots_PROP_5(t *testing.T) {
 	// Register three projects one at a time.
 	projects := []string{"/Users/dev/proj-a", "/Users/dev/proj-b", "/Users/dev/proj-c"}
 	for _, p := range projects {
-		mount := types.MountSpec{HostPath: p, GuestPath: p, Writable: true}
+		mount := mountFor(p)
 		_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", mount, mount.GuestPath, 0, nil, types.DiscardProgress)
 		if err != nil {
 			t.Fatalf("Ensure for %s: %v", p, err)
@@ -136,8 +138,8 @@ func TestEnsure_AppliedSetEqualsRegisteredRoots_PROP_5(t *testing.T) {
 		t.Fatalf("applied %d mounts, want 3: %v", len(applied), types.MountHostPaths(applied))
 	}
 	for i, want := range projects {
-		if applied[i].HostPath != want {
-			t.Errorf("applied[%d] = %s, want %s", i, applied[i].HostPath, want)
+		if applied[i].HostPath != hostPath(want) {
+			t.Errorf("applied[%d] = %s, want %s", i, applied[i].HostPath, hostPath(want))
 		}
 	}
 
@@ -158,12 +160,12 @@ func TestEnsure_NewProject_WithSessions_ReturnsConflict_REQ_6_4(t *testing.T) {
 	fk := fake.New()
 	fk.AddMachine("avr-ubuntu-24.04-arm64", selector, types.KindShared, types.StateRunning)
 
-	existing := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
+	existing := types.MountSpec{HostPath: hostPath("/Users/dev/proj-a"), GuestPath: "/Users/dev/proj-a", Writable: true}
 	mustSetMounts(t, ctx, fk, "avr-ubuntu-24.04-arm64", []types.MountSpec{existing})
 	fk.Reset()
 
 	// Three other sessions are attached.
-	newMount := types.MountSpec{HostPath: "/Users/dev/proj-b", GuestPath: "/Users/dev/proj-b", Writable: true}
+	newMount := types.MountSpec{HostPath: hostPath("/Users/dev/proj-b"), GuestPath: "/Users/dev/proj-b", Writable: true}
 	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 3, nil, types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("Ensure with sessions: %v", err)
@@ -193,14 +195,16 @@ func TestEnsure_SubdirectoryReuse_REQ_6_6(t *testing.T) {
 	// The project root is shared, and the user is in a/b beneath it. The
 	// resolver gives MapProjectPath the project root as the mount source
 	// and the subdirectory as GuestCwd.
-	root := "/Users/dev/proj-a"
-	existing := types.MountSpec{HostPath: root, GuestPath: root, Writable: true}
+	existing := mountFor("/Users/dev/proj-a")
 	mustSetMounts(t, ctx, fk, "avr-ubuntu-24.04-arm64", []types.MountSpec{existing})
 	fk.Reset()
 
 	// The mount spec is the same (project root), but guestCwd points deeper.
 	// This is what MapProjectPath returns when the user is in a subdirectory.
-	guestCwd := filepath.Join(root, "a", "b")
+	// The guest working directory is a Linux path, so it is joined with path
+	// rather than filepath: on Windows the latter would build it with backslashes
+	// and describe no directory the guest has (REQ-18.5).
+	guestCwd := path.Join(existing.GuestPath, "a", "b")
 	result, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", existing, guestCwd, 0, nil, types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("Ensure from a subdirectory: %v", err)
@@ -231,7 +235,7 @@ func TestEnsure_VerifyMountFails_ReturnsError_REQ_6_5(t *testing.T) {
 	// present.
 	fk.SetExitCode(1)
 
-	newMount := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
+	newMount := types.MountSpec{HostPath: hostPath("/Users/dev/proj-a"), GuestPath: "/Users/dev/proj-a", Writable: true}
 	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, nil, types.DiscardProgress)
 	if err == nil {
 		t.Fatal("Ensure succeeded when mount verification should have failed")
@@ -248,7 +252,7 @@ func TestEnsure_AppliedMountsError_ReturnsWrappedError(t *testing.T) {
 	fk := fake.New()
 
 	// The machine does not exist — AppliedMounts should fail.
-	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", types.MountSpec{HostPath: "/x", GuestPath: "/x"}, "/x", 0, nil, types.DiscardProgress)
+	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", types.MountSpec{HostPath: hostPath("/x"), GuestPath: "/x"}, "/x", 0, nil, types.DiscardProgress)
 	if err == nil {
 		t.Fatal("Ensure succeeded on a nonexistent machine")
 	}
@@ -264,7 +268,7 @@ func TestEnsure_SetMountsError_ReturnsWrappedError(t *testing.T) {
 	// Program SetMounts to fail.
 	fk.FailOn(fake.OpSetMounts, errors.New("cannot edit configuration"))
 
-	newMount := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
+	newMount := types.MountSpec{HostPath: hostPath("/Users/dev/proj-a"), GuestPath: "/Users/dev/proj-a", Writable: true}
 	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, nil, types.DiscardProgress)
 	if err == nil {
 		t.Fatal("Ensure succeeded when SetMounts should have failed")
@@ -278,7 +282,7 @@ func TestEnsure_ProgressEvents_Delivered(t *testing.T) {
 	fk := fake.New()
 	fk.AddMachine("avr-ubuntu-24.04-arm64", selector, types.KindShared, types.StateRunning)
 
-	existing := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
+	existing := types.MountSpec{HostPath: hostPath("/Users/dev/proj-a"), GuestPath: "/Users/dev/proj-a", Writable: true}
 	mustSetMounts(t, ctx, fk, "avr-ubuntu-24.04-arm64", []types.MountSpec{existing})
 	fk.Reset()
 
@@ -288,7 +292,7 @@ func TestEnsure_ProgressEvents_Delivered(t *testing.T) {
 		events = append(events, e)
 	})
 
-	newMount := types.MountSpec{HostPath: "/Users/dev/proj-b", GuestPath: "/Users/dev/proj-b", Writable: true}
+	newMount := types.MountSpec{HostPath: hostPath("/Users/dev/proj-b"), GuestPath: "/Users/dev/proj-b", Writable: true}
 	_, err := mounts.Ensure(ctx, fk, "avr-ubuntu-24.04-arm64", newMount, newMount.GuestPath, 0, nil, sink)
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -305,7 +309,7 @@ func TestEnsure_MachineNotOwned_ReturnsError_PROP_6(t *testing.T) {
 	fk := fake.New()
 	fk.AddForeignMachine("avr-foreign-00")
 
-	mount := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
+	mount := types.MountSpec{HostPath: hostPath("/Users/dev/proj-a"), GuestPath: "/Users/dev/proj-a", Writable: true}
 	_, err := mounts.Ensure(ctx, fk, "avr-foreign-00", mount, mount.GuestPath, 0, nil, types.DiscardProgress)
 	if !errors.Is(err, provider.ErrNotOwned) {
 		t.Fatalf("error = %v, want ErrNotOwned", err)
@@ -320,7 +324,7 @@ func TestEnsure_WarmPathNoRestart_PROP_5_Warm(t *testing.T) {
 	fk := fake.New()
 	fk.AddMachine("avr-ubuntu-24.04-arm64", selector, types.KindShared, types.StateRunning)
 
-	existing := types.MountSpec{HostPath: "/Users/dev/proj-a", GuestPath: "/Users/dev/proj-a", Writable: true}
+	existing := types.MountSpec{HostPath: hostPath("/Users/dev/proj-a"), GuestPath: "/Users/dev/proj-a", Writable: true}
 	mustSetMounts(t, ctx, fk, "avr-ubuntu-24.04-arm64", []types.MountSpec{existing})
 	restartsBefore := fk.Restarts("avr-ubuntu-24.04-arm64")
 	fk.Reset()
@@ -356,9 +360,9 @@ func TestEnsure_UnsharesTheLeastRecentlyUsedProjectAtTheLimit_REQ_6_1(t *testing
 	lastUsed := map[string]time.Time{}
 	applied := make([]types.MountSpec, 0, mounts.MaxMounts)
 	for i := 0; i < mounts.MaxMounts; i++ {
-		path := fmt.Sprintf("/Users/dev/p%02d", i)
-		applied = append(applied, types.MountSpec{HostPath: path, GuestPath: path, Writable: true})
-		lastUsed[path] = base.Add(time.Duration(i) * time.Hour)
+		mount := mountFor(fmt.Sprintf("/Users/dev/p%02d", i))
+		applied = append(applied, mount)
+		lastUsed[mount.HostPath] = base.Add(time.Duration(i) * time.Hour)
 	}
 	if err := fk.SetMounts(ctx, machine, applied, types.DiscardProgress); err != nil {
 		t.Fatal(err)
@@ -366,7 +370,7 @@ func TestEnsure_UnsharesTheLeastRecentlyUsedProjectAtTheLimit_REQ_6_1(t *testing
 	fk.Reset()
 
 	// Entering one more must not push the machine over the limit.
-	newProject := types.MountSpec{HostPath: "/Users/dev/new", GuestPath: "/Users/dev/new", Writable: true}
+	newProject := types.MountSpec{HostPath: hostPath("/Users/dev/new"), GuestPath: "/Users/dev/new", Writable: true}
 	lastUsed[newProject.HostPath] = base.Add(1000 * time.Hour)
 
 	res, err := mounts.Ensure(ctx, fk, machine, newProject, newProject.GuestPath, 0, lastUsed, types.DiscardProgress)
@@ -381,7 +385,7 @@ func TestEnsure_UnsharesTheLeastRecentlyUsedProjectAtTheLimit_REQ_6_1(t *testing
 
 	// The oldest went, and it is reported so the user is not left wondering
 	// where a directory went.
-	if len(res.Unshared) != 1 || res.Unshared[0] != "/Users/dev/p00" {
+	if len(res.Unshared) != 1 || res.Unshared[0] != hostPath("/Users/dev/p00") {
 		t.Errorf("unshared %v, want the least recently used /Users/dev/p00", res.Unshared)
 	}
 
@@ -392,7 +396,7 @@ func TestEnsure_UnsharesTheLeastRecentlyUsedProjectAtTheLimit_REQ_6_1(t *testing
 		if m.HostPath == newProject.HostPath {
 			kept = true
 		}
-		if m.HostPath == "/Users/dev/p00" {
+		if m.HostPath == hostPath("/Users/dev/p00") {
 			t.Error("the evicted project was still applied")
 		}
 	}
@@ -409,13 +413,13 @@ func TestEnsure_KeepsEveryProjectBelowTheLimit_REQ_6_1(t *testing.T) {
 	const machine = "avr-ubuntu-24.04-arm64"
 	fk.AddMachine(machine, selector, types.KindShared, types.StateRunning)
 
-	applied := []types.MountSpec{{HostPath: "/Users/dev/a", GuestPath: "/Users/dev/a", Writable: true}}
+	applied := []types.MountSpec{{HostPath: hostPath("/Users/dev/a"), GuestPath: "/Users/dev/a", Writable: true}}
 	if err := fk.SetMounts(ctx, machine, applied, types.DiscardProgress); err != nil {
 		t.Fatal(err)
 	}
 	fk.Reset()
 
-	newProject := types.MountSpec{HostPath: "/Users/dev/b", GuestPath: "/Users/dev/b", Writable: true}
+	newProject := types.MountSpec{HostPath: hostPath("/Users/dev/b"), GuestPath: "/Users/dev/b", Writable: true}
 	res, err := mounts.Ensure(ctx, fk, machine, newProject, newProject.GuestPath, 0, nil, types.DiscardProgress)
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -426,4 +430,27 @@ func TestEnsure_KeepsEveryProjectBelowTheLimit_REQ_6_1(t *testing.T) {
 	if call := fk.AssertCalled(t, fake.OpSetMounts); len(call.Mounts) != 2 {
 		t.Errorf("applied %d mounts, want both", len(call.Mounts))
 	}
+}
+
+// hostPath renders a POSIX-shaped test path in the host's own vocabulary.
+//
+// A mount's host path is absolute in the host's syntax by definition, so a
+// fixture that hard-codes "/Users/dev/proj-a" is a macOS fixture: on Windows
+// that string is relative and is rightly refused. Prefixing the drive keeps
+// each case testing the rule it was written for rather than the platform's idea
+// of "absolute" (REQ-18.13).
+func hostPath(posix string) string {
+	if runtime.GOOS != "windows" {
+		return posix
+	}
+	return `C:` + filepath.FromSlash(posix)
+}
+
+// mountFor is the mapping a provider would plan for the project directory whose
+// POSIX-shaped name is posix: the host half in the host's own vocabulary, the
+// guest half always a Linux path. On macOS the two are the identical string,
+// which is what Lima applies; on Windows they differ, which is what WSL has to
+// do (REQ-6.1, REQ-18.5).
+func mountFor(posix string) types.MountSpec {
+	return types.MountSpec{HostPath: hostPath(posix), GuestPath: posix, Writable: true}
 }

@@ -40,3 +40,46 @@ jobs:
 
       - name: Test
         run: make test
+
+  # Windows is not a supported host yet — REQ-18.1 is Phase 4 — but avar's
+  # portable packages have to keep building and passing there while the
+  # WSL2Provider is built beside the Lima one. Without this job the Windows
+  # build regresses silently between tasks, which is how it came to be broken in
+  # the first place: `go build ./...` had never once been run on a Windows host.
+  #
+  # The suite is `./...` rather than a list of packages. Tests asserting
+  # macOS-only behaviour carry a `unix` build constraint or skip themselves with
+  # a stated reason, so what runs here is what is meaningful here, and a package
+  # that becomes meaningful needs no change to this file.
+  #
+  # The steps call the Go tool directly rather than going through the Makefile,
+  # which is a POSIX shell script: `make` is not on a Windows runner's PATH, and
+  # `make test` asks for the race detector, which needs a C toolchain that a
+  # Windows runner does not reliably have. Race coverage comes from the macOS
+  # job, which runs the same tests.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify formatting
+        shell: bash
+        run: |
+          unformatted=$(gofmt -s -l cmd internal e2e main.go)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt -s needed:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...

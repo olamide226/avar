@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -91,6 +92,15 @@ func blockingReaderFor(t *testing.T) blockingReader {
 
 func TestIsExecutableFile(t *testing.T) {
 	t.Parallel()
+
+	// The execute bit is what makes a file a program on Unix. Windows decides
+	// from the extension instead, so os.WriteFile with mode 0755 produces a
+	// file this function correctly calls non-executable — and the function
+	// only ever runs on macOS anyway, looking for limactl in the Homebrew
+	// directories (REQ-8.1).
+	if runtime.GOOS == "windows" {
+		t.Skip("file execute bits are a Unix concept; the caller of this is the macOS-only Lima search")
+	}
 
 	dir := t.TempDir()
 

@@ -230,7 +230,7 @@ established in tasks 27 and 28: none of them may add a Windows branch to `cmd/`.
   - Add a `windows-latest` CI job running lint, build and unit tests, so the Windows build cannot regress between Phase 4 tasks. Lima remains macOS-only and `provider.SupportedHost` still refuses Windows: what this task claims is that the code compiles and its pure logic is proven on both hosts, not that avar runs on Windows yet.
   - Found on the first `go test ./...` of a Windows host, which did not reach a single test.
   - _Requirements: 18.14, 17.5_
-  - _writes: internal/state/lock.go, internal/state/lock_unix.go, internal/state/lock_windows.go, internal/state/session.go, internal/state/session_unix.go, internal/state/session_windows.go, internal/provider/lima/shell.go, internal/provider/lima/signals_unix.go, internal/provider/lima/signals_other.go, .github/workflows/ci.yml_
+  - _writes: internal/state/{lock,lock_unix,lock_windows,session,session_unix,session_windows,store,atomic_unix,atomic_windows}.go, internal/provider/lima/{shell,signals_unix,signals_other}.go, go.mod, .github/workflows/ci.yml, docs/lessons.md, and the test files that hard-code POSIX host paths or macOS-only behaviour: internal/{types,resolve,mounts,state,deps,editor}/*_test.go, internal/provider/{fake,lima}/*_test.go, cmd/status_test.go_
 
 - [ ] 33. WSL capability detection and prerequisites
   - Probe WSL presence, version, and WSL 1 vs 2; offer install/upgrade where safe; describe elevation or restart requirements before acting; never register a partial environment

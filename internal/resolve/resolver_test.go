@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -115,7 +116,7 @@ func arm64Host() Options { return Options{HostArch: types.ArchARM64} }
 func TestResolve_DefaultEnvironmentNeedsNoUserInput_REQ_1_5(t *testing.T) {
 	store := newFakeStore()
 
-	got, err := Resolve(types.ProviderLima, "/Users/dev/code/app", cli.Selector{}, store, arm64Host())
+	got, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/app"), cli.Selector{}, store, arm64Host())
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -130,10 +131,10 @@ func TestResolve_DefaultEnvironmentNeedsNoUserInput_REQ_1_5(t *testing.T) {
 	if got.Kind != types.KindShared {
 		t.Errorf("kind = %q, want %q", got.Kind, types.KindShared)
 	}
-	if got.HostCwd != "/Users/dev/code/app" {
+	if got.HostCwd != hostPath("/Users/dev/code/app") {
 		t.Errorf("host cwd = %q, want the host directory", got.HostCwd)
 	}
-	if got.Project.Path != "/Users/dev/code/app" {
+	if got.Project.Path != hostPath("/Users/dev/code/app") {
 		t.Errorf("project path = %q, want the invocation directory registered on first use", got.Project.Path)
 	}
 	if got.Emulated {
@@ -145,7 +146,7 @@ func TestResolve_DefaultEnvironmentNeedsNoUserInput_REQ_1_5(t *testing.T) {
 }
 
 func TestResolve_PrecedenceTable_REQ_4_1_REQ_4_2(t *testing.T) {
-	const dir = "/Users/dev/code/app"
+	dir := hostPath("/Users/dev/code/app")
 
 	tests := []struct {
 		name        string
@@ -254,7 +255,7 @@ func TestResolve_PrecedenceTable_REQ_4_1_REQ_4_2(t *testing.T) {
 func TestResolve_ConfigurationVersionWithoutDistroIsRefused(t *testing.T) {
 	store := newFakeStore()
 
-	_, err := Resolve(types.ProviderLima, "/Users/dev/code/app", cli.Selector{}, store, Options{
+	_, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/app"), cli.Selector{}, store, Options{
 		HostArch: types.ArchARM64,
 		Config:   Preference{Version: "24.04"},
 	})
@@ -269,7 +270,7 @@ func TestResolve_ConfigurationVersionWithoutDistroIsRefused(t *testing.T) {
 // --- Isolation ------------------------------------------------------------
 
 func TestResolve_IsolateTargetsAndRemembersProjectMachine_REQ_11_2(t *testing.T) {
-	const dir = "/Users/dev/code/app"
+	dir := hostPath("/Users/dev/code/app")
 	store := newFakeStore()
 
 	first, err := Resolve(types.ProviderLima, dir, cli.Selector{Isolate: true}, store, arm64Host())
@@ -309,7 +310,7 @@ func TestResolve_IsolateTargetsAndRemembersProjectMachine_REQ_11_2(t *testing.T)
 }
 
 func TestResolve_SharedOverrideDoesNotPersist_REQ_11_3(t *testing.T) {
-	const dir = "/Users/dev/code/app"
+	dir := hostPath("/Users/dev/code/app")
 	store := newFakeStore(projectAt(dir, func(rec *types.ProjectRecord) { rec.Isolated = true }))
 
 	override, err := Resolve(types.ProviderLima, dir, cli.Selector{Shared: true}, store, arm64Host())
@@ -339,7 +340,7 @@ func TestResolve_SharedOverrideDoesNotPersist_REQ_11_3(t *testing.T) {
 func TestResolve_ContradictoryIsolationFlagsAreRefused(t *testing.T) {
 	store := newFakeStore()
 
-	if _, err := Resolve(types.ProviderLima, "/Users/dev/code/app", cli.Selector{Isolate: true, Shared: true}, store, arm64Host()); err == nil {
+	if _, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/app"), cli.Selector{Isolate: true, Shared: true}, store, arm64Host()); err == nil {
 		t.Fatal("Resolve silently picked a winner between --isolate and --shared")
 	}
 }
@@ -347,7 +348,7 @@ func TestResolve_ContradictoryIsolationFlagsAreRefused(t *testing.T) {
 // --- Machine naming: REQ-4.3 and PROP-2 -----------------------------------
 
 func TestResolve_SharedMachinePerSelector_REQ_4_3(t *testing.T) {
-	const dir = "/Users/dev/code/app"
+	dir := hostPath("/Users/dev/code/app")
 
 	seen := map[string]types.EnvironmentSelector{}
 	for _, env := range SupportedEnvironments() {
@@ -378,7 +379,7 @@ func TestResolve_SharedMachinePerSelector_REQ_4_3(t *testing.T) {
 }
 
 func TestResolve_DeterministicTarget_PROP_2(t *testing.T) {
-	const dir = "/Users/dev/code/app"
+	dir := hostPath("/Users/dev/code/app")
 
 	cases := []struct {
 		name     string
@@ -454,7 +455,7 @@ func TestResolve_NoMachineNameCollisions_PROP_2(t *testing.T) {
 	// Every shared environment in the matrix.
 	for _, env := range SupportedEnvironments() {
 		sel := cli.Selector{Distro: env.Distro, DistroVersion: env.Version, Arch: env.Arch}
-		got, err := Resolve(types.ProviderLima, "/Users/dev/code/app", sel, newFakeStore(), arm64Host())
+		got, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/app"), sel, newFakeStore(), arm64Host())
 		if err != nil {
 			t.Fatalf("Resolve %+v: %v", env, err)
 		}
@@ -468,7 +469,7 @@ func TestResolve_NoMachineNameCollisions_PROP_2(t *testing.T) {
 	// distributions must get two machines. A naming scheme that dropped the
 	// environment would fail this loop on its second iteration.
 	for i := 0; i < 500; i++ {
-		dir := fmt.Sprintf("/Users/dev/code/project-%d", i)
+		dir := fmt.Sprintf(hostPath("/Users/dev/code/project-%d"), i)
 		for _, env := range SupportedEnvironments() {
 			sel := cli.Selector{Distro: env.Distro, DistroVersion: env.Version, Arch: env.Arch, Isolate: true}
 			got, err := Resolve(types.ProviderLima, dir, sel, newFakeStore(), arm64Host())
@@ -487,7 +488,7 @@ func TestResolve_IsolatedEnvironmentsAreDistinctPerDistro_REQ_4_2_REQ_11_1(t *te
 	// so these must be two machines. Were they one, the second invocation would
 	// find the first machine already running and hand the user Ubuntu when they
 	// asked for Fedora, with nothing in the output to say so.
-	const dir = "/Users/dev/code/app"
+	dir := hostPath("/Users/dev/code/app")
 	store := newFakeStore()
 
 	ubuntu, err := Resolve(types.ProviderLima, dir, cli.Selector{Distro: types.DistroUbuntu, Isolate: true}, store, arm64Host())
@@ -588,7 +589,7 @@ func TestMatrix_ReservesTheIsolatedNameToken(t *testing.T) {
 // --- Unsupported combinations: REQ-4.4 ------------------------------------
 
 func TestResolve_UnsupportedCombinationListsSupportedValues_REQ_4_4(t *testing.T) {
-	const dir = "/Users/dev/code/app"
+	dir := hostPath("/Users/dev/code/app")
 
 	t.Run("unsupported version", func(t *testing.T) {
 		_, err := Resolve(types.ProviderLima, dir, cli.Selector{Distro: types.DistroUbuntu, DistroVersion: "18.04"}, newFakeStore(), arm64Host())
@@ -660,7 +661,7 @@ func TestResolve_ReportsEmulationWithoutWarning_REQ_4_6(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(fmt.Sprintf("%s_on_%s", tc.guest, tc.host), func(t *testing.T) {
-			got, err := Resolve(types.ProviderLima, "/Users/dev/code/app", cli.Selector{Arch: tc.guest}, newFakeStore(), Options{HostArch: tc.host})
+			got, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/app"), cli.Selector{Arch: tc.guest}, newFakeStore(), Options{HostArch: tc.host})
 			if err != nil {
 				t.Fatalf("Resolve: %v", err)
 			}
@@ -674,7 +675,7 @@ func TestResolve_ReportsEmulationWithoutWarning_REQ_4_6(t *testing.T) {
 // --- Project resolution: REQ-6.6 ------------------------------------------
 
 func TestResolve_NestedDirectoryResolvesToItsProject_REQ_6_6(t *testing.T) {
-	const root = "/Users/dev/code/app"
+	root := hostPath("/Users/dev/code/app")
 	nested := filepath.Join(root, "services", "api")
 
 	store := newFakeStore(projectAt(root, func(rec *types.ProjectRecord) { rec.Isolated = true }))
@@ -703,7 +704,7 @@ func TestResolve_NestedDirectoryResolvesToItsProject_REQ_6_6(t *testing.T) {
 }
 
 func TestResolve_NearestRecordedProjectWins_REQ_6_6(t *testing.T) {
-	const outer = "/Users/dev/code/mono"
+	outer := hostPath("/Users/dev/code/mono")
 	inner := filepath.Join(outer, "packages", "web")
 	deep := filepath.Join(inner, "src")
 
@@ -720,13 +721,13 @@ func TestResolve_NearestRecordedProjectWins_REQ_6_6(t *testing.T) {
 
 func TestResolve_SiblingPrefixIsNotAProject(t *testing.T) {
 	// "/Users/dev/code/app" must not capture "/Users/dev/code/application".
-	store := newFakeStore(projectAt("/Users/dev/code/app"))
+	store := newFakeStore(projectAt(hostPath("/Users/dev/code/app")))
 
-	got, err := Resolve(types.ProviderLima, "/Users/dev/code/application", cli.Selector{}, store, arm64Host())
+	got, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/application"), cli.Selector{}, store, arm64Host())
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if got.Project.Path != "/Users/dev/code/application" {
+	if got.Project.Path != hostPath("/Users/dev/code/application") {
 		t.Errorf("project path = %q, want the invocation directory registered as its own project", got.Project.Path)
 	}
 }
@@ -753,7 +754,7 @@ func TestResolve_RejectsADirectoryItCannotCompare(t *testing.T) {
 // A resolved target says which backend it was resolved for, because nothing in
 // it is meaningful on a host running a different one (design §3.2).
 func TestResolve_TargetCarriesTheProviderItWasResolvedFor_REQ_18_14(t *testing.T) {
-	got, err := Resolve(types.ProviderLima, "/Users/dev/code/app", cli.Selector{}, newFakeStore(), arm64Host())
+	got, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/app"), cli.Selector{}, newFakeStore(), arm64Host())
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -764,7 +765,7 @@ func TestResolve_TargetCarriesTheProviderItWasResolvedFor_REQ_18_14(t *testing.T
 	// Machine naming is deterministic within a provider and does not change
 	// with it: a host runs one backend, and adding a token to every name would
 	// rename every machine users already have (design §3.2, PROP-2).
-	other, err := Resolve(types.ProviderID("wsl2"), "/Users/dev/code/app", cli.Selector{}, newFakeStore(), arm64Host())
+	other, err := Resolve(types.ProviderID("wsl2"), hostPath("/Users/dev/code/app"), cli.Selector{}, newFakeStore(), arm64Host())
 	if err != nil {
 		t.Fatalf("Resolve for a second provider: %v", err)
 	}
@@ -780,10 +781,10 @@ func TestResolve_TargetCarriesTheProviderItWasResolvedFor_REQ_18_14(t *testing.T
 func TestResolve_RefusesAnUnnamedProvider(t *testing.T) {
 	// Provider selection happens before resolution (design §2, step 2). A
 	// caller that skipped it would produce a target no backend claims.
-	if _, err := Resolve("", "/Users/dev/code/app", cli.Selector{}, newFakeStore(), arm64Host()); err == nil {
+	if _, err := Resolve("", hostPath("/Users/dev/code/app"), cli.Selector{}, newFakeStore(), arm64Host()); err == nil {
 		t.Fatal("Resolve accepted a target with no provider")
 	}
-	if _, err := Resolve(types.ProviderID("Lima VM"), "/Users/dev/code/app", cli.Selector{}, newFakeStore(), arm64Host()); err == nil {
+	if _, err := Resolve(types.ProviderID("Lima VM"), hostPath("/Users/dev/code/app"), cli.Selector{}, newFakeStore(), arm64Host()); err == nil {
 		t.Fatal("Resolve accepted a provider id avar cannot record")
 	}
 }
@@ -794,7 +795,7 @@ func TestResolve_UnresolvedDirectoryIsRefusedRatherThanMounted(t *testing.T) {
 	// continuing would share one directory and enter another (REQ-6.5).
 	store := &misreportingStore{}
 
-	_, err := Resolve(types.ProviderLima, "/tmp/link/app", cli.Selector{}, store, arm64Host())
+	_, err := Resolve(types.ProviderLima, hostPath("/tmp/link/app"), cli.Selector{}, store, arm64Host())
 	if err == nil {
 		t.Fatal("Resolve accepted a project record that does not contain the invocation directory")
 	}
@@ -823,7 +824,7 @@ func TestResolve_ReportsStoreFailures(t *testing.T) {
 		store := newFakeStore()
 		store.projectsErr = errors.New("projects.json is not valid JSON")
 
-		_, err := Resolve(types.ProviderLima, "/Users/dev/code/app", cli.Selector{}, store, arm64Host())
+		_, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/app"), cli.Selector{}, store, arm64Host())
 		if err == nil || !strings.Contains(err.Error(), "projects.json") {
 			t.Fatalf("error = %v, want the underlying cause wrapped", err)
 		}
@@ -833,14 +834,14 @@ func TestResolve_ReportsStoreFailures(t *testing.T) {
 		store := newFakeStore()
 		store.updateErr = errors.New("state directory is read-only")
 
-		_, err := Resolve(types.ProviderLima, "/Users/dev/code/app", cli.Selector{Isolate: true}, store, arm64Host())
+		_, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/app"), cli.Selector{Isolate: true}, store, arm64Host())
 		if err == nil || !strings.Contains(err.Error(), "read-only") {
 			t.Fatalf("error = %v, want the underlying cause wrapped", err)
 		}
 	})
 
 	t.Run("no store at all", func(t *testing.T) {
-		if _, err := Resolve(types.ProviderLima, "/Users/dev/code/app", cli.Selector{}, nil, arm64Host()); err == nil {
+		if _, err := Resolve(types.ProviderLima, hostPath("/Users/dev/code/app"), cli.Selector{}, nil, arm64Host()); err == nil {
 			t.Fatal("Resolve accepted a nil store")
 		}
 	})
@@ -921,4 +922,21 @@ func TestResolve_AgainstRealStateStore_REQ_11_2(t *testing.T) {
 	if !rec.Isolated {
 		t.Error("--shared cleared the project's remembered isolation")
 	}
+}
+
+// hostPath renders a POSIX-shaped test path in the host's own vocabulary.
+//
+// The resolver requires an absolute, symlink-resolved directory, and what
+// counts as absolute is the host's question, not avar's: "/Users/dev/code/app"
+// is absolute on macOS and a relative path on Windows. Prefixing the drive
+// keeps each case testing the resolution rule it was written for rather than
+// the platform's idea of "absolute" (REQ-18.13).
+//
+// It concatenates rather than joining, so a path a case deliberately left
+// uncanonical stays that way.
+func hostPath(posix string) string {
+	if runtime.GOOS != "windows" {
+		return posix
+	}
+	return `C:` + filepath.FromSlash(posix)
 }

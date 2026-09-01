@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -79,11 +81,11 @@ func TestFake_RecordsOrderedCallSequenceWithArguments_REQ_17_3(t *testing.T) {
 	if _, err := f.AppliedMounts(ctx, ubuntuMachine); err != nil {
 		t.Fatalf("AppliedMounts: %v", err)
 	}
-	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, hostPath("/Users/dev/code/api")), types.DiscardProgress); err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
 	if _, err := f.Shell(ctx, ubuntuMachine, provider.ShellOpts{
-		Workdir: "/Users/dev/code/api",
+		Workdir: hostPath("/Users/dev/code/api"),
 		Argv:    []string{"npm", "test"},
 	}); err != nil {
 		t.Fatalf("Shell: %v", err)
@@ -97,12 +99,12 @@ func TestFake_RecordsOrderedCallSequenceWithArguments_REQ_17_3(t *testing.T) {
 	}
 
 	mounts := f.AssertCalled(t, OpSetMounts)
-	if !equalStrings(types.MountHostPaths(mounts.Mounts), []string{"/Users/dev/code/api"}) {
+	if !equalStrings(types.MountHostPaths(mounts.Mounts), []string{hostPath("/Users/dev/code/api")}) {
 		t.Errorf("SetMounts recorded mounts %v", mounts.Mounts)
 	}
 
 	shell := f.AssertCalled(t, OpShell)
-	if shell.Shell.Workdir != "/Users/dev/code/api" {
+	if shell.Shell.Workdir != hostPath("/Users/dev/code/api") {
 		t.Errorf("Shell recorded workdir %q", shell.Shell.Workdir)
 	}
 	if !equalStrings(shell.Shell.Argv, []string{"npm", "test"}) {
@@ -326,7 +328,7 @@ func TestFake_ShellWritesProgrammedOutputToRedirectedStreams_REQ_6_5(t *testing.
 
 	f := New()
 	f.AddMachine(ubuntuMachine, ubuntuSelector(), types.KindShared, types.StateRunning)
-	f.SetShellOutput("/Users/dev/code/api\n", "warning\n")
+	f.SetShellOutput(hostPath("/Users/dev/code/api\n"), "warning\n")
 
 	var stdout, stderr bytes.Buffer
 	code, err := f.Shell(context.Background(), ubuntuMachine, provider.ShellOpts{
@@ -340,7 +342,7 @@ func TestFake_ShellWritesProgrammedOutputToRedirectedStreams_REQ_6_5(t *testing.
 	if code != 0 {
 		t.Errorf("exit code %d, want 0", code)
 	}
-	if stdout.String() != "/Users/dev/code/api\n" {
+	if stdout.String() != hostPath("/Users/dev/code/api\n") {
 		t.Errorf("stdout = %q", stdout.String())
 	}
 	if stderr.String() != "warning\n" {
@@ -411,14 +413,14 @@ func TestFake_StateIsCoherentAcrossASequence_REQ_5_2(t *testing.T) {
 	}
 	f.AssertMachineState(t, ubuntuMachine, types.StateRunning)
 
-	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, hostPath("/Users/dev/code/api")), types.DiscardProgress); err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
 	applied, err := f.AppliedMounts(ctx, ubuntuMachine)
 	if err != nil {
 		t.Fatalf("AppliedMounts: %v", err)
 	}
-	if !types.EqualMounts(applied, shares(t, f, "/Users/dev/code/api")) {
+	if !types.EqualMounts(applied, shares(t, f, hostPath("/Users/dev/code/api"))) {
 		t.Fatalf("AppliedMounts = %v", applied)
 	}
 
@@ -429,7 +431,7 @@ func TestFake_StateIsCoherentAcrossASequence_REQ_5_2(t *testing.T) {
 	if len(statuses) != 1 || statuses[0].Name != ubuntuMachine || statuses[0].State != types.StateRunning {
 		t.Fatalf("Status = %+v", statuses)
 	}
-	if !types.EqualMounts(statuses[0].Mounts, shares(t, f, "/Users/dev/code/api")) {
+	if !types.EqualMounts(statuses[0].Mounts, shares(t, f, hostPath("/Users/dev/code/api"))) {
 		t.Errorf("Status mounts = %v", statuses[0].Mounts)
 	}
 	if statuses[0].Provider != f.ID() {
@@ -491,25 +493,25 @@ func TestFake_SetMountsRestartsOnlyWhenTheSetChanges_REQ_6_4(t *testing.T) {
 		t.Fatalf("EnsureMachine: %v", err)
 	}
 
-	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, hostPath("/Users/dev/code/api")), types.DiscardProgress); err != nil {
 		t.Fatalf("first SetMounts: %v", err)
 	}
 	f.AssertRestarts(t, ubuntuMachine, 1)
 	f.AssertProgressKinds(t, types.ProgressCreating, types.ProgressMounting)
 
 	// Same set, in a different order: no change, no restart, no message.
-	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, hostPath("/Users/dev/code/api")), types.DiscardProgress); err != nil {
 		t.Fatalf("repeat SetMounts: %v", err)
 	}
 	f.AssertRestarts(t, ubuntuMachine, 1)
 	f.AssertProgressKinds(t, types.ProgressCreating, types.ProgressMounting)
 
 	// Adding a project restarts once more and replaces the set.
-	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/web", "/Users/dev/code/api"), types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, hostPath("/Users/dev/code/web"), hostPath("/Users/dev/code/api")), types.DiscardProgress); err != nil {
 		t.Fatalf("second SetMounts: %v", err)
 	}
 	f.AssertRestarts(t, ubuntuMachine, 2)
-	f.AssertMounts(t, ubuntuMachine, "/Users/dev/code/api", "/Users/dev/code/web")
+	f.AssertMounts(t, ubuntuMachine, hostPath("/Users/dev/code/api"), hostPath("/Users/dev/code/web"))
 }
 
 // TestFake_SetMountsReplacesRatherThanAccumulates_PROP_5 proves mount
@@ -523,13 +525,13 @@ func TestFake_SetMountsReplacesRatherThanAccumulates_PROP_5(t *testing.T) {
 	if err := f.EnsureMachine(ctx, ubuntuSpec(), types.DiscardProgress); err != nil {
 		t.Fatalf("EnsureMachine: %v", err)
 	}
-	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api", "/Users/dev/code/web"), types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, hostPath("/Users/dev/code/api"), hostPath("/Users/dev/code/web")), types.DiscardProgress); err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
-	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
+	if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, hostPath("/Users/dev/code/api")), types.DiscardProgress); err != nil {
 		t.Fatalf("SetMounts: %v", err)
 	}
-	f.AssertMounts(t, ubuntuMachine, "/Users/dev/code/api")
+	f.AssertMounts(t, ubuntuMachine, hostPath("/Users/dev/code/api"))
 }
 
 // TestFake_EnsureMachineAppliesSpecMountsAtCreate_REQ_6_1 checks the create-time
@@ -539,12 +541,12 @@ func TestFake_EnsureMachineAppliesSpecMountsAtCreate_REQ_6_1(t *testing.T) {
 
 	f := New()
 	spec := ubuntuSpec()
-	spec.Mounts = shares(t, f, "/Users/dev/code/api")
+	spec.Mounts = shares(t, f, hostPath("/Users/dev/code/api"))
 
 	if err := f.EnsureMachine(context.Background(), spec, types.DiscardProgress); err != nil {
 		t.Fatalf("EnsureMachine: %v", err)
 	}
-	f.AssertMounts(t, ubuntuMachine, "/Users/dev/code/api")
+	f.AssertMounts(t, ubuntuMachine, hostPath("/Users/dev/code/api"))
 	f.AssertRestarts(t, ubuntuMachine, 0)
 }
 
@@ -572,7 +574,7 @@ func TestFake_RefusesMachinesAvarDoesNotOwn_REQ_5_4_PROP_6(t *testing.T) {
 			return err
 		},
 		OpSetMounts: func(f *Fake) error {
-			return f.SetMounts(ctx, foreign, shares(t, f, "/tmp"), types.DiscardProgress)
+			return f.SetMounts(ctx, foreign, shares(t, f, hostPath("/tmp")), types.DiscardProgress)
 		},
 		OpStop: func(f *Fake) error {
 			return f.Stop(ctx, foreign, types.DiscardProgress)
@@ -836,7 +838,7 @@ func TestFake_IsSafeForConcurrentUse_REQ_17_5(t *testing.T) {
 			spec := ubuntuSpec()
 			spec.Name = name
 			_ = f.EnsureMachine(ctx, spec, types.DiscardProgress)
-			_ = f.SetMounts(ctx, name, shares(t, f, fmt.Sprintf("/Users/dev/p%d", i)), types.DiscardProgress)
+			_ = f.SetMounts(ctx, name, shares(t, f, fmt.Sprintf(hostPath("/Users/dev/p%d"), i)), types.DiscardProgress)
 			_, _ = f.Shell(ctx, name, provider.ShellOpts{Argv: []string{"true"}})
 			_, _ = f.Status(ctx)
 			_, _ = f.AppliedMounts(ctx, name)
@@ -919,7 +921,7 @@ func TestFake_AssertionHelpers(t *testing.T) {
 	t.Run("AssertOpsInOrder ignores calls in between", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
-		if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, "/Users/dev/code/api"), types.DiscardProgress); err != nil {
+		if err := f.SetMounts(ctx, ubuntuMachine, shares(t, f, hostPath("/Users/dev/code/api")), types.DiscardProgress); err != nil {
 			t.Fatalf("SetMounts: %v", err)
 		}
 		tb := &recordingTB{}
@@ -1031,7 +1033,7 @@ func TestFake_MapProjectPath_IsNotTheIdentityMapping_REQ_18_5(t *testing.T) {
 	t.Parallel()
 
 	f := New()
-	mount, guestCwd, err := f.MapProjectPath("3fa9c2b1d0", "/Users/dev/code/app", "/Users/dev/code/app/api")
+	mount, guestCwd, err := f.MapProjectPath("3fa9c2b1d0", hostPath("/Users/dev/code/app"), hostPath("/Users/dev/code/app/api"))
 	if err != nil {
 		t.Fatalf("MapProjectPath: %v", err)
 	}
@@ -1059,10 +1061,10 @@ func TestFake_MapProjectPath_RefusesWhatItCannotMap(t *testing.T) {
 
 	f := New()
 	cases := map[string][3]string{
-		"cwd outside the project": {"abc", "/Users/dev/code/app", "/Users/dev/code/other"},
-		"cwd is a sibling prefix": {"abc", "/Users/dev/code/app", "/Users/dev/code/application"},
-		"relative project root":   {"abc", "code/app", "/Users/dev/code/app"},
-		"no project identity":     {"", "/Users/dev/code/app", "/Users/dev/code/app"},
+		"cwd outside the project": {"abc", hostPath("/Users/dev/code/app"), hostPath("/Users/dev/code/other")},
+		"cwd is a sibling prefix": {"abc", hostPath("/Users/dev/code/app"), hostPath("/Users/dev/code/application")},
+		"relative project root":   {"abc", "code/app", hostPath("/Users/dev/code/app")},
+		"no project identity":     {"", hostPath("/Users/dev/code/app"), hostPath("/Users/dev/code/app")},
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1090,4 +1092,18 @@ func TestFake_EnsureMachineRefusesASpecForAnotherBackend_REQ_18_1(t *testing.T) 
 	if err := f.EnsureMachine(context.Background(), spec, types.DiscardProgress); err != nil {
 		t.Fatalf("a spec addressed to this backend: %v", err)
 	}
+}
+
+// hostPath renders a POSIX-shaped test path in the host's own vocabulary.
+//
+// A mount's host path is absolute in the host's syntax by definition, so a
+// fixture that hard-codes "/Users/dev/proj-a" is a macOS fixture: on Windows
+// that string is relative and is rightly refused. Prefixing the drive keeps
+// each case testing the rule it was written for rather than the platform's idea
+// of "absolute" (REQ-18.13).
+func hostPath(posix string) string {
+	if runtime.GOOS != "windows" {
+		return posix
+	}
+	return `C:` + filepath.FromSlash(posix)
 }

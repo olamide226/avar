@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,16 @@ import (
 // unit test gets to the state directory on a user's disk.
 func v1Store(t *testing.T) *Store {
 	t.Helper()
+
+	// Schema v1 could only ever have been written by a macOS avar: no Windows
+	// build existed, and the fixture's recorded paths are POSIX. Migrating them
+	// on a Windows host would mean deciding what /Users/dev/code/api is as a
+	// Windows path, and the honest answer is that it is nothing — which is why
+	// host-path validation refuses it there. No Windows avar can find a v1
+	// directory to migrate (REQ-18.13).
+	if runtime.GOOS == "windows" {
+		t.Skip("the schema v1 fixture is a macOS state directory; a Windows avar can never encounter one")
+	}
 
 	root := filepath.Join(t.TempDir(), ".avr")
 	if err := os.MkdirAll(root, dirPerm); err != nil {

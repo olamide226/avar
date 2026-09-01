@@ -1,40 +1,22 @@
 package state
 
 import (
-	"errors"
-	"syscall"
-
 	"github.com/olamide226/avar/internal/types"
 )
 
 // processAlive reports whether pid names a process that still exists.
 //
-// Signal 0 runs the kernel's existence and permission checks without
-// delivering anything: nil means the process exists and we may signal it,
-// EPERM means it exists but belongs to another user, ESRCH means it is gone.
-// Non-positive pids are never probed — 0 and negative values address process
-// groups, so signalling them would be both meaningless here and dangerous.
+// Each platform answers it with the cheapest probe that does not disturb the
+// process: a signal that is never delivered on Unix, a handle that is opened
+// and immediately closed on Windows. Both treat "the process exists but belongs
+// to another user" as alive, because it does.
 //
-// Pid reuse is not detectable this way: if the kernel has recycled a crashed
-// session's pid, that session looks live until the new process exits. avar
-// accepts that. Sessions are removed on clean exit, so the window only opens
-// after a crash, and the only consequence is that idle auto-stop leaves a
+// Pid reuse is not detectable either way: if the operating system has recycled
+// a crashed session's pid, that session looks live until the new process exits.
+// avar accepts that. Sessions are removed on clean exit, so the window only
+// opens after a crash, and the only consequence is that idle auto-stop leaves a
 // machine running longer than necessary (never that it stops a machine
 // somebody is using, which is the property that matters).
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	switch {
-	case err == nil:
-		return true
-	case errors.Is(err, syscall.EPERM):
-		return true
-	default:
-		return false
-	}
-}
 
 // usableSessions returns the entries of in that avar may still act on.
 //

@@ -1,0 +1,11 @@
+# Go source, shell scripts and the git hooks must use LF on every host.
+#
+# Without this a Windows checkout with core.autocrlf=true — which is the
+# default on a GitHub Actions windows-latest runner — converts every file to
+# CRLF, and `gofmt -s -l` then reports all 153 Go files as unformatted. The
+# Windows CI job added in this commit cannot pass without it, and a contributor
+# cloning on Windows would hit the same wall locally.
+#
+# Every tracked file in this repository is text, so normalising all of them is
+# the whole rule rather than a list that has to be maintained.
+* text=auto eol=lf

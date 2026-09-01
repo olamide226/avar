@@ -201,3 +201,27 @@ a failed provision left a running machine with no record and nothing repaired it
 A task is not done when its files exist. It is done when something invokes them. When
 writing a task, name the caller; when finishing one, check that the feature is
 reachable from `main.go`.
+
+### A boundary is provider-neutral when a second host compiles it, not when it reads that way
+
+Tasks 27 and 28 made the backend contract provider-neutral for the WSL2Provider that
+Requirement 18 specifies. `MountSpec` grew separate host and guest halves,
+`MapProjectPath` was introduced so no caller does path arithmetic, `EditorTarget`
+replaced the SSH stanza, and the interface documentation explains at length what WSL
+needs and why Lima's answer is only Lima's. Every word of that is right.
+
+The first `go build ./...` on a Windows host failed in two packages before reaching a
+single test: `internal/state` locks with `flock(2)` and probes liveness with
+`kill(2)`, and `internal/provider/lima` names `SIGWINCH`. Once it compiled, `go test
+./...` failed in six more — a directory `fsync` that Windows answers with
+`ERROR_ACCESS_DENIED`, and several dozen fixtures asserting that `/Users/dev/code/app`
+is an absolute path, which on Windows it is not.
+
+None of that contradicts the abstraction; it is all *below* it. That is the point. The
+neutrality of an interface says nothing about the portability of the code on either
+side of it, and reviewing a diff cannot tell the difference — a compiler on the other
+platform can, in seconds. `GOOS=windows go build ./...` costs nothing and would have
+been evidence; reading the interface again was not.
+
+When a task's stated purpose is to make something work elsewhere, compile it
+elsewhere in the same PR, even when nothing there runs yet.

@@ -1,3 +1,16 @@
+//go:build unix
+
+// LimaProvider is macOS-only (REQ-17.6), and this package's tests are its
+// behaviour tests: they assert on identity mount mappings that only a POSIX
+// host can have, on golden instance configurations containing POSIX paths, and
+// on guest execution driven through real POSIX programs. None of that is a
+// question a Windows host can answer, and answering it there with fabricated
+// Windows-shaped fixtures would assert something that can never happen.
+//
+// What the Windows build claims for this package is therefore that it compiles
+// — which is what keeps `avr.exe` linkable while a second backend is built
+// beside this one — not that a backend which cannot run there passes.
+
 package lima
 
 import (
