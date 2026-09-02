@@ -178,7 +178,7 @@ var publicCommandHelp = map[string]commandHelp{
 	},
 	"sync": {
 		usage:       "avr [selector flags] sync [--to-host | --to-guest] [--yes]",
-		description: "Show what differs between this project's host copy and the Linux-native copy `avr --native-fs` keeps, and apply one side's changes to the other. With no direction it changes nothing. Files both copies changed are reported and never overwritten.",
+		description: "Show what differs between this project's host copy and the Linux-native copy `avr --native-fs` keeps, and apply one side's changes to the other. With no direction it changes nothing. Files both copies changed are reported and never overwritten.\n\nNote that `sync` is an avar command, so it does not reach the guest: if your project has a script called `sync`, or you want the guest's own sync(1), run `avr -- sync`.",
 		flags:       "  --to-host    apply the Linux copy's changes to the host copy\n  --to-guest   apply the host copy's changes to the Linux copy\n  --yes        skip the confirmation prompt",
 	},
 	"version": {

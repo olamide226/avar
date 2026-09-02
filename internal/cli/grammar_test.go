@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -590,6 +593,46 @@ func TestMode_String(t *testing.T) {
 	} {
 		if got := mode.String(); got != want {
 			t.Errorf("Mode(%d).String() = %q, want %q", int(mode), got, want)
+		}
+	}
+}
+
+// The README lists the names avar claims, and that list is a promise to the
+// user: a name on it will not reach the guest, and a name missing from it will
+// silently shadow their script rather than erroring.
+//
+// A list maintained by hand is one that drifts the first time a subcommand is
+// added, and this repository has the entries in docs/lessons.md to prove what
+// an unenforced claim is worth. So the README is read and compared, which costs
+// one test and makes adding a subcommand without documenting it a failure
+// rather than a discovery.
+func TestReadme_DocumentsEveryReservedName_REQ_2_6(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("reading the README: %v", err)
+	}
+
+	const heading = "### Reserved command names"
+	start := strings.Index(string(body), heading)
+	if start < 0 {
+		t.Fatalf("the README has no %q section; if it moved, this test and the section have to move together", heading)
+	}
+	section := string(body)[start:]
+	if end := strings.Index(section, "\n**"); end > 0 {
+		section = section[:end]
+	}
+
+	documented := map[string]bool{}
+	for _, match := range regexp.MustCompile("`([a-z]+)`").FindAllStringSubmatch(section, -1) {
+		documented[match[1]] = true
+	}
+
+	for _, name := range Subcommands() {
+		if !documented[name] {
+			t.Errorf("%q is a reserved subcommand and the README's reserved-names list does not mention it; "+
+				"without it a user with a script of that name gets avar's command silently instead of theirs", name)
 		}
 	}
 }

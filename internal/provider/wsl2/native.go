@@ -380,13 +380,35 @@ func parseBaselineLine(line string) (string, types.WorkspaceEntry, bool) {
 }
 
 // normalizeRel turns a path `find` reported into the manifest's vocabulary: no
-// leading "./", no leading or trailing slash.
+// leading "./", no leading or trailing slash, and no way out of the tree.
+//
+// The traversal guard is defence in depth rather than a fix for a reachable
+// bug. Neither source can produce a `..` component today: the manifests come
+// from `find .` piped through sha256sum, and a path component cannot be `..`
+// because a filename cannot contain a slash; a `..` entry crafted into the
+// baseline reaches classify as absent on both sides, converges, and is dropped
+// before it can enter a copy plan.
+//
+// That makes it safe by argument rather than by check, and the argument rests
+// on find's output shape and on the plan builder never promoting a
+// baseline-only path — either of which could change without anyone revisiting
+// this function. What is on the other end is the reason to spend four lines
+// here anyway: for --to-host the destination is the DrvFS mount, so a path that
+// escaped the project root would write into the user's real Windows filesystem
+// outside the directory they registered (PROP-5).
+//
+// An empty result is already what both callers treat as unparseable.
 func normalizeRel(name string) string {
 	name = strings.TrimSpace(name)
 	name = strings.TrimPrefix(name, "./")
 	name = strings.Trim(name, "/")
 	if name == "." || name == "" {
 		return ""
+	}
+	for _, segment := range strings.Split(name, "/") {
+		if segment == ".." {
+			return ""
+		}
 	}
 	return name
 }
