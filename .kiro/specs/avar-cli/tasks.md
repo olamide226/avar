@@ -189,6 +189,18 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
     - _Requirements: 17.2_
     - _writes: docs/**, .github/workflows/pages.yml, _config.yml_
 
+- [ ] 41. Harden host-agent reaping, and make `avr stop` say what it did
+  - PR #50 made `avr stop` reap the orphaned Lima host agents that a stopped instance can leave behind. The detector is right and was earned from a real leak; the parts around it have three defects, found by review of the merged code rather than by a failure.
+  - **A kill race turns a successful stop into a reported failure.** `signalPID` treats `/bin/kill`'s exit status as the verdict (`internal/provider/lima/hostagent.go:82`), and `/bin/kill -TERM <exited pid>` exits 1 with "No such process" — verified. `reapHostAgents` returns that error (`:25`, `:47`) and `stopMachine` wraps it into a failed stop (`internal/provider/lima/lima.go:377`). The window is not narrow: the escalation pass at `:47` sends KILL to pids that received TERM 200 ms earlier, which are exactly the ones most likely to have exited in between, and `avr stop --all` records one `failures` entry per machine it happens to. **The signal's exit status is not the verdict — tolerate "no such process" and let a re-scan decide.**
+  - **The constraint on that fix, which is easy to walk into:** `internal/provider/lima` compiles on Windows and must keep doing so (task 38). `hostagent.go` carries no build tag, and `syscall.Kill` does not exist there — the package confines it to `signals_unix.go` for exactly this reason. Either keep `/bin/kill` and ignore its exit status, or split the file on a build tag. Reaching for `syscall.Kill` reintroduces the breakage task 38 fixed.
+  - **`avr stop` is the only command that discards its progress.** All four call sites pass `types.DiscardProgress` (`cmd/stop.go:91,133,169`, `cmd/internal_idle.go:85`) while every other command uses `progressTo(app.Err)`. So the force-stop warning at `lima.go:371` — *"Unsaved work inside it may be lost"* — is written to a sink nobody reads. That is a safety message, not telemetry. Route stop through the same sink, and give `reapHostAgents` a way to report what it killed.
+  - **Idle auto-stop never reaps.** `cmd/internal_idle.go:79` skips machines that are not running, and an instance Lima reports as Stopped with an escaped agent is precisely that state, so only an explicit `avr stop` ever self-heals. `avr status` also renders a flat "stopped", giving the user no reason to run one.
+  - **To verify rather than assume: does killing the agent take an emulated instance's VM process with it?** The match is `limactl hostagent … <machine>` only, and a `qemu` instance runs `qemu-system-*` as a separate process. If it survives, the leak this task exists to fix is only half fixed on `--arch amd64`. Check on a real emulated machine before deciding whether the detector needs a second predicate; do not add one on suspicion.
+  - Lower priority, and hardening rather than defects: `ps -axo` truncating a long command line would make `HasSuffix(command, " "+machine)` miss an agent **silently**, which is the direction that matters — `ps -axww -o` is cheap insurance; and `--all` runs one `ps` per machine where one scan would do.
+  - The reaping has no automated coverage: the parser is unit-tested and the killing is not, because the tests stub the reaper. A failing test comes first, per the testing section of `CLAUDE.md`.
+  - _Requirements: 5.2, 5.5, 1.5_
+  - _writes: internal/provider/lima/hostagent.go, internal/provider/lima/lima.go, cmd/stop.go, cmd/internal_idle.go, internal/provider/lima/hostagent_test.go_
+
 ## Phase 3 — Post-MVP
 
 - [ ] 21. Linux-native workspace mode (`--native-fs`)
