@@ -108,7 +108,7 @@ func runReset(ctx context.Context, app *App, inv cli.Invocation) error {
 	// the user sees provisioning progress — a cold create takes minutes, and
 	// silence through it reads as a hang.
 	fmt.Fprintf(app.Out, "Creating a fresh %s…\n", label)
-	if _, err := prepareEnvironment(ctx, app, p, target, progressTo(app.Err)); err != nil {
+	if _, _, err := prepareEnvironment(ctx, app, p, target, progressTo(app.Err)); err != nil {
 		return fmt.Errorf("resetting %s after destroying it: %w", label, err)
 	}
 

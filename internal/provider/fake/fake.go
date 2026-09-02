@@ -44,6 +44,7 @@ var (
 	_ provider.Provider             = (*Fake)(nil)
 	_ provider.Snapshotter          = (*Fake)(nil)
 	_ provider.EditorTargetProvider = (*Fake)(nil)
+	_ provider.NativeWorkspacer     = (*Fake)(nil)
 	_ provider.PortDiagnoser        = (*Fake)(nil)
 )
 
@@ -82,6 +83,9 @@ const (
 	OpListSnapshots   Op = "ListSnapshots"
 	OpEditorTarget    Op = "EditorTarget"
 	OpPortDiagnostics Op = "PortDiagnostics"
+
+	OpScanNativeWorkspace  Op = "ScanNativeWorkspace"
+	OpApplyNativeWorkspace Op = "ApplyNativeWorkspace"
 )
 
 // Call is one recorded operation with the arguments it was given and the result
@@ -100,6 +104,13 @@ type Call struct {
 	Mounts []types.MountSpec
 	// Snapshot is the snapshot name passed to Snapshot or RestoreSnapshot.
 	Snapshot string
+	// Workspace is the native workspace passed to ScanNativeWorkspace or
+	// ApplyNativeWorkspace.
+	Workspace types.NativeWorkspace
+	// Sync is the synchronization passed to ApplyNativeWorkspace, captured
+	// before the Fake applied it so a test can assert the exact file set and
+	// direction a flow chose.
+	Sync types.WorkspaceSync
 	// ExitCode is what Shell returned.
 	ExitCode int
 	// Err is what the operation returned, nil on success. A call rejected by
@@ -122,6 +133,11 @@ func (c Call) String() string {
 		fmt.Fprintf(&b, "%s, %v", c.Machine, types.MountHostPaths(c.Mounts))
 	case OpSnapshot, OpRestoreSnapshot:
 		fmt.Fprintf(&b, "%s, %s", c.Machine, c.Snapshot)
+	case OpScanNativeWorkspace:
+		fmt.Fprintf(&b, "%s, %s", c.Machine, c.Workspace.Path)
+	case OpApplyNativeWorkspace:
+		fmt.Fprintf(&b, "%s, %s, %s, copy=%v, delete=%v",
+			c.Machine, c.Workspace.Path, c.Sync.Direction, c.Sync.Copy, c.Sync.Delete)
 	case OpStatus:
 	default:
 		b.WriteString(c.Machine)
@@ -188,6 +204,10 @@ type Fake struct {
 	editorTargets map[string]provider.EditorTarget
 	portDiags     map[string][]provider.PortDiagnostic
 
+	// workspaces models the two copies of each project a native workspace
+	// keeps, keyed by the workspace's guest path. See native.go.
+	workspaces map[string]*nativeWorkspace
+
 	snapshotSeq int
 }
 
@@ -199,6 +219,7 @@ func New() *Fake {
 		queuedErr:     make(map[Op][]error),
 		editorTargets: make(map[string]provider.EditorTarget),
 		portDiags:     make(map[string][]provider.PortDiagnostic),
+		workspaces:    make(map[string]*nativeWorkspace),
 	}
 }
 

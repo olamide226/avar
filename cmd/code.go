@@ -103,9 +103,20 @@ func runCode(ctx context.Context, app *App, inv cli.Invocation) error {
 	// as the shell path does. The shared prepareEnvironment gives `avr code`
 	// the same auto-provision behaviour as `avr`, so a first-time user who
 	// types `avr code` before `avr` gets a working environment.
-	guestCwd, err := prepareEnvironment(ctx, app, p, target, progressTo(app.Err))
+	_, guestCwd, err := prepareEnvironment(ctx, app, p, target, progressTo(app.Err))
 	if err != nil {
 		return err
+	}
+
+	// `avr --native-fs code` opens the copy on the Linux filesystem, because a
+	// flag that is accepted and does nothing is worse than one that is refused
+	// — the user believes they got what they asked for (docs/lessons.md,
+	// "`--ssh-agent` was accepted, plumbed, and did nothing").
+	if inv.NativeFS {
+		guestCwd, err = enterNativeWorkspace(ctx, app, p, target, progressTo(app.Err))
+		if err != nil {
+			return err
+		}
 	}
 
 	// The backend describes how an editor reaches the guest.

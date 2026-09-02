@@ -540,6 +540,45 @@ func TestParse_EnvForwardingFlags_REQ_12_1_12_2_12_3(t *testing.T) {
 	})
 }
 
+// --native-fs is an avar-position boolean like the forwarding flags, and `sync`
+// is an avar subcommand rather than a guest command (REQ-14.1, REQ-14.2).
+//
+// It is deliberately not part of Selector: it changes where a session runs, not
+// which environment it runs in, so two invocations differing only in this flag
+// still resolve to one machine (PROP-2).
+func TestParse_NativeWorkspaceFlagAndSubcommand_REQ_14_1(t *testing.T) {
+	t.Parallel()
+
+	runParseCases(t, []parseCase{
+		{
+			name: "--native-fs sets the boolean",
+			argv: []string{"--native-fs"},
+			want: Invocation{Mode: ModeShell, NativeFS: true},
+		},
+		{
+			name: "--native-fs with a guest command",
+			argv: []string{"--native-fs", "npm", "test"},
+			want: Invocation{Mode: ModeGuestCommand, Guest: []string{"npm", "test"}, NativeFS: true},
+		},
+		{
+			name: "--native-fs does not select an environment",
+			argv: []string{"--native-fs", "--distro", "fedora"},
+			want: Invocation{Mode: ModeShell, NativeFS: true, Selector: Selector{Distro: types.DistroFedora}},
+		},
+		{
+			name: "sync is an avar subcommand",
+			argv: []string{"sync", "--to-host"},
+			want: Invocation{Mode: ModeSubcommand, Subcommand: "sync", SubcommandArgs: []string{"--to-host"}},
+		},
+		{
+			// The escape hatch a project script named `sync` needs (REQ-2.6).
+			name: "-- forces a guest command named sync",
+			argv: []string{"--", "sync"},
+			want: Invocation{Mode: ModeGuestCommand, Guest: []string{"sync"}},
+		},
+	})
+}
+
 func TestMode_String(t *testing.T) {
 	t.Parallel()
 

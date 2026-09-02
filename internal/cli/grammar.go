@@ -100,6 +100,14 @@ type Invocation struct {
 	// for this invocation only (REQ-12.3).
 	SSHAgent bool
 
+	// NativeFS asks for the session to run in the project's copy on the guest's
+	// own filesystem rather than in the share of the host directory (REQ-14.1).
+	//
+	// It is not part of Selector: it changes where a session runs, not which
+	// environment it runs in, so two invocations that differ only in this flag
+	// still target the same machine.
+	NativeFS bool
+
 	// Help and Version record an avar-position --help/-h or --version/-v.
 	// After the mode-deciding token those flags belong to the guest command
 	// or to the subcommand, so they never set these fields.
@@ -122,6 +130,7 @@ var subcommands = []string{
 	"snapshot",
 	"status",
 	"stop",
+	"sync",
 	"version",
 }
 
@@ -220,6 +229,14 @@ var avarFlags = []flagSpec{
 		kind:  flagBool,
 		apply: func(inv *Invocation, value string) error {
 			inv.SSHAgent = value == "true"
+			return nil
+		},
+	},
+	{
+		names: []string{"--native-fs"},
+		kind:  flagBool,
+		apply: func(inv *Invocation, value string) error {
+			inv.NativeFS = value == "true"
 			return nil
 		},
 	},
