@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The WSL end-to-end job runs on this schedule and on demand, never per push.
+  # See the wsl-e2e job for the measurements behind that.
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -83,3 +88,82 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+  # The WSL end-to-end suite against a real WSL 2 installation.
+  #
+  # It is a separate job, and `continue-on-error` for now, because WSL 2 on a
+  # hosted runner rests on nested virtualization that GitHub provides but does
+  # not support: it works today and carries no promise that it will keep
+  # working. A red cross here should tell us that before it blocks anybody's
+  # merge. Once it has proven itself over a few weeks, drop continue-on-error
+  # and it becomes a real gate.
+  #
+  # Nightly and on demand, never per push, and that is a measurement rather
+  # than caution. On a developer machine the whole suite is 68-88 seconds. On a
+  # hosted runner the same suite took 19.4 minutes, and installing the foreign
+  # distribution the PROP-6 check needs took another 13 — about 33 minutes in
+  # total, against roughly one locally. Nested virtualization on a hosted runner
+  # is that much slower, and nothing is cached there.
+  #
+  # Per push, that is half an hour of Windows runner time (billed at 2x) on
+  # every commit, for a suite whose value is catching the rare regression a fake
+  # cannot. Nightly catches the same regression within a day, and
+  # workflow_dispatch means anyone touching the WSL backend can ask for it
+  # immediately rather than waiting.
+  #
+  # If it ever needs to run per push, the 13-minute half is the one to attack
+  # first: the PROP-6 check needs a distribution avar does not own, not
+  # specifically Ubuntu, so importing a minimal busybox rootfs would do the same
+  # job in seconds.
+  #
+  # These tests are what turned Phase 4 from unit-tested-against-a-fake into
+  # exercised-against-the-tool, and they found four defects that twenty-nine
+  # unit tests had agreed did not exist. Running them only when somebody
+  # remembers is how that happens again.
+  wsl-e2e:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Report the WSL the runner has
+        shell: bash
+        run: wsl.exe --version || echo "no usable WSL on this runner"
+
+      # PROP-6 — that avar never stops a distribution it does not own — can only
+      # be checked against a distribution avar does not own. A runner has none,
+      # so one is installed here. Without it that test skips, and a security
+      # property that skips reports green while testing nothing.
+      #
+      # --no-launch keeps the first-run wizard away; the test starts it itself.
+      #
+      # Bounded because it is otherwise unbounded: a step with no
+      # timeout-minutes inherits the six-hour job default, and with
+      # continue-on-error a hang here would burn that while reporting a cross
+      # nobody is gated on. It took 13 minutes on the first real run, so 25 is
+      # roughly double the observed cost and still an order of magnitude below
+      # the default.
+      - name: Install a distribution avar does not own
+        shell: bash
+        timeout-minutes: 25
+        run: wsl.exe --install Ubuntu-24.04 --no-launch --web-download || echo "could not install one; the PROP-6 check will fail loudly"
+
+      # AVR_E2E_REQUIRE_FOREIGN turns that test's skip into a failure. Here the
+      # environment is arranged, so a missing foreign distribution means the
+      # arrangement broke rather than that the host happens to be bare.
+      # The 45m timeout stays, and is now justified by measurement rather than
+      # by caution: this suite took 19m24s here against 68-88s on a developer
+      # machine. Tightening it to the 15-20m that the local numbers suggest
+      # would have failed this very run. It is the Makefile's figure too, and
+      # the two should stay in step.
+      - name: E2E against real WSL
+        shell: bash
+        env:
+          AVR_E2E_REQUIRE_FOREIGN: "1"
+        run: go test -tags=e2e -timeout=45m -count=1 ./e2e/...

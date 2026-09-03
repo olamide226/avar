@@ -314,6 +314,17 @@ here so the phase's history matches what is on `main`.
   - _Properties: 21_
   - _writes: cmd/purity_test.go_
 
+- [ ] 40. Run the WSL end-to-end suite in CI
+  - The suite is what turned Phase 4 from unit-tested-against-a-fake into exercised-against-the-tool, and it found four defects that twenty-nine unit tests had agreed did not exist. It runs only when somebody remembers, which is how that happens again.
+  - **Nightly and on demand, never per push, and that is a measurement rather than caution.** On a developer machine the whole suite is 68–88 seconds, of which the cold-start test is 34 and every other test is under three. **On a hosted runner the same suite took 19.4 minutes, and installing the foreign distribution the PROP-6 check needs took another 13 — about 33 minutes against roughly one locally.** Nested virtualization on a hosted runner is that much slower and nothing is cached there. Per push that is half an hour of Windows runner time, billed at 2×, on every commit. Nightly catches the same regression within a day; `workflow_dispatch` lets anyone touching the WSL backend ask for it immediately.
+  - **This corrects an earlier estimate in this task that said a runner would be slower "but not by an order of magnitude".** It is by an order of magnitude, and the first version of this job ran per push on the strength of that guess. The number came from actually running it.
+  - If it ever needs to run per push, the 13-minute half is the one to attack first: PROP-6 needs a distribution avar does not own, not specifically Ubuntu, so importing a minimal busybox rootfs would do the same job in seconds.
+  - A separate `windows-latest` job, `continue-on-error` at first: WSL 2 on a hosted runner rests on nested virtualization that GitHub provides but does not support. It works — verified, the job passed — and carries no promise of continuing to. Drop `continue-on-error` once it has proven itself, and it becomes a real gate.
+  - **The job must install a distribution avar does not own.** PROP-6 — that avar never stops somebody else's environment — cannot be checked without one, and a runner has none. `AVR_E2E_REQUIRE_FOREIGN` turns that test's skip into a failure so the arrangement breaking is visible rather than silent.
+  - _Requirements: 18.1, 18.14, 17.5_
+  - _Properties: 6_
+  - _writes: .github/workflows/ci.yml, e2e/wsl_shell_test.go_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

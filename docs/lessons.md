@@ -304,3 +304,49 @@ was a guess at what automount does; what it actually does is mount the drives,
 and that is what the check should look for. A guess that is too broad fails
 honest environments, and the fix for it — narrowing — is exactly how a check
 becomes too narrow to catch anything.
+
+### A test that reports a security failure it did not observe
+
+The end-to-end check for PROP-6 — that `avr stop --all` never touches a
+distribution avar does not own — skipped whenever no such distribution happened
+to be running. Silently, on the machine it was written on, and *always* on a CI
+runner, where nothing of the user's is ever running. Fixing that was
+straightforward: find one, and start it if it is registered but stopped.
+
+The obvious way to start it is wrong, and the way it is wrong is the lesson.
+`wsl --exec true` returns immediately and leaves nothing running inside the
+distribution, and WSL reaps an idle distribution about thirty seconds later —
+measured, not assumed:
+
+```
+t=10s  ubuntu_running=1
+t=20s  ubuntu_running=1
+t=30s  ubuntu_running=0   <- WSL reaped it, with avar nowhere near it
+```
+
+The test provisions an environment before it asserts, which takes longer than
+that. So the distribution vanished mid-test, and the assertion reported that
+`avr stop --all` had stopped somebody's environment. It accused avar of the
+exact violation the property exists to prevent, on no evidence at all. Running
+`avr stop --all` by hand against a fresh state directory showed avar printing
+"avar is not managing any Linux environments" and leaving the distribution
+alone, which is what turned a plausible bug report into a known false one.
+
+Two things generalise past WSL.
+
+**A false report of a security failure is worse than no report.** A skip is
+visibly nothing; a red cross that names a property is evidence, and evidence
+that is wrong costs whoever chases it. The bar for a test that can accuse the
+code of a security violation is higher than for one that cannot.
+
+**A runtime that reaps idle resources will reap the one your test is
+measuring.** Anything with an idle timeout — a container runtime, a VM manager,
+a connection pool, a scheduler — will do this, and the failure surfaces as the
+system under test having done something. If a test needs a resource alive, it
+has to hold it alive with something real and not merely bring it into existence.
+
+The same fix has a second edge. Having found a foreign distribution, the cleanup
+terminated it unconditionally — including one the developer already had open
+with work in it. In the test for "never stop a distribution you do not own".
+Clean up what you started, and record which that was at the moment you know it,
+because starting a process inside a distribution changes the answer.

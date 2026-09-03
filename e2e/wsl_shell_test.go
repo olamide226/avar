@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf16"
 
 	"github.com/olamide226/avar/internal/types"
@@ -352,16 +353,7 @@ func TestWSL_StopAllLeavesTheUsersOwnDistributionsAlone_PROP_6(t *testing.T) {
 	requireWSL(t)
 	dir := project(t, "stop-all")
 
-	foreign := ""
-	for name := range runningDistributions(t) {
-		if !strings.HasPrefix(name, "avr-") {
-			foreign = name
-			break
-		}
-	}
-	if foreign == "" {
-		t.Skip("no distribution of the user's own is running, so there is nothing avar could wrongly stop")
-	}
+	foreign := runningForeignDistribution(t)
 
 	if _, stderr, code := avr(t, dir, suiteEnv(t), "true"); code != 0 {
 		t.Fatalf("preparing the environment: exit %d\nstderr:\n%s", code, stderr)
@@ -373,6 +365,137 @@ func TestWSL_StopAllLeavesTheUsersOwnDistributionsAlone_PROP_6(t *testing.T) {
 	if !runningDistributions(t)[foreign] {
 		t.Errorf("avr stop --all stopped %q, which avar did not create", foreign)
 	}
+}
+
+// requireForeignEnv makes the absence of a user-owned distribution a failure
+// rather than a skip. CI sets it, because there the environment is arranged and
+// a missing foreign distribution means the arrangement broke — not that the host
+// happens to be bare.
+const requireForeignEnv = "AVR_E2E_REQUIRE_FOREIGN"
+
+// keepAliveFor is how long the process holding a foreign distribution open runs.
+// It only has to outlast one test, which provisions an environment and stops it;
+// the process is killed in cleanup either way.
+const keepAliveFor = "600"
+
+// runningForeignDistribution returns a distribution avar does not own, held open
+// for the duration of the test, and cleans up whatever it started.
+//
+// The test above is the only end-to-end check of PROP-6 — that `avr stop --all`
+// never touches somebody else's environment — and it used to skip whenever no
+// foreign distribution happened to be *running*. That is a bad shape for a
+// security property: on the machine this was written on it skipped silently, and
+// on a CI runner, where nothing of the user's is ever running, it would have
+// skipped every time while reporting green.
+//
+// Holding the distribution open is the part that is easy to get wrong, and
+// getting it wrong is worse than the skip was. WSL reaps a distribution once
+// nothing is running inside it: measured here, `wsl --exec true` returns
+// immediately and WSL stops the distribution about thirty seconds later, with
+// avar nowhere near it. A test that started one that way would watch it vanish
+// while `avr` was still provisioning, and then report that `avr stop --all` had
+// stopped somebody's environment — accusing avar of the exact violation this
+// property exists to prevent, on no evidence.
+//
+// So a real process is started inside the guest and left running, which is what
+// keeps the distribution genuinely alive and makes "is it still running
+// afterwards" mean what it says. If avar wrongly terminated the distribution,
+// that process dies with it and the assertion fails honestly.
+func runningForeignDistribution(t *testing.T) string {
+	t.Helper()
+
+	// Whether the distribution was already running decides what may be cleaned
+	// up afterwards, so it is recorded here rather than re-derived later: by
+	// then this function has started a process inside it and the answer would
+	// have changed.
+	name, alreadyRunning := "", false
+	for candidate := range runningDistributions(t) {
+		if !strings.HasPrefix(candidate, types.MachineNamePrefix) {
+			name, alreadyRunning = candidate, true
+			break
+		}
+	}
+	if name == "" {
+		for _, candidate := range registeredDistributions(t) {
+			if !strings.HasPrefix(candidate, types.MachineNamePrefix) {
+				name = candidate
+				break
+			}
+		}
+	}
+
+	if name == "" {
+		if os.Getenv(requireForeignEnv) != "" {
+			t.Fatalf("%s is set, so a distribution of the user's own was expected and none is registered; "+
+				"PROP-6 cannot be checked without one, and skipping would report a security property as passing when it was never tested",
+				requireForeignEnv)
+		}
+		t.Skip("no distribution of the user's own is registered, so there is nothing avar could wrongly stop; " +
+			"set " + requireForeignEnv + " to make this a failure instead")
+		return ""
+	}
+
+	// Start() rather than Run(): the point is a process that keeps running.
+	keepAlive := exec.Command("wsl.exe", "--distribution", name, "--exec", "sleep", keepAliveFor)
+	if err := keepAlive.Start(); err != nil {
+		t.Fatalf("holding %q open so PROP-6 can be checked against it: %v", name, err)
+	}
+	t.Cleanup(func() {
+		// The keep-alive is unconditionally this test's to kill: it started it.
+		if keepAlive.Process != nil {
+			_ = keepAlive.Process.Kill()
+		}
+		_ = keepAlive.Wait()
+
+		// The distribution is not. Terminating one this test found already
+		// running would kill whatever the developer had in it — a build, an
+		// editor, an unsaved shell — and doing that here would be absurd: this
+		// is the test for "avar never stops a distribution it does not own".
+		// It is also the failure docs/lessons.md records from the Lima suite, a
+		// suite that damaged the machine it ran on.
+		if !alreadyRunning {
+			_ = exec.Command("wsl.exe", "--terminate", name).Run()
+		}
+	})
+
+	if !waitForRunning(t, name) {
+		t.Fatalf("%q did not come up, so PROP-6 cannot be checked against it", name)
+	}
+	return name
+}
+
+// waitForRunning polls until WSL reports name as running, or gives up.
+//
+// Starting a distribution is not instantaneous and there is no synchronous form
+// of it, so the alternative to polling is a fixed sleep long enough for the
+// slowest machine — which is either flaky or slow, and usually both.
+func waitForRunning(t *testing.T, name string) bool {
+	t.Helper()
+
+	for range 40 {
+		if runningDistributions(t)[name] {
+			return true
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return false
+}
+
+// registeredDistributions is everything WSL has, running or not.
+func registeredDistributions(t *testing.T) []string {
+	t.Helper()
+
+	out, err := exec.Command("wsl.exe", "--list", "--quiet").Output()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, line := range strings.Split(decodeUTF16(out), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // runningDistributions is what WSL currently has running, read directly rather
@@ -481,14 +604,33 @@ func cleanupBackend() {
 // these tests exist to check avar against reality: reading the evidence with the
 // code under test would make a decoder bug invisible in exactly the tests meant
 // to catch it.
+//
+// Independent, however, must not mean carrying the defect the production
+// decoder was fixed for. Requiring every odd byte to be NUL holds only while the
+// text is entirely Latin-1: 名 is U+540D, which encodes to 8D 54, so one
+// character outside it breaks the run for the whole buffer. Here that would mean
+// a distribution named in a non-Latin script becoming invisible to
+// runningDistributions and registeredDistributions — and the PROP-6 check
+// skipping on a machine that does have a foreign distribution. So this counts
+// NULs by parity, the way looksLikeUTF16LE does, for the same reason.
 func decodeUTF16(b []byte) string {
 	if len(b) < 2 || len(b)%2 != 0 {
 		return string(b)
 	}
-	for i := 1; i < len(b); i += 2 {
-		if b[i] != 0 {
-			return string(b)
+	var odd, even int
+	for i := 0; i+1 < len(b); i += 2 {
+		if b[i] == 0 {
+			even++
 		}
+		if b[i+1] == 0 {
+			odd++
+		}
+	}
+	// Three in ten is far below what any real wsl.exe listing produces — the
+	// CRLF ending every line is itself two Latin-1 code units — and far above
+	// the zero that UTF-8 output produces. odd > even separates LE from BE.
+	if pairs := len(b) / 2; odd*10 < pairs*3 || odd <= even {
+		return string(b)
 	}
 	units := make([]uint16, 0, len(b)/2)
 	for i := 0; i+1 < len(b); i += 2 {
