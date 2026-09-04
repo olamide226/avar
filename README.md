@@ -119,6 +119,33 @@ Use `avr help <command>` or `avr <command> --help` for the exact arguments and
 flags supported by an individual management command. Help never starts, stops,
 resets, snapshots, or destroys an environment.
 
+### Reserved command names
+
+The first word after avar's own flags decides everything that follows it. If it
+names one of avar's commands, avar handles it; otherwise it is the start of a
+command to run in Linux. So these names belong to avar and will not reach the
+guest:
+
+<!-- reserved-names:begin — checked against cli.Subcommands() by a test; keep both markers -->
+`code` `destroy` `help` `internal` `isolate` `reset` `restore` `snapshot` `status` `stop` `sync` `version`
+<!-- reserved-names:end -->
+
+(`internal` carries avar's own scheduled idle check and is not a command you run.)
+
+**`--` forces the guest reading**, which is what to use if your project has a
+script or binary by one of those names:
+
+```sh
+avr -- sync          # runs the guest's sync(1), or your project's ./sync
+avr -- status        # runs the guest's own status, not avar's
+```
+
+`sync` is the one worth knowing about, because it is both a standard Unix
+command and a plausible name for a project script — and the failure mode is
+quiet: without `--`, avar answers instead of your script, rather than reporting
+an error. The other reserved names are unlikely to collide with anything you
+would run.
+
 Snapshots do not work in every environment — see [Limitations](#limitations).
 
 ## Choosing an environment

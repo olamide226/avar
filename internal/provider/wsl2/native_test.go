@@ -351,3 +351,43 @@ func TestNativeWorkspace_RefusesAMachineAvarDoesNotOwn_PROP_6(t *testing.T) {
 		t.Error("avar synchronized into a distribution it does not own")
 	}
 }
+
+// PROP-5: a manifest path can never address anything outside the tree it
+// describes.
+//
+// This is defence in depth — no current source produces a `..` component, and
+// the guard exists because that is true by argument rather than by check. The
+// destination for a --to-host apply is the DrvFS mount, so a path that escaped
+// would write into the user's real Windows filesystem outside the directory
+// they registered, which is the one outcome PROP-5 forbids.
+func TestNormalizeRel_RefusesAnythingLeavingTheTree_PROP_5(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "ordinary path", in: "./src/main.go", want: "src/main.go"},
+		{name: "surrounding slashes", in: "/src/main.go/", want: "src/main.go"},
+		{name: "the tree root itself", in: ".", want: ""},
+		{name: "a name containing dots is fine", in: "./a..b/c", want: "a..b/c"},
+		{name: "a file literally named ..foo", in: "./..foo", want: "..foo"},
+
+		{name: "parent at the start", in: "../escape", want: ""},
+		{name: "parent in the middle", in: "src/../../escape", want: ""},
+		{name: "parent at the end", in: "src/..", want: ""},
+		{name: "parent alone", in: "..", want: ""},
+		{name: "parent after normalisation", in: "./../escape", want: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := normalizeRel(tc.in); got != tc.want {
+				t.Errorf("normalizeRel(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

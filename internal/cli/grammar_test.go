@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -590,6 +593,69 @@ func TestMode_String(t *testing.T) {
 	} {
 		if got := mode.String(); got != want {
 			t.Errorf("Mode(%d).String() = %q, want %q", int(mode), got, want)
+		}
+	}
+}
+
+// The README lists the names avar claims, and that list is a promise to the
+// user: a name on it will not reach the guest, and a name missing from it will
+// silently shadow their script rather than erroring.
+//
+// A list maintained by hand is one that drifts the first time a subcommand is
+// added, and this repository has the entries in docs/lessons.md to prove what
+// an unenforced claim is worth. So the README is read and compared, which costs
+// one test and makes adding a subcommand without documenting it a failure
+// rather than a discovery.
+func TestReadme_DocumentsEveryReservedName_REQ_2_6(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("reading the README: %v", err)
+	}
+
+	// The list is bounded by explicit markers rather than by the prose around
+	// it, and a missing marker fails rather than falling back.
+	//
+	// The first version of this test read from the heading to the next bold
+	// line, and kept the whole remainder of the file when that line was not
+	// found. Rewording one sentence — an ordinary README edit nobody would
+	// connect to a test in internal/cli — made the scan swallow the command
+	// table further down, where every subcommand appears anyway, so the test
+	// passed no matter what the reserved-names list said. A detector that can
+	// quietly stop detecting is the failure this test exists to prevent, one
+	// level up.
+	//
+	// HTML comments are invisible in rendered Markdown and are not something a
+	// prose edit reaches for, which is what makes them a boundary rather than a
+	// guess at one.
+	const (
+		beginMarker = "<!-- reserved-names:begin"
+		endMarker   = "<!-- reserved-names:end -->"
+	)
+
+	start := strings.Index(string(body), beginMarker)
+	if start < 0 {
+		t.Fatalf("the README has no %q marker; this test reads the reserved-names list between the markers, "+
+			"so without it there is nothing to check and a silent pass would be worse than this failure", beginMarker)
+	}
+	rest := string(body)[start:]
+	end := strings.Index(rest, endMarker)
+	if end < 0 {
+		t.Fatalf("the README has %q but no %q; without the closing marker this test would read to the end of the file, "+
+			"pick up the command table, and report every subcommand as documented whatever the list says", beginMarker, endMarker)
+	}
+	section := rest[:end]
+
+	documented := map[string]bool{}
+	for _, match := range regexp.MustCompile("`([a-z]+)`").FindAllStringSubmatch(section, -1) {
+		documented[match[1]] = true
+	}
+
+	for _, name := range Subcommands() {
+		if !documented[name] {
+			t.Errorf("%q is a reserved subcommand and the README's reserved-names list does not mention it; "+
+				"without it a user with a script of that name gets avar's command silently instead of theirs", name)
 		}
 	}
 }
