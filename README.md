@@ -126,7 +126,9 @@ names one of avar's commands, avar handles it; otherwise it is the start of a
 command to run in Linux. So these names belong to avar and will not reach the
 guest:
 
+<!-- reserved-names:begin — checked against cli.Subcommands() by a test; keep both markers -->
 `code` `destroy` `help` `internal` `isolate` `reset` `restore` `snapshot` `status` `stop` `sync` `version`
+<!-- reserved-names:end -->
 
 (`internal` carries avar's own scheduled idle check and is not a command you run.)
 
