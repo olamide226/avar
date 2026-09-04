@@ -131,7 +131,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
 - [x] 16. Implement `avr reset`  _(PR #32)_
   - Delete + re-provision from template/base; interactive confirmation with explicit destruction summary, `--yes` bypass; e2e asserts host project files untouched (Property 10)
   - _Requirements: 10.3_
-  - _writes: cmd/reset.go, e2e/reset_test.go_
+  - _writes: cmd/reset.go, e2e/reset_test.go_ — shipped as `e2e/z_reset_test.go`; the `z_` prefix orders the destructive tests last within the package, so they cannot pull the environment out from under the tests that follow
 
 - [x] 17. Implement project isolation  _(PR #36)_
   - [x] 17.1 Base-machine + clone fast path  _(PR #36)_
@@ -208,6 +208,20 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 14.1, 14.2, 14.3_
   - _writes: internal/workspace/native.go, cmd/root.go, e2e/nativefs_test.go_
 
+  - [x] 21.1 The provider-neutral half, and the WSL implementation  _(PR #65, #67)_
+    - `--native-fs` runs a session in a copy of the project on the distribution's own filesystem at `~/workspaces/<name>-<hash>`; `avr sync [--to-host|--to-guest] [--yes]` reviews and applies changes between the two copies. Requirement 14 is satisfied on Windows.
+    - Everything above the backend is host-neutral: `internal/workspace/native.go` is a pure three-way planner over content hashes, `types.NativeWorkspace`/`WorkspaceScan` carry the vocabulary, and `provider.NativeWorkspacer` is an optional capability with no WSL concept in any signature. `--native-fs` on a backend that does not implement it says so plainly rather than failing.
+    - Content hashes and never timestamps: two filesystems, two clocks, two granularities, across a translation layer. The baseline advances **per file**, which is what makes a one-directional sync correct while changes are outstanding the other way. A conflict refuses the whole apply, because a partial one leaves a destination that is neither copy.
+    - `sync` joins the reserved subcommand names, so a project script of that name needs `avr -- sync`. Documented in the README's reserved-names list and in `avr sync --help`, and the list is checked against `cli.Subcommands()` by a test rather than maintained by hand (#67).
+    - _Requirements: 14.1, 14.2, 14.3, 18.11_
+    - _Properties: 22_
+    - _writes: internal/workspace/native.go, internal/types/workspace.go, internal/provider/provider.go, internal/provider/wsl2/native.go, internal/provider/fake/native.go, cmd/native.go, cmd/root.go, internal/cli/grammar.go, internal/workspace/advise.go, e2e/nativefs_test.go, .kiro/specs/avar-cli/design.md_
+
+  - [ ] 21.2 The Lima implementation
+    - Only the three `NativeWorkspacer` methods; nothing above the Provider boundary changes, which is the claim 21.1's shape was built to make good on. Lima's `--sync` is the substrate the original task description names.
+    - _Requirements: 14.1, 14.2, 14.3_
+    - _writes: internal/provider/lima/native.go, + tests_
+
 - [ ] 22. `.avr.toml` support and `avr init` detection
   - Config schema (distro/arch/cpus/memory/packages/forward_env) applied at resolve time; manifest scanners (package.json, pyproject.toml, go.mod, Cargo.toml, Dockerfile, docker-compose.yml, .tool-versions, mise.toml); confirm-before-write proposal UX; zero-config path unchanged
   - _Requirements: 15.1, 15.2, 15.3, 15.4_
@@ -245,13 +259,15 @@ task 38b had to restore was the real rule: `cmd/shell.go` was the last place a
 command's behaviour turned on `p.ID() == types.ProviderWSL2`, and it now reads
 the condition off the `MountSpec` instead.
 
-One requirement is knowingly incomplete: **REQ-18.11's second clause**, which says
-accepting the cross-filesystem recommendation routes to Requirement 14's reviewable
-synchronization. Requirement 14 is task 21 and is not built, so the advisory today
-recommends what works rather than a flag avar does not have. Task 21 owns closing it.
+**Requirement 18 is now complete.** Its last open clause was REQ-18.11's second
+half — that accepting the cross-filesystem recommendation routes to Requirement
+14's reviewable synchronization — which could not be honoured while Requirement 14
+did not exist. Task 21.1 built it, so the advisory names `--native-fs` and
+`avr sync` rather than giving generic advice, and `TestMessage_IsActionableToday_REQ_18_11`
+inverted from forbidding that mention to requiring it.
 
-Everything else Requirement 18 asks for is implemented and has been exercised
-against a real WSL 2 installation (task 38c), not only against a fake.
+Everything Requirement 18 asks for is implemented and has been exercised against a
+real WSL 2 installation (task 38c), not only against a fake.
 
 - [x] 38. Make the existing packages build and pass their tests on a Windows host
   - `go build ./...` does not compile on `windows/amd64` today: `internal/state` uses `syscall.Flock` for the advisory lock and `syscall.Kill(pid, 0)` for stale-session detection, and `internal/provider/lima` names `syscall.SIGWINCH` and `syscall.Kill`. None of that is Windows work in disguise — it is POSIX leaking through packages that are otherwise portable — but every task below is unreachable until it is fixed, because none of their tests can even be compiled.
@@ -289,8 +305,8 @@ against a real WSL 2 installation (task 38c), not only against a fake.
 
 - [x] 37. Windows packaging and cross-filesystem guidance
   - Self-contained `avr.exe` for supported Windows architectures; once-per-project dismissible recommendation for Linux-native workspace mode when a workload would suffer from cross-filesystem I/O
-  - **REQ-18.11 is satisfied in one half only.** The advisory is detected, shown once per project and dismissible; its second clause — "accepting that recommendation SHALL use Requirement 14's reviewable synchronization" — cannot be honoured until task 21 builds Linux-native workspace mode. Recommending a flag avar does not have would be worse than useless, so the message carries Microsoft's own advice instead, and `TestMessage_IsActionableToday_REQ_18_11` asserts it does not name `--native-fs` until task 21 lands. **Task 21 must revisit this.**
-  - _Requirements: 18.11 (partial), 18.14_
+  - **REQ-18.11 was satisfied in one half only when this shipped, and is now whole.** The advisory was detected, shown once per project and dismissible; its second clause — "accepting that recommendation SHALL use Requirement 14's reviewable synchronization" — could not be honoured while Linux-native workspace mode did not exist. Rather than name a flag avar did not have, the message carried Microsoft's own advice, and `TestMessage_IsActionableToday_REQ_18_11` asserted it did *not* say `--native-fs`. **Task 21.1 closed it**, and that test now requires the mention it used to forbid — which is why the constraint was written as a test rather than left as an intention.
+  - _Requirements: 18.11, 18.14_
   - _writes: .goreleaser.yaml, .github/workflows/release.yml, internal/workspace/advise.go_
   - _also wrote: README.md, cmd/shell.go, internal/types/records.go_
 
@@ -326,7 +342,7 @@ here so the phase's history matches what is on `main`.
   - _Properties: 21_
   - _writes: cmd/purity_test.go_
 
-- [ ] 40. Run the WSL end-to-end suite in CI
+- [x] 40. Run the WSL end-to-end suite in CI  _(PR #64)_
   - The suite is what turned Phase 4 from unit-tested-against-a-fake into exercised-against-the-tool, and it found four defects that twenty-nine unit tests had agreed did not exist. It runs only when somebody remembers, which is how that happens again.
   - **Nightly and on demand, never per push, and that is a measurement rather than caution.** On a developer machine the whole suite is 68–88 seconds, of which the cold-start test is 34 and every other test is under three. **On a hosted runner the same suite took 19.4 minutes, and installing the foreign distribution the PROP-6 check needs took another 13 — about 33 minutes against roughly one locally.** Nested virtualization on a hosted runner is that much slower and nothing is cached there. Per push that is half an hour of Windows runner time, billed at 2×, on every commit. Nightly catches the same regression within a day; `workflow_dispatch` lets anyone touching the WSL backend ask for it immediately.
   - **This corrects an earlier estimate in this task that said a runner would be slower "but not by an order of magnitude".** It is by an order of magnitude, and the first version of this job ran per push on the strength of that guess. The number came from actually running it.
