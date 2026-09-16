@@ -32,6 +32,9 @@ func newProjectTest(t *testing.T, avrToml string) *projectTest {
 	// newTestApp already keeps environment creation off the host's scheduler.
 	app := newTestApp(t, f)
 	app.Stdin = strings.NewReader("")
+	// No person is at a terminal unless a test says so. Tests that exercise
+	// a prompt set app.terminal and supply the answer on app.Stdin.
+	app.terminal = func() bool { return false }
 
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -44,6 +47,15 @@ func newProjectTest(t *testing.T, avrToml string) *projectTest {
 	}
 	enterDir(t, dir)
 	return &projectTest{testApp: app, f: f, dir: dir}
+}
+
+// writeFile replaces the project's .avr.toml, as editing it between two
+// invocations would.
+func (pt *projectTest) writeFile(t *testing.T, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(pt.dir, projconfig.FileName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // enterDir makes dir the working directory for the rest of the test. The

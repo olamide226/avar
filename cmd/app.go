@@ -44,6 +44,11 @@ type App struct {
 	prov     provider.Provider
 	provErr  error
 
+	// terminal replaces the check for an interactive terminal when set, so
+	// that flow tests can prove both what avar asks a person and what it
+	// refuses to assume without one. Nil means the real stdin.
+	terminal func() bool
+
 	// buildBackend replaces backend construction when set: flow tests hand
 	// the App an in-process provider through it, so the whole of Provider —
 	// including the crash recovery that follows a successful build — runs
@@ -67,6 +72,14 @@ type App struct {
 // newApp returns an App writing to the real streams.
 func newApp(version string) *App {
 	return &App{Version: version, Stdin: os.Stdin, Out: os.Stdout, Err: os.Stderr}
+}
+
+// interactive reports whether a person is at the terminal to answer a question.
+func (a *App) interactive() bool {
+	if a.terminal != nil {
+		return a.terminal()
+	}
+	return stdinIsTerminal()
 }
 
 // confirmYesNo puts a yes/no question to the user and reports whether they

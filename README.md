@@ -216,14 +216,37 @@ described above. A team that wants everyone on the same environment can commit
 a `.avr.toml` to the project directory:
 
 ```toml
-distro = "fedora"   # ubuntu, debian or fedora, optionally "fedora:43"
-arch = "amd64"      # arm64 or amd64
+distro = "fedora"                 # ubuntu, debian or fedora, optionally "fedora:43"
+arch = "amd64"                    # arm64 or amd64
+cpus = 4                          # for the project's own environment (avr --isolate)
+memory = "8GiB"                   # likewise; GiB or MiB
+packages = ["ripgrep", "jq"]      # Fedora's own package names, since distro says fedora
+forward_env = ["GITHUB_TOKEN"]    # host variables to pass into this project's sessions
 ```
 
-Both keys are optional and mean exactly what `--distro` and `--arch` mean. Every
-command that picks "this environment" (`avr`, `stop`, `reset`, `code`, and the
-rest) uses the file. A flag you type still wins, and so does anything avar
-already remembers for the project on your machine.
+Every key is optional. `distro` and `arch` mean exactly what `--distro` and
+`--arch` mean, and every command that picks "this environment" (`avr`, `stop`,
+`reset`, `code`, and the rest) uses them. A flag you type still wins, and so
+does anything avar already remembers for the project on your machine.
+
+The rest are held to the same rule as everything else that crosses into Linux:
+**a file in a repository you cloned is not you.**
+
+- `packages` and `forward_env` do nothing until you approve them. The first
+  `avr` in the project lists each package, says which environment it would be
+  installed into (including when that environment is shared by every project),
+  lists each variable whose value would be forwarded, and asks. Only a yes
+  approves; the answer is remembered on your machine, per project, and avar
+  asks again only if the file asks for something new. Without a terminal
+  nothing is approved: avar says what is waiting and carries on without it.
+  Packages are installed once per environment with `apt-get` or `dnf`, and are
+  installed again after `avr reset` the next time you enter the environment.
+- `cpus` and `memory` apply only to the project's own environment, and only when
+  it is created. The shared environment serves every project, so no one
+  project's file resizes it, and avar never resizes or restarts an environment
+  because a file changed. When a size cannot apply, avar says so once. On
+  Windows every WSL distribution shares one allocation, so the size cannot be
+  set per environment at all.
 
 avar reads the file only from the project directory itself, the directory you
 first ran `avr` in (or that directory's project, if you are in a subdirectory),
@@ -360,8 +383,7 @@ scope.
 Nothing in this section exists. Each item is specified or sketched; none of it is
 implemented, and there are no dates.
 
-- The rest of `.avr.toml` (`cpus`, `memory`, `packages`, `forward_env`) and
-  `avr init`.
+- `avr init`.
 
 ## Development
 
