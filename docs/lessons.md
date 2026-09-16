@@ -42,6 +42,27 @@ sentence came out.
 
 ---
 
+### A test that registers something with the host outlives the test
+
+Creating an environment registers avar's idle check with the host scheduler.
+The flow tests create environments, and nothing stopped that registration
+from running. On a Mac with no agent installed, a test run wrote
+`~/Library/LaunchAgents/com.avar.idle-check.plist` naming the test binary and
+loaded it into the real login session. The test binary was deleted at the end
+of the run. The agent was not. It failed every ten minutes for seven weeks,
+and because avar trusted any existing plist, idle auto-stop never ran on that
+machine again. Nobody noticed, because the only symptom of a background
+feature that has stopped is nothing happening.
+
+`t.TempDir()` and a fake provider isolate what a test knows about. They do not
+isolate what it does to the host: a scheduler entry, a launchd agent, a
+keychain item, a line in a shell profile. Every such side effect needs a seam
+the test double replaces (here `App.scheduleIdleCheck`), set in the shared
+test constructor so no new test can forget it. The corollary: when you make a
+host registration stricter, add the seam first. Once the registration here
+compared content, an unguarded test run would have rewritten the developer's
+real agent to point at the test binary on purpose.
+
 ## Verification
 
 ### Only tick a check you actually ran
