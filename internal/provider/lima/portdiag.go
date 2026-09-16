@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/olamide226/avar/internal/provider"
+	"github.com/olamide226/avar/internal/provider/listeners"
 )
 
 // Lima forwards guest ports without avar asking and releases them the same way
@@ -48,12 +50,19 @@ const maxLogTail = 1 << 20 // 1 MiB
 const sshGuestPort = 22
 
 // PortDiagnostics reports what Lima's host agent knows about the machine's
-// forwarded ports, ordered by guest port (REQ-7.2).
+// forwarded ports, ordered by guest port, with the guest process listening on
+// each where it can be determined (REQ-7.2, REQ-16.1).
+//
+// Two sources are joined. The host agent's log says what Lima forwarded or
+// failed to; a listing taken inside the guest says what is listening now and
+// who holds it. Only ports on both are reported (see attribute).
 //
 // It is read-only and never fails because forwarding is broken: a port the host
 // could not publish is an entry in the result, not an error. A machine that is
 // not running has nothing forwarded and reports nothing, and so does one whose
-// host agent has not written a log yet.
+// host agent has not written a log yet. Failing to reach the guest at all is an
+// error, because a listing that silently dropped every port would read as
+// "nothing is running".
 func (p *Provider) PortDiagnostics(ctx context.Context, machine string) ([]provider.PortDiagnostic, error) {
 	// The prefix alone, as in Status: this is a query, and a machine avar
 	// created but has not finished recording still has ports worth reporting
@@ -73,7 +82,62 @@ func (p *Provider) PortDiagnostics(ctx context.Context, machine string) ([]provi
 	if err != nil {
 		return nil, fmt.Errorf("reading Lima's port-forwarding log for machine %s: %w", machine, err)
 	}
-	return parsePortDiagnostics(log), nil
+	diagnostics := parsePortDiagnostics(log)
+	if len(diagnostics) == 0 {
+		// Nothing was ever forwarded or refused, so there is nothing to
+		// confirm or attribute, and no reason to pay for a round trip into
+		// the guest on every `avr status`.
+		return nil, nil
+	}
+
+	out, err := p.run(ctx, guestListenersArgv(machine)...)
+	if err != nil {
+		return nil, fmt.Errorf("reading the listening ports inside machine %s: %w", machine, err)
+	}
+	return attribute(diagnostics, listeners.Parse(string(out))), nil
+}
+
+// guestListenersArgv runs listeners.Script in the guest as the guest user.
+//
+// The script travels base64-encoded and is decoded by the guest's own shell, so
+// it reaches /bin/sh byte for byte whatever quoting `limactl shell` applies on
+// its way through SSH — the same arrangement the WSL backend uses. It is a
+// constant: nothing about the machine or the user is interpolated into it.
+//
+// It runs unprivileged. The servers a developer starts run as that developer and
+// are attributed; a system daemon's port is listed without a process rather than
+// reached for with sudo, because a read-only listing has no business escalating.
+func guestListenersArgv(machine string) []string {
+	encoded := base64.StdEncoding.EncodeToString([]byte(listeners.Script))
+	return []string{"shell", "--workdir", guestProbeWorkdir, machine, "--", "/bin/sh", "-c", "echo " + encoded + " | base64 -d | /bin/sh"}
+}
+
+// attribute keeps the diagnostics that describe a port a guest process is
+// listening on now, and names that process where the guest could say.
+//
+// The host agent's log is a history, and on Lima 2.x it does not record every
+// ending: the gRPC forwarder logs a closed TCP forward as "removing listener for
+// hostAddress: …" with no protocol at all, which cannot be told apart from a
+// UDP one. Rather than guess from the log, the guest is asked what is listening,
+// and a port the log still calls forwarded with no listener behind it is
+// dropped — it was released (REQ-7.3), and `avr open` must not send a browser
+// to it (REQ-16.2).
+func attribute(diagnostics []provider.PortDiagnostic, guest []listeners.Listener) []provider.PortDiagnostic {
+	byPort := make(map[int]listeners.Listener, len(guest))
+	for _, l := range guest {
+		byPort[l.Port] = l
+	}
+
+	var out []provider.PortDiagnostic
+	for _, diag := range diagnostics {
+		l, listening := byPort[diag.GuestPort]
+		if !listening {
+			continue
+		}
+		diag.PID, diag.Process = l.PID, l.Command
+		out = append(out, diag)
+	}
+	return out
 }
 
 // readLogTail reads at most limit bytes from the end of a file, discarding a
@@ -227,7 +291,7 @@ func readPortLine(entry logEntry) (diag provider.PortDiagnostic, port int, drop,
 		// or one whose host listener failed for a reason Lima considers
 		// unremarkable.
 		proto, addr, found := strings.Cut(strings.TrimPrefix(msg, msgNotForwarding), " ")
-		if !found || !isTCP(proto) {
+		if !found || !isTCP(proto) || isPrivateLoopback(addr) {
 			return provider.PortDiagnostic{}, 0, false, false
 		}
 		guest, ok := portOf(addr)
@@ -341,6 +405,25 @@ func forwardingAddresses(rest string) (guest, host int, ok bool) {
 		return guest, 0, true
 	}
 	return guest, host, true
+}
+
+// isPrivateLoopback reports a guest address on the loopback network other than
+// 127.0.0.1 and ::1, such as the 127.0.0.53 and 127.0.0.54 systemd-resolved
+// listens on in every Ubuntu guest.
+//
+// Lima forwards what listens on 127.0.0.1 or on every address, and declines
+// the rest of the loopback network by design — it logged "Not forwarding TCP
+// 127.0.0.53:53" on every start of a Lima 2.2.0 Ubuntu instance. Such a
+// listener is reachable only from inside the guest because that is what binding
+// to it means, so reporting it as a port that "was not published" would show
+// the user a problem on every machine that has none.
+func isPrivateLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.Trim(strings.TrimSpace(addr), `"`))
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback() && !ip.Equal(net.IPv4(127, 0, 0, 1)) && !ip.Equal(net.IPv6loopback)
 }
 
 // isTCP reports whether a protocol token names TCP, in either case Lima writes

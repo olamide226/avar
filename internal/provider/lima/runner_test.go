@@ -89,6 +89,10 @@ type fakeRunner struct {
 	// about host agents wants.
 	processes *processTable
 
+	// shellOutput is what `limactl shell` writes to standard output, for a
+	// test that reads what a guest command reported.
+	shellOutput []byte
+
 	// configWritten is the instance configuration avar pointed limactl at,
 	// read at the moment limactl was invoked. It is captured here because the
 	// file lives in a temporary directory that avar removes on return, and the
@@ -156,6 +160,9 @@ func (r *fakeRunner) Output(ctx context.Context, name string, args ...string) ([
 	}
 	if args[0] == "snapshot" && len(args) > 1 && args[1] == "list" {
 		return r.snapshotListOut, nil
+	}
+	if args[0] == "shell" {
+		return r.shellOutput, nil
 	}
 	return nil, nil
 }

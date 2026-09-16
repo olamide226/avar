@@ -195,3 +195,68 @@ func waitForPortFree(t *testing.T, port int, timeout time.Duration) {
 	}
 	t.Fatalf("port 127.0.0.1:%d was still occupied after the guest server stopped", port)
 }
+
+// ---------------------------------------------------------------------------
+// REQ-16.1 — `avr ports` lists a guest server with the process serving it
+//
+// The unit tests prove the listener script's parsing against output captured in
+// an Ubuntu container; this proves the script survives the trip through
+// `limactl shell` and that the host agent's log and the guest agree.
+
+func TestAvr_PortsListsAGuestServerWithItsProcess_REQ_16_1(t *testing.T) {
+	dir := project(t, "ports-list")
+	port := freePort(t)
+
+	if _, _, code := avr(t, dir, nil, "true"); code != 0 {
+		t.Fatalf("warm-up failed")
+	}
+
+	detach(t, dir, "python3", "-m", "http.server", fmt.Sprint(port), "--bind", "127.0.0.1")
+	t.Cleanup(func() { killGuest(t, dir, fmt.Sprintf("'http.server %d'", port)) })
+	waitForPort(t, port, 15*time.Second)
+
+	stdout, stderr, code := avr(t, dir, nil, "ports")
+	if code != 0 {
+		t.Fatalf("avr ports: exit %d\nstderr:\n%s", code, stderr)
+	}
+	for _, want := range []string{fmt.Sprintf("http://localhost:%d", port), "http.server"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("avr ports does not show %q:\n%s", want, stdout)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REQ-16.2 — `avr open` refuses a port whose guest server has stopped
+//
+// Only the refusal is exercised: a test that opened a browser on the machine
+// running the suite would be a side effect on somebody's desktop. The refusal is
+// the half that depends on the backend — Lima 2.x does not log the end of a TCP
+// forward in a form the host-agent log alone can attribute to TCP.
+
+func TestAvr_OpenRefusesAPortWhoseServerStopped_REQ_16_2(t *testing.T) {
+	dir := project(t, "ports-open-closed")
+	port := freePort(t)
+
+	if _, _, code := avr(t, dir, nil, "true"); code != 0 {
+		t.Fatalf("warm-up failed")
+	}
+
+	detach(t, dir, "python3", "-m", "http.server", fmt.Sprint(port), "--bind", "127.0.0.1")
+	waitForPort(t, port, 15*time.Second)
+	killGuest(t, dir, fmt.Sprintf("'http.server %d'", port))
+	waitForPortFree(t, port, 15*time.Second)
+
+	stdout, stderr, code := avr(t, dir, nil, "open", fmt.Sprint(port))
+	if code == 0 {
+		t.Fatalf("avr open %d succeeded for a stopped server:\n%s", port, stdout)
+	}
+	if !strings.Contains(stderr, "not forwarded") {
+		t.Errorf("avr open did not say the port is not forwarded:\n%s", stderr)
+	}
+
+	listing, _, _ := avr(t, dir, nil, "ports")
+	if strings.Contains(listing, fmt.Sprintf("http://localhost:%d", port)) {
+		t.Errorf("avr ports still lists the stopped server:\n%s", listing)
+	}
+}

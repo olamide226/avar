@@ -59,6 +59,9 @@ func newTestApp(t *testing.T, p provider.Provider) *testApp {
 	// Creating an environment registers the idle-check with the host
 	// scheduler; a test must never touch the real one.
 	app.scheduleIdleCheck = func(*App) {}
+	// Nor may one open a real browser window: tests that exercise `avr open`
+	// install a recording browser with withBrowser.
+	app.browser = unexpectedBrowser{t}
 
 	return &testApp{App: app, out: app.Out.(*bytes.Buffer), err: app.Err.(*bytes.Buffer), store: store}
 }

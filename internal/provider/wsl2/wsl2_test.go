@@ -101,8 +101,11 @@ type fakeWSL struct {
 	// mounted is what each distribution currently has mounted, guest path to
 	// host path, maintained from the scripts avar sends.
 	mounted map[string]map[string]string
-	// listeners are the TCP ports a guest process is listening on.
-	listeners []int
+	// listeners are the TCP ports a guest process is listening on, on the
+	// wildcard address, and loopbackListeners the ones bound to 127.0.0.1
+	// only.
+	listeners         []int
+	loopbackListeners []int
 	// installFailsUntilWebDownload models a machine whose default download
 	// channel does not work (no Store, or a proxy blocking the distribution
 	// list), so only the fallback succeeds.
@@ -1269,13 +1272,31 @@ func sortStrings(in []string) {
 	}
 }
 
-// reportListeners renders the listening sockets the way /proc/net/tcp writes
-// them — hexadecimal, on the wildcard address — so the parser is exercised
-// rather than bypassed.
+// reportListeners renders the listening sockets the way listeners.Script
+// reports them — /proc/net/tcp rows verbatim, in the layout captured from a real
+// Ubuntu 24.04 guest (internal/provider/listeners/testdata) — so the parser is
+// exercised rather than bypassed. Each port is held by a process whose id is
+// the port number and whose command line names it.
 func (f *fakeWSL) reportListeners() string {
 	b := &strings.Builder{}
+	b.WriteString("@tcp\n")
+	b.WriteString("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n")
+	row := func(address string, port int) {
+		fmt.Fprintf(b, "   0: %s:%04X 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 %d 1 0000000020a9a99a 100 0 0 10 0\n", address, port, 900000+port)
+	}
 	for _, port := range f.listeners {
-		fmt.Fprintf(b, "00000000:%04X\n", port)
+		row("00000000", port)
+	}
+	for _, port := range f.loopbackListeners {
+		row("0100007F", port)
+	}
+	b.WriteString("@owners\n")
+	for _, port := range append(append([]int(nil), f.listeners...), f.loopbackListeners...) {
+		fmt.Fprintf(b, "%d %d\n", port, 900000+port)
+	}
+	b.WriteString("@commands\n")
+	for _, port := range append(append([]int(nil), f.listeners...), f.loopbackListeners...) {
+		fmt.Fprintf(b, "%d server --port %d \n", port, port)
 	}
 	return b.String()
 }

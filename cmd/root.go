@@ -130,6 +130,9 @@ const commandIndex = `Management commands:
                                  environment
   zed                            Open this project in Zed in its Linux
                                  environment
+  ports [--all]                  List the ports forwarded to this computer and
+                                 the Linux process listening on each
+  open <port>                    Open http://localhost:<port> in your browser
   help [command]                 Show general or command-specific help
   version                        Print the avr version
 
@@ -166,6 +169,15 @@ var publicCommandHelp = map[string]commandHelp{
 		usage:       "avr isolate [on | off [--yes]]",
 		description: "Show whether this project defaults to its own environment, or change that default. Turning isolation off offers to delete the isolated environment.",
 		flags:       "  --yes   with `avr isolate off`, delete the isolated environment without asking",
+	},
+	"open": {
+		usage:       "avr [selector flags] open <port>",
+		description: "Open http://localhost:<port> in your default browser, if the selected environment forwards that port to this computer. If it does not — nothing is listening there, the environment is not running, or the port could not be forwarded — avar says so and opens nothing. The environment is never started to find out.\n\nNote that `open` is an avar command, so it does not reach the guest: to run a command called `open` inside Linux, run `avr -- open`.",
+	},
+	"ports": {
+		usage:       "avr [selector flags] ports [--all]",
+		description: "List the ports the selected environment forwards to this computer, with the address to open each at and the Linux process listening on it where avar can tell. Ports that are listening in Linux but cannot be reached from this computer are listed with the reason. The environment is never started to find out.",
+		flags:       "  --all   list the ports of every running Linux environment avar manages",
 	},
 	"reset": {
 		usage:       "avr [selector flags] reset [--yes]",

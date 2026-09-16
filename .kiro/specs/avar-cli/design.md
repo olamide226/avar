@@ -121,6 +121,7 @@ cmd/  ─────────────────┐
 ```
 avr [selector flags] [--] [COMMAND [ARGS...]]     # no COMMAND → interactive shell
 avr [selector flags] status | stop [--all] | code | cursor | zed
+avr [selector flags] ports [--all] | open PORT         (Post-MVP, Req 16)
 avr snapshot [NAME] | restore NAME | reset [--yes]     (Phase 2)
 avr isolate off [--yes]                                (Phase 2)
 avr destroy [--yes] [--all | --orphaned]               (Phase 2)
@@ -255,10 +256,22 @@ type EditorTargetProvider interface {
     EditorTarget(ctx context.Context, machine, guestPath string) (EditorTarget, error)
 }
 
-// PortDiagnoser explains forwarding state (Req 7.2). Forwarding itself is not an
-// operation — it happens without avar asking — so there is only something to report.
+// PortDiagnoser explains forwarding state (Req 7.2) and is what `avr ports` and
+// `avr open` are built on (Req 16). Forwarding itself is not an operation — it
+// happens without avar asking — so there is only something to report. Every
+// entry describes a port a guest process is listening on now: a forward the
+// backend once logged whose listener has closed is not reported (Req 7.3, 16.2).
 type PortDiagnoser interface {
     PortDiagnostics(ctx context.Context, machine string) ([]PortDiagnostic, error)
+}
+
+type PortDiagnostic struct {
+    GuestPort int
+    HostPort  int    // zero when nothing was published; normally equal to GuestPort
+    Forwarded bool   // reachable from host localhost now
+    Reason    string // why not, when !Forwarded
+    PID       int    // guest process listening, where determinable (Req 16.1)
+    Process   string // its command line; empty when not determinable
 }
 
 type MachineSpec struct {
@@ -322,7 +335,7 @@ Key mappings:
 | Start | `limactl start <n> --tty=false` |
 | Shell | `limactl shell --workdir <cwd> <n> [-- argv...]`; avar wraps with env policy (env vars passed as `FOO=bar` prefix tokens, which `limactl shell` quotes correctly) and inspects the child's exit code (`limactl shell` propagates the remote exit status). |
 | Mounts | Read: `limactl list <n> --json` (`.config.mounts`). Write: `limactl edit <n> --set '.mounts = [...]' --tty=false`, then stop/start if running. |
-| Port forwarding | Nothing to do — Lima's hostagent auto-forwards guest-localhost TCP ports to host localhost and releases them on close (Req 7.1/7.3). avar surfaces conflicts by reading the hostagent log in `avr status` diagnostics (Req 7.2). |
+| Port forwarding | Nothing to do — Lima's hostagent auto-forwards guest-localhost TCP ports to host localhost and releases them on close (Req 7.1/7.3). `PortDiagnostics` joins two sources: the hostagent log (`ha.stderr.log`) says what was forwarded or refused (Req 7.2), and the shared guest listener script (`internal/provider/listeners`, run unprivileged through `limactl shell`) says what is listening now and which process holds it (Req 16.1). Only ports on both are reported. **The log alone is not a current picture** — verified against Lima 2.2.0, whose gRPC forwarder logs the end of a forward as `removing listener for hostAddress: …, guestAddress: …` with no protocol, so a closed TCP forward cannot be read out of it. The guest is entered only when the log has something to confirm, so an idle machine costs `avr status` no round trip. `Not forwarding` lines for loopback addresses other than 127.0.0.1/::1 (systemd-resolved's 127.0.0.53/54, logged on every Ubuntu start) are Lima's rules working, not conflicts, and are not reported. |
 | Stop / Delete | `limactl stop <n>` / `limactl delete <n>` |
 | Snapshot / Restore | `limactl snapshot create/apply/list <n> --tag <name>` (instance is stopped first if the operation requires it, then restarted if it was running). **QEMU only** — verified against Lima 2.2.0, where every snapshot subcommand exits `unimplemented` on a `vz` instance. The provider checks the machine's `vmType` and returns `ErrUnsupportedCapability` before touching it, so the refusal costs nothing and explains itself. This is why `Snapshotter` is a capability interface *and* why a successful type-assertion is not sufficient: the same provider can snapshot an emulated machine and not a native one. |
 | Isolated create (fast path) | Keep a pristine, stopped base machine per (distro, arch) (`avr-base-<distro>-<ver>-<arch>`); `limactl clone` it for `--isolate` (clone copies disk + ssh config verbatim, so it is fast and deterministic). Fallback: full provision if no base exists. |
@@ -369,7 +382,7 @@ Using imported distributions avoids first-launch username prompts and prevents a
 | Snapshot | Terminate if needed, then `wsl.exe --export <name> <snapshot.vhdx> --format vhd`; store a metadata sidecar with machine, provider, selector and capture time; restart if previously running. The flag is `--format vhd` and not `--vhd`: the tool reserves `--vhd` for an import, where it means "this file is a disk rather than a tar" (verified against WSL 2.7.12). A disk rather than a tar because a tar loses permissions, symbolic links and sparse files, and a restored environment that is subtly not the one captured is worse than none. |
 | Restore | Read the snapshot before destroying anything, then `--unregister`, remove the install directory, and `--import <name> <dir> <snapshot.vhdx> --vhd`. WSL has no in-place restore. The import copies the disk rather than registering the file where it lies, so the same snapshot can be restored from again. **Amended:** the earlier design exported a temporary rollback VHDX first and reimported it on failure. That is a full copy of the environment's disk — gigabytes and minutes — paid on every restore to insure against a rare import failure, and the rollback import can fail in exactly the same ways. avar instead makes restore *retryable*: it does not require the distribution to exist, so a failed restore leaves a state the same command recovers from. The residual risk is stated rather than hidden — if the import keeps failing, the pre-restore environment is gone, which is what the user asked for when they asked to restore. |
 | Isolated create | Import from a cached clean base export into `distros\<isolated-name>` with `--version 2`, then write a unique marker and mount only that project. |
-| Port diagnostics | Discover listeners inside the distro (`ss -ltnp` where permitted), probe the matching Windows localhost ports, and report guest-listening/host-unreachable conflicts without modifying global WSL networking. |
+| Port diagnostics | Run the shared guest listener script (`internal/provider/listeners`) as root — `/proc/net/tcp{,6}` plus a `/proc/*/fd` scan for process attribution, never `ss`, which minimal images lack — then probe each port on Windows `127.0.0.1` concurrently, and report guest-listening/host-unreachable conflicts without modifying global WSL networking. A listener bound only to guest loopback is probed too, because Microsoft documents `localhostForwarding` as covering ports "bound to wildcard or localhost"; it is reported when it answers and omitted when it does not, since whether a loopback bind is published depends on networking mode. (Amended: the earlier implementation skipped loopback binds outright, which would have hidden the dev servers that bind `localhost` by default from `avr ports`.) A host-side answer cannot be attributed to WSL's relay versus a Windows program holding the port; that remains unmeasured and unclaimed. |
 | Editor target | Return `EditorTarget{Authority: "wsl+<name>", GuestPath: <path>}`; no SSH stanza is generated (Req 18.10). |
 
 **Terminal behavior**: `wsl.exe` inherits the calling console handles. With a TTY, avar attaches the console and lets Ctrl-C/resize flow through the foreground process group; with redirected stdin/stdout it uses pipes and does not allocate a console PTY. Windows interrupt handling is encapsulated in `internal/provider/wsl2/console_windows.go`; builds for other hosts use platform stubs. Guest non-zero exit status remains `(code, nil)`.
@@ -414,6 +427,16 @@ Using imported distributions avoids first-launch username prompts and prevents a
 - WSL returns `wsl+<distribution>` and no SSH material, for every editor (Req 18.10).
 - The launcher's own stderr is passed through, because when it refuses (for example a Zed too old to know `--wsl`) its message is the only explanation available.
 - Missing launcher produces platform-appropriate PATH guidance naming that editor's install step. No backend-specific branch exists in `cmd/code.go`.
+
+### 3.9a Port listing and browser launch (`cmd/ports.go`, `internal/browser`) — Post-MVP
+
+**Purpose**: Req 16. `avr ports` and `avr open <port>` are read-only views over `PortDiagnoser`; neither creates nor starts an environment, because a server cannot be listening in one that is not running.
+
+- Both honour the selector flags like every per-environment command; `avr ports --all` covers every running environment, as `stop --all` does.
+- `avr ports` prints forwarded ports as `PORT  ADDRESS  PROCESS`, then any listener that cannot be reached with the backend's reason.
+- `avr open` matches the port a user types against the host side of each forward, and opens `http://localhost:<port>` only when it is forwarded. Otherwise it says why — no environment, not running, nothing listening, or listening but unreachable — and exits 1.
+- Opening a browser is a host side effect behind `browser.Opener`, which a flow test replaces. macOS runs `/usr/bin/open -u <url>`; Windows calls `ShellExecuteW` with the `open` verb, so no command interpreter parses the URL (`cmd /c start` mangles `&` and reads a quoted first argument as a window title). `rundll32 url.dll,FileProtocolHandler` was considered and rejected: it exits 0 whether or not anything opened, so a failure would be reported as success. Only absolute `http`/`https` addresses are handed to either.
+- `open` and `ports` are reserved names; `avr -- open` reaches a guest command of that name (Req 2.6).
 
 ### 3.10 Env/Credential Forwarding Policy (`internal/envpolicy`) — Phase 2 (defaults enforced from Phase 1)
 
@@ -587,6 +610,9 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 | Mount not possible (network volume, perms) | pre-flight `os.Stat` + mount verification after apply (`test -d` in guest) | Exit 1 with explanation; never drop into a shell at a wrong/empty path (Req 6.5). |
 | Windows path cannot be canonicalized or DrvFS rejects it | final-path resolution or selective mount probe | Exit 1 naming the host path and cause; do not fall back to mounting the containing drive or to a different guest cwd (Req 18.5, Properties 1/5). |
 | Mount requires restart while other sessions are live on that machine | `sessions.json` check | Prompt: restart now (disconnects N sessions) or abort. Non-interactive: abort with message. |
+| `avr open` on a port that is not forwarded | `PortDiagnostics` for the selected environment, after `Status` shows it running | Exit 1 naming the port and the environment and why: no environment yet, not running (start the server with `avr <command>`), nothing listening (run `avr ports`, or `avr ports --all` when other environments are running), or listening but unreachable (the backend's reason). Nothing is opened, and no environment is created or started (Req 16.2). |
+| Browser cannot be opened | `browser.Opener` returns an error (`open(1)` non-zero, `ShellExecuteW` failure) | Exit 1 naming the address and telling the user to open it themselves; never report it as opened (Req 16.2). |
+| Guest listener probe fails (transport down, script refused) | the backend's guest command returns an error | `avr ports`/`avr open` exit 1 naming the environment; `avr status` shows the failure on that environment's ports line and continues; `avr ports --all` lists the environments it could read and exits 1. Never rendered as "nothing listening" (Req 16.1). |
 | Host port conflict / WSL localhost unreachable | Lima hostagent scan or guest-listener + Windows probe | Session unaffected; `avr status` lists the unforwardable listener and suggests checking binding, firewall/VPN, or WSL networking. Never rewrite `.wslconfig` automatically (Req 7.2, 18.9). |
 | Concurrent `avr` invocations racing on create | file lock around ensure-machine | Second invocation waits on lock, then re-checks state (create becomes start/no-op). |
 | `sessions.json` stale pids (crash) | pid liveness probe on read | Prune silently. |
@@ -652,4 +678,4 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 
 Windows hosts through avar-owned WSL 2 distributions (Req 18) and Linux-native workspace mode on the WSL backend (Req 14) have shipped. Still out of scope on Windows: Windows Server, Windows 10, WSL 1 execution, adoption or management of user-owned WSL distributions, automatic mutation of global `%UserProfile%\.wslconfig`, Docker Desktop integration, and Windows-native containers.
 
-Not yet built: `.avr.toml` + `avr init` (Req 15) and `avr ports`/`avr open` (Req 16). Not planned: Linux-native workspace mode on Lima, which already shares projects at native speed (Req 14.4); further providers (OrbStack, SSH, cloud), since WSL 2 already showed a second backend fits behind the Provider interface; and a VS Code terminal-picker extension, which has no requirement yet. Out of scope on any host: Linux hosts and GUI (Req 17.6).
+Not yet built: `.avr.toml` + `avr init` (Req 15). Not planned: Linux-native workspace mode on Lima, which already shares projects at native speed (Req 14.4); further providers (OrbStack, SSH, cloud), since WSL 2 already showed a second backend fits behind the Provider interface; and a VS Code terminal-picker extension, which has no requirement yet. Out of scope on any host: Linux hosts and GUI (Req 17.6).

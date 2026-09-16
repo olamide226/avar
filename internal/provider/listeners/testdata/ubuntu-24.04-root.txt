@@ -1,0 +1,14 @@
+@tcp
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                     
+   0: 0100007F:1538 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 330074 1 000000007221ca55 100 0 0 10 0                    
+   1: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 326313 1 0000000020a9a99a 100 0 0 10 0                    
+  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 331056 1 0000000092d9a14f 100 0 0 10 0
+@owners
+16 330074
+17 331056
+20 326313
+@commands
+16 perl -MIO::Socket::INET -e my $s = IO::Socket::INET->new(LocalAddr=>q(127.0.0.1:5432),Proto=>q(tcp),Listen=>5,ReuseAddr=>1) or die "e: $@"; sleep 60 
+17 perl -MSocket=:all -e socket(my $s, AF_INET6, SOCK_STREAM, 0) or die "s: $!"; bind($s, pack_sockaddr_in6(8080, "\0" x 16)) or die "b: $!"; listen($s, 5) or die "l: $!"; sleep 60 
+20 perl -MIO::Socket::INET -e my $s = IO::Socket::INET->new(LocalAddr=>q(0.0.0.0:3000),Proto=>q(tcp),Listen=>5,ReuseAddr=>1) or die qq(e: $@); sleep 60 

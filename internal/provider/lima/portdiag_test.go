@@ -7,6 +7,7 @@ package lima
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/olamide226/avar/internal/provider"
+	"github.com/olamide226/avar/internal/provider/listeners"
 )
 
 // Lima's host agent logs JSON lines — its entry point installs
@@ -53,7 +55,23 @@ func runningInstance(name, dir string) []byte {
 
 // withHostAgentLog gives the provider a running machine whose host-agent log
 // holds the given lines, and returns it.
+//
+// The guest is listening on every port the log-parsing tests below mention
+// (listenedPorts), so that those tests are about what the log says; the tests
+// that are about the join with the guest program the guest themselves through
+// withGuestAndHostAgentLog.
 func withHostAgentLog(t *testing.T, lines ...string) *Provider {
+	t.Helper()
+	p, _ := withGuestAndHostAgentLog(t, guestListening(listenedPorts...), lines...)
+	return p
+}
+
+// listenedPorts are the ports the log-parsing tests use.
+var listenedPorts = []int{22, 80, 3000, 5173, 8080, 9229, 60022}
+
+// withGuestAndHostAgentLog is withHostAgentLog with the guest's listener report
+// given explicitly, and the runner returned so a test can see what ran.
+func withGuestAndHostAgentLog(t *testing.T, guest []byte, lines ...string) (*Provider, *fakeRunner) {
 	t.Helper()
 	dir := t.TempDir()
 	if len(lines) > 0 {
@@ -63,7 +81,149 @@ func withHostAgentLog(t *testing.T, lines ...string) *Provider {
 		}
 	}
 	runner := newFakeRunner().listing(runningInstance(testMachine, dir))
-	return newTestProvider(t, runner, newFakeRecords(ownedRecord(testMachine)))
+	runner.shellOutput = guest
+	return newTestProvider(t, runner, newFakeRecords(ownedRecord(testMachine))), runner
+}
+
+// guestListening renders listeners.Script's report of a guest listening on the
+// given ports on the wildcard address, unattributed. The row layout is copied
+// from the script's real output in an Ubuntu 24.04 guest
+// (internal/provider/listeners/testdata), because a report shaped the way the
+// parser hopes proves only that the parser parses its author's idea of the
+// format.
+func guestListening(ports ...int) []byte {
+	b := &strings.Builder{}
+	b.WriteString("@tcp\n")
+	b.WriteString("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n")
+	for i, port := range ports {
+		fmt.Fprintf(b, "   %d: 00000000:%04X 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 %d 1 0000000020a9a99a 100 0 0 10 0\n", i, port, 100000+i)
+	}
+	b.WriteString("@owners\n\n@commands\n")
+	return []byte(b.String())
+}
+
+// REQ-7.3, REQ-16.2: the log is a history, and Lima 2.x's gRPC forwarder does
+// not log the end of a TCP forward in a form avar can attribute to TCP. A port
+// the log still calls forwarded but nothing in the guest listens on has been
+// released, and must not be offered as somewhere to open a browser.
+func TestPortDiagnostics_DropsAForwardWhoseGuestListenerClosed_REQ_16_2(t *testing.T) {
+	p, _ := withGuestAndHostAgentLog(t, guestListening(8080),
+		logLine("info", "Forwarding TCP from 0.0.0.0:3000 to 127.0.0.1:3000"),
+		// What Lima 2.2.0 wrote when a forward closed, verbatim apart from the
+		// port: no protocol, so it cannot be read as the end of a TCP forward.
+		logLine("debug", "removing listener for hostAddress: 127.0.0.1:3000, guestAddress: 0.0.0.0:3000"),
+		logLine("info", "Forwarding TCP from 0.0.0.0:8080 to 127.0.0.1:8080"),
+	)
+
+	got, err := p.PortDiagnostics(context.Background(), testMachine)
+	if err != nil {
+		t.Fatalf("PortDiagnostics: %v", err)
+	}
+	if len(got) != 1 || got[0].GuestPort != 8080 {
+		t.Fatalf("diagnostics = %+v, want only port 8080, which is still listening", got)
+	}
+}
+
+// REQ-16.1: the process behind a forwarded port is named where the guest could
+// say who holds it.
+func TestPortDiagnostics_NamesTheGuestProcess_REQ_16_1(t *testing.T) {
+	guest := "@tcp\n" +
+		"   0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 326313 1 0000000020a9a99a 100 0 0 10 0\n" +
+		"@owners\n326 326313\n" +
+		"@commands\n326 node server.js \n"
+	p, runner := withGuestAndHostAgentLog(t, []byte(guest),
+		logLine("info", "Forwarding TCP from 0.0.0.0:3000 to 127.0.0.1:3000"),
+	)
+
+	got, err := p.PortDiagnostics(context.Background(), testMachine)
+	if err != nil {
+		t.Fatalf("PortDiagnostics: %v", err)
+	}
+	want := provider.PortDiagnostic{GuestPort: 3000, HostPort: 3000, Forwarded: true, PID: 326, Process: "node server.js"}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("diagnostics = %+v, want %+v", got, want)
+	}
+
+	// The probe is the shared script, decoded by the guest's own shell, run as
+	// the guest user at a directory that always exists.
+	var args []string
+	for _, c := range runner.calls() {
+		if len(c.Args) > 0 && c.Args[0] == "shell" {
+			args = c.Args
+		}
+	}
+	if args == nil {
+		t.Fatalf("no guest command ran: %v", runner.argvs())
+	}
+	if len(args) != 8 || args[1] != "--workdir" || args[2] != guestProbeWorkdir || args[3] != testMachine || args[4] != "--" || args[5] != "/bin/sh" || args[6] != "-c" {
+		t.Fatalf("guest probe argv = %q", args)
+	}
+	encoded, ok := strings.CutPrefix(args[7], "echo ")
+	encoded, ok2 := strings.CutSuffix(encoded, " | base64 -d | /bin/sh")
+	if !ok || !ok2 {
+		t.Fatalf("guest probe command = %q, want the script decoded and piped to sh", args[7])
+	}
+	script, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || string(script) != listeners.Script {
+		t.Errorf("the guest probe does not carry listeners.Script (decode error %v)", err)
+	}
+	if strings.Contains(args[7], "sudo") {
+		t.Errorf("a read-only listing escalated privileges: %q", args[7])
+	}
+}
+
+// systemd-resolved listens on 127.0.0.53 and 127.0.0.54 in every Ubuntu guest,
+// and Lima declines to forward either by design. These lines are verbatim from
+// a Lima 2.2.0 Ubuntu 24.04 instance's ha.stderr.log; before they were
+// recognised, `avr status` reported port 53 as "not published" on every such
+// machine.
+func TestPortDiagnostics_IgnoresLoopbackAddressesLimaNeverForwards_REQ_7_2(t *testing.T) {
+	p, _ := withGuestAndHostAgentLog(t, guestListening(53),
+		`{"level":"info","msg":"Not forwarding TCP 127.0.0.54:53","time":"2026-08-07T12:51:30+01:00"}`+"\n",
+		`{"level":"info","msg":"Not forwarding TCP 127.0.0.53:53","time":"2026-08-07T12:51:30+01:00"}`+"\n",
+	)
+
+	got, err := p.PortDiagnostics(context.Background(), testMachine)
+	if err != nil {
+		t.Fatalf("PortDiagnostics: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("diagnostics = %+v, want systemd-resolved's private loopback listeners left out", got)
+	}
+}
+
+// A machine whose log has nothing to say costs no round trip into the guest:
+// `avr status` asks this of every running machine.
+func TestPortDiagnostics_DoesNotEnterTheGuestWhenTheLogIsEmpty_REQ_17_1(t *testing.T) {
+	p, runner := withGuestAndHostAgentLog(t, nil,
+		logLine("info", "Waiting for the essential requirement 1 of 2: \"ssh\""),
+	)
+
+	if _, err := p.PortDiagnostics(context.Background(), testMachine); err != nil {
+		t.Fatalf("PortDiagnostics: %v", err)
+	}
+	for _, c := range runner.calls() {
+		if len(c.Args) > 0 && c.Args[0] == "shell" {
+			t.Fatalf("entered the guest with nothing to confirm: %v", runner.argvs())
+		}
+	}
+}
+
+// Failing to reach the guest is reported, not treated as "nothing listening":
+// an empty listing would tell the user their server is not running.
+func TestPortDiagnostics_ReportsAGuestItCannotReach_REQ_16_1(t *testing.T) {
+	p, runner := withGuestAndHostAgentLog(t, nil,
+		logLine("info", "Forwarding TCP from 0.0.0.0:3000 to 127.0.0.1:3000"),
+	)
+	runner.failOn("shell", errors.New("exit status 255: ssh: connect to host 127.0.0.1 port 60022: Connection refused"))
+
+	_, err := p.PortDiagnostics(context.Background(), testMachine)
+	if err == nil {
+		t.Fatal("PortDiagnostics succeeded without reaching the guest")
+	}
+	if !strings.Contains(err.Error(), testMachine) || !strings.Contains(err.Error(), "Connection refused") {
+		t.Errorf("error %q does not say what was attempted and why it failed", err)
+	}
 }
 
 func TestPortDiagnostics_ReportsAHostPortAlreadyInUse_REQ_7_2(t *testing.T) {

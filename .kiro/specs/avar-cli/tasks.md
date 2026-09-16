@@ -235,6 +235,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - Forwarded-port listing with guest process attribution where determinable; `avr open <port>` browser launch with not-forwarded message
   - _Requirements: 16.1, 16.2_
   - _writes: cmd/ports.go, internal/provider/lima/portdiag.go_
+  - _also wrote: cmd/{app,root,ports_test}.go, internal/cli/grammar{,_test}.go, internal/provider/provider.go, internal/provider/listeners/* (guest listener script and parser shared by both backends), internal/provider/wsl2/portdiag{,_test}.go, internal/provider/wsl2/wsl2_test.go, internal/provider/lima/{portdiag,runner}_test.go, internal/browser/*, e2e/ports_test.go, README.md, .kiro/specs/avar-cli/design.md_
 
 - [ ] 24. Additional editors (`avr cursor`, `avr zed`) reusing the SSH plumbing
   - _Requirements: 13.5, 13.6, 13.7, 13.8, 13.9 (criteria added with this task; 13.x pattern)_

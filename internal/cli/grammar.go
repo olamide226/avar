@@ -126,6 +126,8 @@ var subcommands = []string{
 	"help",
 	"internal",
 	"isolate",
+	"open",
+	"ports",
 	"reset",
 	"restore",
 	"snapshot",
