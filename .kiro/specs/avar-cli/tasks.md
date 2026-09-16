@@ -244,7 +244,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
     - `projconfig.Detect`/`Propose`/`Render`; `cmd/init.go` shows the detected stack and the exact file, asks, writes with exclusive creation; no terminal writes nothing; `init` reserved in the grammar, help, and README
     - _Requirements: 15.2, 15.3, 2.6_
     - _Properties: 24 (second clause)_
-    - _writes: internal/projconfig/detect.go, internal/projconfig/detect_test.go, internal/projconfig/render.go, cmd/init.go, cmd/init_test.go, cmd/root.go, internal/cli/grammar.go, internal/cli/grammar_test.go, README.md_
+    - _writes: internal/projconfig/detect.go, internal/projconfig/detect_test.go, internal/projconfig/render.go, cmd/init.go, cmd/init_test.go, cmd/app.go, cmd/root.go, internal/cli/grammar.go, README.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
 - [x] 23. `avr ports` and `avr open`  _(PR #79; Lima e2e run and passing; Windows behaviour in task 43)_
   - Forwarded-port listing with guest process attribution where determinable; `avr open <port>` browser launch with not-forwarded message
