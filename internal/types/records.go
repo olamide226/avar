@@ -59,6 +59,21 @@ type ProjectRecord struct {
 	// again. Dismissal is a decision, and repeating advice somebody has already
 	// considered and declined is how a tool stops being read (REQ-18.11).
 	AdvisedNativeFS bool `json:"advised_native_fs,omitempty"`
+	// ApprovedForwardEnv names the variables from this project's .avr.toml
+	// that the user approved forwarding into its sessions. The file proposes
+	// and this record grants: a name the user never approved here does not
+	// cross, whatever the file says (REQ-9.1, REQ-15.3, PROP-23).
+	ApprovedForwardEnv []string `json:"approved_forward_env,omitempty"`
+	// ApprovedPackages maps a machine name to the packages from this
+	// project's .avr.toml the user approved installing into that machine.
+	// Approval is per machine because where a package lands changes who it
+	// affects: a shared machine serves every project (PROP-23).
+	ApprovedPackages map[string][]string `json:"approved_packages,omitempty"`
+	// AdvisedResources is the cpus/memory declaration from .avr.toml that
+	// avar has already checked against this project's environment, telling
+	// the user if it could not apply. It is the declaration itself rather
+	// than a flag, so that changing the file is checked again.
+	AdvisedResources string `json:"advised_resources,omitempty"`
 	// Selector, when set, overrides global distro/arch defaults for this
 	// project.
 	Selector   *EnvironmentSelector `json:"selector,omitempty"`
@@ -81,8 +96,13 @@ type MachineRecord struct {
 	ProjectID string              `json:"project_id,omitempty"`
 	// Mounts are the host project roots registered to this machine, each with
 	// the guest path the provider planned for it.
-	Mounts    []MountSpec `json:"mounts"`
-	CreatedAt time.Time   `json:"created_at"`
+	Mounts []MountSpec `json:"mounts"`
+	// Packages are the packages avar installed into this machine from
+	// approved .avr.toml declarations. Like Mounts it only grows while the
+	// machine exists, and it goes with the machine's record, which is what
+	// makes a recreated machine get its packages again.
+	Packages  []string  `json:"packages,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 	// Runtime records how the backend actually runs this machine — Lima's
 	// virtualization mode, or the WSL version — for status output. It is a
 	// backend-opaque string: avar displays it and never branches on it.
