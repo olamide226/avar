@@ -16,8 +16,8 @@ jobs:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main'
-    # Builds must run on macOS: universal binaries are produced with Apple's
-    # lipo, and avar targets macOS only (REQ-17.6).
+    # Builds must run on macOS: the macOS universal binary is produced with
+    # Apple's lipo. The Windows archives cross-compile from here (REQ-18.14).
     runs-on: macos-14
     concurrency:
       group: release-main

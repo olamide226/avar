@@ -340,7 +340,7 @@ here so the phase's history matches what is on `main`.
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.
-- E2E tests (tasks 8, 9, 11, 12, 15–17) require a macOS machine with virtualization; the Windows half (task 38c) requires WSL 2. Both run via `make e2e`, which selects the half that applies by build tag, and neither runs in default CI.
-- Backlog explicitly deferred beyond Phase 4 (out of MVP charter, Req 17.6): cloud/remote environments, collaboration, team policies, Kubernetes, marketplace, desktop GUI, Linux hosts.
+- E2E tests (tasks 8, 9, 11, 12, 15–17) require a macOS machine with virtualization; the Windows half (task 38c) requires WSL 2. Both run via `make e2e`, which selects the half that applies by build tag. Neither runs per push; the WSL half runs in CI nightly and on demand (task 38c).
+- Backlog explicitly deferred beyond Phase 4 (out of scope per Req 17.6, or not yet planned): cloud/remote environments, collaboration, team policies, Kubernetes, marketplace, desktop GUI, Linux hosts.
 - Distro image versions and the minimum Lima version are pinned in one file (`internal/resolve/matrix.go` / `internal/deps/lima.go`) so upgrades are single-point changes.
 - Development targets **Lima 2.x**. The pinned minimum in `internal/deps` is `2.0.0` (PR #12), matching the version avar's generated configurations are actually validated against.

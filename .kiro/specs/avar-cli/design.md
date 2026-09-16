@@ -3,7 +3,7 @@
 
 ## 1. Overview
 
-avar is a single Go codebase that presents a **directory-centric, shell-first** interface over provider-managed Linux environments. The MVP ships a macOS binary backed by Lima; the post-MVP Windows build selects WSL 2 automatically. Every design decision follows from one product rule:
+avar is a single Go codebase that presents a **directory-centric, shell-first** interface over provider-managed Linux environments. It ships a macOS binary backed by Lima and a Windows binary that selects WSL 2 automatically. Every design decision follows from one product rule:
 
 > The user thinks in terms of "current directory + selected operating environment." Machines, WSL distributions, mounts, transports, and images are avar's problem, never the user's.
 
@@ -611,14 +611,14 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 - WSL2Provider tests run on ordinary Windows CI against a fake `wsl.exe` runner and temporary State_Dir, asserting exact argv arrays for import, selective mounts, shell, terminate, export/import and unregister. Tests reject any use of `wsl --shutdown` and any operation against a non-recorded distro.
 - Static import/lint rules fail if WSL-specific packages appear in `cmd/` or `internal/resolve` (Property 21).
 
-**End-to-end tests — real Lima** (separate `make e2e`, runs on a mac runner, not in unit CI):
+**End-to-end tests — real Lima** (`make e2e` on a Mac with virtualization and `limactl`; not in CI):
 - Cold `avr true` → provisions, exits 0; warm `avr sh -c 'exit 42'` → exits 42 (Property 3).
 - `avr pwd` from nested subdir equals host path; touch file both sides (Property 1).
 - `env` in guest shows no leaked host secret var (Property 4).
 - Server in guest on :3000 reachable from host (Req 7.1).
 - Warm-path attach overhead measured < 500 ms budget (Req 17.1).
 
-**End-to-end tests — real WSL 2** (separate `make e2e-wsl`, runs on a disposable self-hosted Windows 11 runner with virtualization; not required on ordinary pull requests):
+**End-to-end tests — real WSL 2** (the same `make e2e`, which selects this half by build tag; runs locally on Windows with WSL 2, and in CI on a GitHub-hosted Windows runner nightly and on demand, not on ordinary pull requests):
 
 - Record `wsl --list --quiet` before and after; verify non-avar distributions are byte-for-byte the same set and state after every test (Properties 6, 16).
 - Cold `avr true`, warm exit-42 propagation, interactive smoke, Ctrl-C, and piped stdio (Properties 3, 8).
@@ -632,8 +632,8 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 
 **Property-based tests**: fuzz argv splitting (Property 9), env-policy composition (Property 4), Windows path canonicalization/mapping (Property 14), WSL list decoders, and journal recovery transitions (Properties 7/16) with `testing/quick` or `rapid`.
 
-## 8. Out of Scope (recorded for post-MVP alignment)
+## 8. Out of Scope
 
-Post-MVP scope now includes Windows hosts through avar-owned WSL 2 distributions (Req 18). Still out of scope: Windows Server, Windows 10, WSL 1 execution, adoption or management of user-owned WSL distributions, automatic mutation of global `%UserProfile%\.wslconfig`, Docker Desktop integration, and Windows-native containers.
+Windows hosts through avar-owned WSL 2 distributions (Req 18) and Linux-native workspace mode on the WSL backend (Req 14) have shipped. Still out of scope on Windows: Windows Server, Windows 10, WSL 1 execution, adoption or management of user-owned WSL distributions, automatic mutation of global `%UserProfile%\.wslconfig`, Docker Desktop integration, and Windows-native containers.
 
-Other post-MVP items remain `--native-fs` sync mode (Req 14), `.avr.toml` + `avr init` (Req 15), `avr ports`/`avr open` (Req 16), additional editors, OrbStack/SSH/cloud providers, VS Code terminal-picker extension, Linux hosts, and GUI.
+Not yet built: `.avr.toml` + `avr init` (Req 15), `avr ports`/`avr open` (Req 16), additional editors, OrbStack/SSH/cloud providers, and a VS Code terminal-picker extension. Out of scope on any host: Linux hosts and GUI (Req 17.6).
