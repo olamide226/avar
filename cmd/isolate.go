@@ -137,7 +137,9 @@ func turnOff(ctx context.Context, app *App, args []string) error {
 					"The project is no longer isolated; run `avr isolate off` again to retry the deletion",
 					rec.Path, err)
 			}
-			forgetSSHHost(app, target.MachineName)
+			// Forget it as `avr destroy` does: the record and the SSH host
+			// entry go with the machine.
+			forgetMachine(app, target.MachineName)
 			fmt.Fprintf(app.Out, "Deleted %s.\n", target.MachineName)
 		} else {
 			fmt.Fprintf(app.Out, "Left %s alone.\n", target.MachineName)
