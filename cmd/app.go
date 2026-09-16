@@ -19,6 +19,7 @@ import (
 	"github.com/olamide226/avar/internal/resolve"
 	"github.com/olamide226/avar/internal/state"
 	"github.com/olamide226/avar/internal/types"
+	"golang.org/x/term"
 )
 
 // App carries what every command needs and builds the expensive parts on
@@ -75,12 +76,20 @@ func newApp(version string) *App {
 }
 
 // interactive reports whether a person is at the terminal to answer a question.
+//
+// It asks whether stdin is a terminal rather than whether it is a character
+// device, which is what stdinIsTerminal checks. The difference matters for
+// consent: /dev/null is a character device and not a terminal, and an approval
+// must never be inferred from a stream no person is typing into.
 func (a *App) interactive() bool {
 	if a.terminal != nil {
 		return a.terminal()
 	}
-	return stdinIsTerminal()
+	return isTerminal(os.Stdin)
 }
+
+// isTerminal reports whether f is a terminal.
+func isTerminal(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
 
 // confirmYesNo puts a yes/no question to the user and reports whether they
 // agreed. Anything other than an explicit yes — including a closed input — is

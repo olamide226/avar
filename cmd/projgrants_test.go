@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -378,6 +379,20 @@ func TestShell_ProjectSizeOnABackendThatCannotSize_REQ_15_1(t *testing.T) {
 	}
 	if !strings.Contains(pt.err.String(), "cannot be set") {
 		t.Errorf("avr did not say the size cannot apply here:\n%s", pt.err.String())
+	}
+}
+
+// Approval needs a person at a terminal, not merely a character device on
+// stdin: /dev/null is one, and nobody is typing into it. A stream that reads
+// "y" without a person behind it must never grant anything (PROP-23).
+func TestInteractive_NullDeviceIsNotATerminal_PROP_23(t *testing.T) {
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	if isTerminal(null) {
+		t.Errorf("%s was taken for a terminal, so a script could be treated as a person", os.DevNull)
 	}
 }
 
