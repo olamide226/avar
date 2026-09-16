@@ -210,10 +210,15 @@ winget:
       - wsl
       - developer-tools
     commit_msg_template: "New version: {{ .PackageIdentifier }} {{ .Version }}"
-    # Until the WINGET_TOKEN secret exists, write the manifests to dist/ and
-    # publish nothing, so a release never fails for want of it. Once it exists,
-    # `auto` still keeps prereleases out of winget.
-    skip_upload: '{{ if isEnvSet "WINGET_TOKEN" }}auto{{ else }}true{{ end }}'
+    # Submitted for minor and major releases only (x.y.0). Every `feat:` or
+    # `fix:` merge releases, and on 16 September that opened five pull
+    # requests on microsoft/winget-pkgs in 45 minutes for a package still in
+    # its first review. Each is reviewed by people, so avar submits a version
+    # worth their time rather than every patch. Patch releases still reach
+    # GitHub and Homebrew. Without the WINGET_TOKEN secret nothing is
+    # submitted, so a release never fails for want of it; `auto` keeps
+    # prereleases out.
+    skip_upload: '{{ if and (isEnvSet "WINGET_TOKEN") (eq .Patch 0) }}auto{{ else }}true{{ end }}'
     repository:
       owner: olamide226
       name: winget-pkgs
@@ -255,8 +260,8 @@ release:
     winget install olamide226.avar
     ```
 
-    A new version reaches winget once Microsoft merges its manifest, which can
-    lag this release by a day or two. Or download the `windows_amd64` or
+    winget receives minor releases (x.y.0), each once Microsoft merges its
+    manifest, which can lag the release by a day or two. Or download the `windows_amd64` or
     `windows_arm64` archive below, unzip it, and put `avr.exe` somewhere on your
     PATH. avar needs WSL 2 and offers to set it up the first time you run it.
 

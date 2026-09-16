@@ -51,7 +51,8 @@ that already exists is fine as it is.
 
 ## winget
 
-Every stable release pushes manifests for `olamide226.avar` to a branch
+Every stable minor or major release (x.y.0) pushes manifests for
+`olamide226.avar` to a branch
 `avar-<version>` of `olamide226/winget-pkgs`, a fork of
 `microsoft/winget-pkgs`, and opens a pull request against Microsoft's
 repository. Prereleases are not submitted.
@@ -63,6 +64,13 @@ gets a human review. If validation fails, the pull request says why: fix the
 cause in `.goreleaser.yaml`, and the next release submits a corrected manifest.
 Do not edit manifests by hand in the fork, because the next release overwrites
 them.
+
+Patch releases are not submitted. Each submission is reviewed by people at
+Microsoft, and releasing on every `fix:` merge once opened five pull requests
+in 45 minutes for a package still in its first review. If a patch fixes
+something Windows users need through winget, cut a minor release instead.
+Open submissions are not tracked automatically, so if several minor releases
+land while one is still in review, close the older pull requests as superseded.
 
 This needs two things that live outside this repository:
 
