@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/olamide226/avar/internal/browser"
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/deps"
 	"github.com/olamide226/avar/internal/provider"
@@ -55,6 +56,11 @@ type App struct {
 	// environment must never reach it: one once left a launchd agent pointing
 	// at a deleted test binary on a developer's Mac. Nil means the real one.
 	scheduleIdleCheck func(app *App)
+
+	// browser replaces the host's browser launcher when set, so a flow test
+	// can see what `avr open` would have opened without opening anything. Nil
+	// means the host's own.
+	browser browser.Opener
 }
 
 // newApp returns an App writing to the real streams.
@@ -103,6 +109,14 @@ func (a *App) confirmByTyping(prompt, expected string) bool {
 		return false
 	}
 	return strings.TrimSpace(line) == expected
+}
+
+// Browser returns what opens a web address on this computer (REQ-16.2).
+func (a *App) Browser() browser.Opener {
+	if a.browser != nil {
+		return a.browser
+	}
+	return browser.System()
 }
 
 // Store opens avar's state directory.

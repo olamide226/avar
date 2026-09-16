@@ -582,6 +582,42 @@ func TestParse_NativeWorkspaceFlagAndSubcommand_REQ_14_1(t *testing.T) {
 	})
 }
 
+// `ports` and `open` are avar subcommands that take the selector flags like the
+// other per-environment commands, and `--` still reaches a guest command of
+// either name — which matters most for `open`, a word a macOS hand types by
+// habit (REQ-2.6, REQ-16.1, REQ-16.2).
+func TestParse_PortsAndOpenAreReservedWithAnEscapeHatch_REQ_16_1(t *testing.T) {
+	t.Parallel()
+
+	runParseCases(t, []parseCase{
+		{
+			name: "ports is an avar subcommand",
+			argv: []string{"ports"},
+			want: Invocation{Mode: ModeSubcommand, Subcommand: "ports"},
+		},
+		{
+			name: "ports --all reaches the subcommand unparsed",
+			argv: []string{"ports", "--all"},
+			want: Invocation{Mode: ModeSubcommand, Subcommand: "ports", SubcommandArgs: []string{"--all"}},
+		},
+		{
+			name: "open takes selector flags and a port",
+			argv: []string{"--distro", "fedora", "--isolate", "open", "3000"},
+			want: Invocation{Mode: ModeSubcommand, Subcommand: "open", SubcommandArgs: []string{"3000"}, Selector: Selector{Distro: types.DistroFedora, Isolate: true}},
+		},
+		{
+			name: "-- forces a guest command named open",
+			argv: []string{"--", "open", "file.txt"},
+			want: Invocation{Mode: ModeGuestCommand, Guest: []string{"open", "file.txt"}},
+		},
+		{
+			name: "-- forces a guest command named ports",
+			argv: []string{"--", "ports"},
+			want: Invocation{Mode: ModeGuestCommand, Guest: []string{"ports"}},
+		},
+	})
+}
+
 func TestParse_EditorCommandsAreReservedWithAnEscapeHatch_REQ_13_9(t *testing.T) {
 	t.Parallel()
 

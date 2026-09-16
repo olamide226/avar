@@ -49,6 +49,7 @@ func newReconcileTestApp(t *testing.T, f *fake.Fake) *testApp {
 	app.once.store.Do(func() {})
 	app.buildBackend = func(context.Context) (provider.Provider, error) { return f, nil }
 	app.scheduleIdleCheck = func(*App) {}
+	app.browser = unexpectedBrowser{t}
 
 	return &testApp{App: app, out: app.Out.(*bytes.Buffer), err: app.Err.(*bytes.Buffer), store: store}
 }

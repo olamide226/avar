@@ -91,6 +91,8 @@ Then:
 avr uname -a          # confirm you are in Linux
 avr sudo apt install ripgrep   # packages persist between sessions
 avr npm run dev       # ports you listen on are reachable at localhost
+avr ports             # which ones, and what is serving each
+avr open 3000         # open one in your browser
 avr status            # what exists, and what it is costing you
 avr stop              # give the memory back
 ```
@@ -131,6 +133,9 @@ Linux — whose own flags avar never reads.
 | `avr code` | Open the current project in VS Code, running in the Linux environment (Remote-SSH on macOS, VS Code's WSL integration on Windows) |
 | `avr cursor` | The same in Cursor. Needs the `cursor` command on your PATH |
 | `avr zed` | The same in Zed, through its SSH remote development on macOS and its WSL support on Windows. Needs the `zed` command on your PATH |
+| `avr ports` | The ports the current environment forwards to this computer, and the Linux process listening on each |
+| `avr ports --all` | The same, for every running environment |
+| `avr open <port>` | Open `http://localhost:<port>` in your browser, or say why that port is not forwarded |
 | `avr version`, `avr help` | Also spelled `--version` and `--help` |
 
 Use `avr help <command>` or `avr <command> --help` for the exact arguments and
@@ -145,7 +150,7 @@ command to run in Linux. So these names belong to avar and will not reach the
 guest:
 
 <!-- reserved-names:begin — checked against cli.Subcommands() by a test; keep both markers -->
-`code` `cursor` `destroy` `help` `internal` `isolate` `reset` `restore` `snapshot` `status` `stop` `sync` `version` `zed`
+`code` `cursor` `destroy` `help` `internal` `isolate` `open` `ports` `reset` `restore` `snapshot` `status` `stop` `sync` `version` `zed`
 <!-- reserved-names:end -->
 
 (`internal` carries avar's own scheduled idle check and is not a command you run.)
@@ -155,17 +160,19 @@ script or binary by one of those names:
 
 ```sh
 avr -- sync          # runs the guest's sync(1), or your project's ./sync
+avr -- open file.txt # runs the guest's own open, not avar's
 avr -- status        # runs the guest's own status, not avar's
 avr -- zed           # runs a zed installed inside Linux, not avar's editor command
 ```
 
-`sync` is the one worth knowing about, because it is both a standard Unix
-command and a plausible name for a project script — and the failure mode is
-quiet: without `--`, avar answers instead of your script, rather than reporting
-an error. `cursor` and `zed` are the editors' own command names, so a copy of
-either installed inside the Linux environment is reached with `avr -- cursor` or
-`avr -- zed`. The other reserved names are unlikely to collide with anything you
-would run.
+`sync` and `open` are the ones worth knowing about. `sync` is a standard Unix
+command, `open` is a plausible name for a project script or a helper you
+installed, and both are words a macOS hand types without thinking — and the
+failure mode is quiet: without `--`, avar answers instead of your command,
+rather than running it. `cursor` and `zed` are the editors' own command names,
+so a copy of either installed inside the Linux environment is reached with
+`avr -- cursor` or `avr -- zed`. The other reserved names are unlikely to
+collide with anything you would run.
 
 Snapshots do not work in every environment — see [Limitations](#limitations).
 
@@ -173,10 +180,10 @@ Snapshots do not work in every environment — see [Limitations](#limitations).
 
 Environment-selection flags come before the guest command or management command
 they select. They affect `avr`, one-shot guest commands, `stop`, `snapshot`,
-`restore`, `reset`, `destroy` (without `--all` or `--orphaned`), `code`, `cursor`
-and `zed`.
-`avr status`, `avr stop --all`, and the global `destroy` scopes operate across
-environments instead. `avr isolate` changes the current project's remembered
+`restore`, `reset`, `destroy` (without `--all` or `--orphaned`), `code`, `cursor`,
+`zed`, `ports` (without `--all`), and `open`. `avr status`, `avr stop --all`,
+`avr ports --all`, and the global `destroy` scopes operate across environments
+instead. `avr isolate` changes the current project's remembered
 default rather than selecting an environment.
 
 | Flag | Meaning |
@@ -309,7 +316,7 @@ scope.
 Nothing in this section exists. Each item is specified or sketched; none of it is
 implemented, and there are no dates.
 
-- `.avr.toml` and `avr init`, `avr ports` and `avr open`.
+- `.avr.toml` and `avr init`.
 
 ## Development
 
