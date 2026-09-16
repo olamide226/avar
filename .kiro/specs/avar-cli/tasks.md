@@ -228,8 +228,23 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
 
 - [ ] 22. `.avr.toml` support and `avr init` detection
   - Config schema (distro/arch/cpus/memory/packages/forward_env) applied at resolve time; manifest scanners (package.json, pyproject.toml, go.mod, Cargo.toml, Dockerfile, docker-compose.yml, .tool-versions, mise.toml); confirm-before-write proposal UX; zero-config path unchanged
+  - Design: design.md §3.11, Properties 23 and 24. The original manifest named no caller for the parsed settings and no state for approvals; the sub-tasks below name both.
   - _Requirements: 15.1, 15.2, 15.3, 15.4_
-  - _writes: internal/projconfig/config.go, internal/projconfig/detect.go, cmd/init.go, internal/projconfig/detect_test.go_
+  - [ ] 22.1 Strict `.avr.toml` reader and distro/arch at resolve time
+    - `projconfig.Parse`/`Load` for the flat TOML subset (strings only at this stage), `resolve.Options.ProjectConfig` as an injected reader, the precedence layer between the project record and global config, wired into `App.Resolve` so every resolving command honours it
+    - _Requirements: 15.1 (distro, arch), 15.4_
+    - _Properties: 24 (first clause)_
+    - _writes: internal/projconfig/config.go, internal/projconfig/config_test.go, internal/resolve/resolver.go, internal/resolve/resolver_test.go, cmd/app.go, cmd/projconfig_test.go, README.md_
+  - [ ] 22.2 cpus, memory, packages and forward_env
+    - Integers and string arrays in the reader; `provider.MachineSizer` (Lima implements it; the clone path applies sizes and the base no longer inherits them); approval prompt and approved sets in `ProjectRecord`; installed packages in `MachineRecord`; `projconfig.InstallCommands`; project-approved names into `envpolicy.Input.Allowlist`
+    - _Requirements: 15.1 (cpus, memory, packages, forward_env), 15.3, 9.1, 12.4_
+    - _Properties: 23_
+    - _writes: internal/projconfig/config.go, internal/projconfig/install.go, internal/projconfig/*_test.go, internal/types/records.go, internal/state/store.go, internal/state/*_test.go, internal/provider/provider.go, internal/provider/lima/clone.go, internal/provider/lima/lima.go, internal/provider/lima/*_test.go, internal/provider/fake/fake.go, internal/envpolicy/policy.go, cmd/projconfig.go, cmd/shell.go, cmd/code.go, cmd/projconfig_test.go, README.md_
+  - [ ] 22.3 `avr init`
+    - `projconfig.Detect`/`Propose`/`Render`; `cmd/init.go` shows the detected stack and the exact file, asks, writes with exclusive creation; no terminal writes nothing; `init` reserved in the grammar, help, and README
+    - _Requirements: 15.2, 15.3, 2.6_
+    - _Properties: 24 (second clause)_
+    - _writes: internal/projconfig/detect.go, internal/projconfig/detect_test.go, internal/projconfig/render.go, cmd/init.go, cmd/init_test.go, cmd/root.go, internal/cli/grammar.go, internal/cli/grammar_test.go, README.md_
 
 - [x] 23. `avr ports` and `avr open`  _(PR #79; Lima e2e run and passing; Windows behaviour in task 43)_
   - Forwarded-port listing with guest process attribution where determinable; `avr open <port>` browser launch with not-forwarded message
