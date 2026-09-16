@@ -303,6 +303,8 @@ scope.
 Nothing in this section exists. Each item is specified or sketched; none of it is
 implemented, and there are no dates.
 
+- `avr --native-fs` and `avr sync` on macOS. The Windows half ships today; the
+  Lima half is specified and not built.
 - `.avr.toml` and `avr init`, `avr ports` and `avr open`, and more editors.
 - Further backends behind the provider interface.
 
