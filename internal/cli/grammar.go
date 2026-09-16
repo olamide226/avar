@@ -124,6 +124,7 @@ var subcommands = []string{
 	"cursor",
 	"destroy",
 	"help",
+	"init",
 	"internal",
 	"isolate",
 	"open",

@@ -533,7 +533,7 @@ A cloned repository is not the user. Distro and architecture choose among avar's
 - **What is approved** is names, not files. `ProjectRecord.ApprovedForwardEnv` holds the variable names approved for the project. `ProjectRecord.ApprovedPackages` holds package names per machine name, because where a package is installed changes who it affects: approving `jq` for a project's isolated environment is not approving it for the shared one every other project uses. Adding a name to the file asks about that name alone; removing one stops applying it; editing a comment asks nothing.
 - **When avar asks**: in `avr`, `avr <command>` and the editor commands, after resolving and before any machine work, and only when the file declares a name that is not yet approved. The prompt lists each pending package and the environment it would be installed into — saying when that environment is shared by every project — and each pending variable with a statement that its host value will be forwarded into every session in the project. Anything but an explicit yes is a no.
 - **Declining** records nothing and continues with whatever was approved before; avar asks again next time. Remembering a refusal would need a way to change one's mind, and a second command for that is not worth the surface.
-- **With no terminal** nothing is asked and nothing pending applies: one line on stderr names what is waiting and says to run `avr` in that directory from a terminal. A script is never blocked, and never silently granted.
+- **With no terminal** nothing is asked and nothing pending applies: one line on stderr names what is waiting and says to run `avr` in that directory from a terminal. A script is never blocked, and never silently granted. "A terminal" means `term.IsTerminal(stdin)`, not merely a character device: `/dev/null` is a character device, and a stream nobody is typing into must never be able to answer yes. *(Amended during implementation, when `avr init < /dev/null` showed the prompt.)*
 - `avr init` writing a file is not an approval. Confirming a file and confirming an install into a named environment are different questions, and keeping one consent path is simpler to reason about than two.
 
 Validation happens at parse time. A package name must match `^[A-Za-z0-9][A-Za-z0-9+._-]*$`: no leading `-` (so it can never be read as an option), no `/` (so `./evil.deb` or a URL can never be installed from the project directory), no `=`, `:`, `*` or whitespace. A variable name must match `^[A-Za-z_][A-Za-z0-9_]*$`.
@@ -553,11 +553,12 @@ An install that fails is reported with the package manager's exit status and doe
 
 `avr [selector flags] init` takes no arguments and starts no environment. It resolves the project (registering it, as every command does), refuses if `<project>/.avr.toml` already exists, and inspects that directory — not its subdirectories — for the manifests Req 15.2 names: `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `Dockerfile`, `docker-compose.yml` (and `.yaml`), `.tool-versions`, `mise.toml`.
 
-Detection is pure (`projconfig.Detect` reads the named files and nothing else) and deliberately shallow. Each manifest yields a finding: the stack it indicates and, where the file states one, the version it pins. Findings map to a proposal:
+Detection is pure (`projconfig.Detect` reads the named files and nothing else, skipping any over 1 MiB) and deliberately shallow. Each manifest yields a finding: the stack it indicates and, where the file states one, the version it pins. Findings map to a proposal:
 
 - **distro**: the selector flag if the user gave one; otherwise a supported distribution inferred from the final `FROM` in the Dockerfile (`ubuntu`, `debian` and `fedora` images, and the Debian-based official language images); otherwise avar's default. Always written, because packages need it.
 - **arch**: only from an explicit `--platform=linux/<arch>` on that `FROM`.
-- **packages**: the distribution's own packages for each detected runtime (Node.js, Python, Go, Rust, Ruby). Where a manifest pins a version, the proposal says plainly that the distribution's version is what will be installed, not the pinned one.
+- **packages**: the distribution's own packages for each detected runtime (Node.js, Python, Go, Rust, Ruby). Where a manifest pins a version, the proposal says plainly that the distribution's version is what will be installed, not the pinned one. Every name was checked against the archive of the release avar pins (packages.ubuntu.com for noble, packages.debian.org for trixie, Fedora's mdapi for f43), which is how Fedora's Node proposal came to be `nodejs-npm`: `npm` is only a Provides there, not a package.
+- Tools a version manager lists that map to none of those runtimes are named as having no proposal, rather than dropped.
 - **cpus, memory, forward_env**: never proposed. No manifest states them, and proposing a credential grant from detection is exactly what Req 15.3 rules out.
 - Docker Compose is reported as detected and proposes nothing: installing a container engine is not a package line.
 
@@ -581,10 +582,10 @@ type Config struct {
 
 func Parse(path string, body []byte) (Config, error) // strict; errors name path and line
 func Load(projectDir string) (Config, error)          // reads <projectDir>/.avr.toml; absent → zero Config
-func Render(c Config) []byte                          // Parse(Render(c)) == c
+func Render(c Config) ([]byte, error)                 // reads its output back; refuses a Config that would not survive it
 func InstallCommands(d types.Distro, names []string) ([][]string, error)
 func Detect(projectDir string) ([]Finding, error)
-func Propose(findings []Finding, sel Preference) Proposal
+func Propose(findings []Finding, choice Choice, fallback types.Distro) Proposal // choice: the selector flags
 ```
 
 ## 4. Data Models
@@ -845,4 +846,4 @@ _For any_ invocation in a project with no `.avr.toml`, `Resolve` SHALL return th
 
 Windows hosts through avar-owned WSL 2 distributions (Req 18) and Linux-native workspace mode on the WSL backend (Req 14) have shipped. Still out of scope on Windows: Windows Server, Windows 10, WSL 1 execution, adoption or management of user-owned WSL distributions, automatic mutation of global `%UserProfile%\.wslconfig`, Docker Desktop integration, and Windows-native containers.
 
-Not yet built: `.avr.toml` + `avr init` (Req 15). Not planned: Linux-native workspace mode on Lima, which already shares projects at native speed (Req 14.4); further providers (OrbStack, SSH, cloud), since WSL 2 already showed a second backend fits behind the Provider interface; and a VS Code terminal-picker extension, which has no requirement yet. Out of scope on any host: Linux hosts and GUI (Req 17.6).
+Not planned: Linux-native workspace mode on Lima, which already shares projects at native speed (Req 14.4); further providers (OrbStack, SSH, cloud), since WSL 2 already showed a second backend fits behind the Provider interface; and a VS Code terminal-picker extension, which has no requirement yet. Out of scope on any host: Linux hosts and GUI (Req 17.6).

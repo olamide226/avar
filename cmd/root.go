@@ -133,6 +133,8 @@ const commandIndex = `Management commands:
   ports [--all]                  List the ports forwarded to this computer and
                                  the Linux process listening on each
   open <port>                    Open http://localhost:<port> in your browser
+  init                           Propose a .avr.toml from this project's
+                                 manifests, and write it if you confirm
   help [command]                 Show general or command-specific help
   version                        Print the avr version
 
@@ -164,6 +166,10 @@ var publicCommandHelp = map[string]commandHelp{
 		usage:       "avr [selector flags] destroy [--all | --orphaned] [--yes]",
 		description: "Remove the selected environment, all avar environments, or isolated environments whose projects no longer exist. Host project files are never removed; confirmation is required unless --yes is supplied.",
 		flags:       "  --all        remove every Linux environment avar manages\n  --orphaned   remove isolated environments whose project directory is gone\n  --yes        skip the confirmation prompt",
+	},
+	"init": {
+		usage:       "avr [selector flags] init",
+		description: "Look at this project's manifests (package.json, pyproject.toml, go.mod, Cargo.toml, Dockerfile, docker-compose.yml, .tool-versions, mise.toml), show the stack they describe and the .avr.toml that would pin it, and write that file only if you confirm. Nothing is written without a terminal, and an existing .avr.toml is never replaced. Writing the file installs nothing: the next `avr` asks before installing its packages. --distro and --arch choose what the proposal is for.\n\n`init` is an avar command, so it does not reach the guest: to run a program called `init` in Linux, use `avr -- init`.",
 	},
 	"isolate": {
 		usage:       "avr isolate [on | off [--yes]]",

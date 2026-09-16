@@ -256,6 +256,14 @@ func (a *App) backend(ctx context.Context) (provider.Provider, error) {
 // Every command that acts on "this environment" comes through here, which is
 // what makes the file apply to all of them alike (design §3.11).
 func (a *App) Resolve(inv cli.Invocation) (resolve.ResolvedTarget, error) {
+	return a.resolve(inv, projconfig.Load)
+}
+
+// resolve is Resolve with the project-configuration reader chosen by the
+// caller. Only `avr init` passes nil: it is the one command whose job is to
+// create the file, and it refuses when one exists, so a file it cannot read
+// must not stop it from saying so.
+func (a *App) resolve(inv cli.Invocation, readConfig func(string) (projconfig.Config, error)) (resolve.ResolvedTarget, error) {
 	id, err := provider.HostProviderID()
 	if err != nil {
 		return resolve.ResolvedTarget{}, err
@@ -271,5 +279,5 @@ func (a *App) Resolve(inv cli.Invocation) (resolve.ResolvedTarget, error) {
 		return resolve.ResolvedTarget{}, err
 	}
 
-	return resolve.Resolve(id, cwd, inv.Selector, store, resolve.Options{ProjectConfig: projconfig.Load})
+	return resolve.Resolve(id, cwd, inv.Selector, store, resolve.Options{ProjectConfig: readConfig})
 }
