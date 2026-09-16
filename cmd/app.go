@@ -78,9 +78,9 @@ func newApp(version string) *App {
 // interactive reports whether a person is at the terminal to answer a question.
 //
 // It asks whether stdin is a terminal rather than whether it is a character
-// device, which is what stdinIsTerminal checks. The difference matters for
-// consent: /dev/null is a character device and not a terminal, and an approval
-// must never be inferred from a stream no person is typing into.
+// device. The difference matters for consent: /dev/null is a character device
+// and not a terminal, and an approval must never be inferred from a stream no
+// person is typing into.
 func (a *App) interactive() bool {
 	if a.terminal != nil {
 		return a.terminal()
