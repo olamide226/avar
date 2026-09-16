@@ -46,7 +46,12 @@ var (
 	_ provider.EditorTargetProvider = (*Fake)(nil)
 	_ provider.NativeWorkspacer     = (*Fake)(nil)
 	_ provider.PortDiagnoser        = (*Fake)(nil)
+	_ provider.MachineSizer         = (*Fake)(nil)
 )
+
+// SizesMachines marks provider.MachineSizer: the Fake records each machine's
+// size as the spec gave it and reports it back through Status.
+func (f *Fake) SizesMachines() {}
 
 // ProviderID is the backend id the Fake reports. It is its own id rather than a
 // real backend's: a flow test that records a machine records it against the

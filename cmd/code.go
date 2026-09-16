@@ -133,12 +133,23 @@ func openInEditor(ctx context.Context, app *App, inv cli.Invocation, ed editor.E
 		}
 	}
 
+	// The project's file is reviewed here as on the shell path, before any
+	// machine work, so that the environment an editor opens has the packages
+	// the user approved.
+	target, err = reviewProjectGrants(app, target)
+	if err != nil {
+		return err
+	}
+
 	// Bring the machine up and make the project visible inside it, exactly
 	// as the shell path does. The shared prepareEnvironment gives the editor
 	// commands the same auto-provision behaviour as `avr`, so a first-time
 	// user who types `avr code` before `avr` gets a working environment.
 	_, guestCwd, err := prepareEnvironment(ctx, app, p, target, progressTo(app.Err))
 	if err != nil {
+		return err
+	}
+	if err := applyProjectConfig(ctx, app, p, target, guestCwd); err != nil {
 		return err
 	}
 

@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -51,10 +52,47 @@ type Config struct {
 
 	// Arch selects the guest architecture, exactly as --arch does.
 	Arch types.Arch
+
+	// CPUs and MemoryMiB size the project's isolated environment when it is
+	// created, and nothing else (design §3.11). Zero means not set.
+	CPUs      int
+	MemoryMiB int
+
+	// Packages are names in Distro's own repositories, installed only after
+	// the user approves them. A file that lists packages always names Distro.
+	Packages []string
+
+	// ForwardEnv names host variables the project asks to forward into its
+	// sessions, each only after the user approves it.
+	ForwardEnv []string
 }
 
 // Present reports whether the configuration came from a file.
 func (c Config) Present() bool { return c.Path != "" }
+
+// PackagesApplyTo reports whether the file's packages are meant for an
+// environment of distribution d. Package names belong to one distribution, so
+// packages listed for Ubuntu are never offered to, or installed in, Fedora.
+func (c Config) PackagesApplyTo(d types.Distro) bool {
+	return len(c.Packages) > 0 && strings.EqualFold(strings.TrimSpace(string(c.Distro)), string(d))
+}
+
+// MemoryGB is MemoryMiB in the gibibytes provider.MachineSpec takes.
+func (c Config) MemoryGB() float64 { return float64(c.MemoryMiB) / 1024 }
+
+// ResourceDeclaration renders what the file asks for in cpus and memory as a
+// stable string, or "" when it asks for neither. It identifies a declaration,
+// so that advice about one is given once and given again when it changes.
+func (c Config) ResourceDeclaration() string {
+	var parts []string
+	if c.CPUs > 0 {
+		parts = append(parts, fmt.Sprintf("cpus=%d", c.CPUs))
+	}
+	if c.MemoryMiB > 0 {
+		parts = append(parts, "memory="+formatMemory(c.MemoryMiB))
+	}
+	return strings.Join(parts, " ")
+}
 
 // Load reads the .avr.toml in projectDir. A directory without one yields the
 // zero Config and no error, because the absence of the file is the ordinary
@@ -102,6 +140,10 @@ type key struct {
 var schema = []key{
 	{name: "distro", apply: applyDistro},
 	{name: "arch", apply: applyArch},
+	{name: "cpus", apply: applyCPUs},
+	{name: "memory", apply: applyMemory},
+	{name: "packages", apply: applyPackages},
+	{name: "forward_env", apply: applyForwardEnv},
 }
 
 // knownKeys renders the schema's key names for an error message.
@@ -127,55 +169,66 @@ func lookupKey(name string) (key, bool) {
 //
 // The accepted language is a strict subset of TOML, chosen so that every file
 // Parse accepts means the same to any conforming TOML parser: comments, bare
-// keys, and quoted strings with no escape sequences. Every other construct
-// TOML allows is refused with the line it is on.
+// keys, quoted strings with no escape sequences, unsigned decimal integers, and
+// arrays of strings on one line or several. Every other construct TOML allows
+// is refused with the line it is on.
 func Parse(path string, body []byte) (Config, error) {
 	if !utf8.Valid(body) {
 		return Config{}, fmt.Errorf("%s: not valid UTF-8, which TOML requires", path)
 	}
 	cfg := Config{Path: path}
 	seen := map[string]int{}
+	lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
 
-	for i, raw := range strings.Split(string(body), "\n") {
+	for i := 0; i < len(lines); i++ {
 		line := i + 1
-		fail := func(format string, args ...any) error {
-			return fmt.Errorf("%s line %d: %s", path, line, fmt.Sprintf(format, args...))
+		fail := func(at int, format string, args ...any) error {
+			return fmt.Errorf("%s line %d: %s", path, at, fmt.Sprintf(format, args...))
 		}
 
-		text := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
+		text := strings.TrimSpace(lines[i])
 		if text == "" || strings.HasPrefix(text, "#") {
 			continue
 		}
 		if strings.HasPrefix(text, "[") {
-			return Config{}, fail("tables are not supported: every setting in %s is a top-level key (%s)", FileName, knownKeys())
+			return Config{}, fail(line, "tables are not supported: every setting in %s is a top-level key (%s)", FileName, knownKeys())
 		}
 
 		name, rest, ok := strings.Cut(text, "=")
 		if !ok {
-			return Config{}, fail("expected key = value, got %q", text)
+			return Config{}, fail(line, "expected key = value, got %q", text)
 		}
 		name = strings.TrimSpace(name)
 		if err := checkKeyName(name); err != nil {
-			return Config{}, fail("%v", err)
+			return Config{}, fail(line, "%v", err)
 		}
 		k, known := lookupKey(name)
 		if !known {
-			return Config{}, fail("unknown key %q: %s understands %s (a key from a newer avar needs a newer avr)", name, FileName, knownKeys())
+			return Config{}, fail(line, "unknown key %q: %s understands %s (a key from a newer avar needs a newer avr)", name, FileName, knownKeys())
 		}
 		if first, dup := seen[name]; dup {
-			return Config{}, fail("%q is already set on line %d; a key may appear only once", name, first)
+			return Config{}, fail(line, "%q is already set on line %d; a key may appear only once", name, first)
 		}
 		seen[name] = line
 
-		v, err := parseValue(rest)
+		v, consumed, err := parseValue(rest, lines[i+1:])
 		if err != nil {
-			return Config{}, fail("%s: %v", name, err)
+			return Config{}, fail(line+consumed, "%s: %v", name, err)
 		}
 		if err := k.apply(&cfg, v); err != nil {
-			return Config{}, fail("%s: %v", name, err)
+			return Config{}, fail(line, "%s: %v", name, err)
 		}
+		i += consumed
+	}
+
+	if len(cfg.Packages) > 0 && cfg.Distro == "" {
+		return Config{}, lineError(path, seen["packages"], `packages needs distro: package names belong to one distribution, so name it, for example distro = "ubuntu"`)
 	}
 	return cfg, nil
+}
+
+func lineError(path string, line int, msg string) error {
+	return fmt.Errorf("%s line %d: %s", path, line, msg)
 }
 
 // bareKey is TOML's bare-key alphabet.
@@ -197,39 +250,55 @@ func checkKeyName(name string) error {
 	return nil
 }
 
+// valueKind is the TOML type of a parsed value.
+type valueKind int
+
+const (
+	kindString valueKind = iota
+	kindInteger
+	kindStrings
+)
+
 // value is one parsed right-hand side.
 type value struct {
-	str string
+	kind    valueKind
+	str     string
+	integer int
+	strs    []string
 }
 
 // parseValue reads the text after "=": one value, then nothing but an optional
-// comment.
-func parseValue(text string) (value, error) {
+// comment. An array may continue onto the following lines; consumed reports how
+// many of them it used, and on an error, which one the error is on.
+func parseValue(text string, following []string) (v value, consumed int, err error) {
 	text = strings.TrimSpace(text)
-	if text == "" {
-		return value{}, errors.New("no value after =")
+	if text == "" || text[0] == '#' {
+		return value{}, 0, errors.New("no value after =")
 	}
 
-	var (
-		v    value
-		rest string
-		err  error
-	)
-	switch text[0] {
-	case '"', '\'':
+	var rest string
+	switch c := text[0]; {
+	case c == '"' || c == '\'':
+		v.kind = kindString
 		v.str, rest, err = parseString(text)
+	case c == '[':
+		v.kind = kindStrings
+		v.strs, rest, consumed, err = parseArray(text, following)
+	case c >= '0' && c <= '9':
+		v.kind = kindInteger
+		v.integer, rest, err = parseInteger(text)
 	default:
-		return value{}, fmt.Errorf("%s is not a value this file accepts: write a quoted string, such as \"ubuntu\"", describe(text))
+		return value{}, 0, fmt.Errorf("%s is not a value this file accepts: write a quoted string, a whole number, or a list of quoted strings", describe(text))
 	}
 	if err != nil {
-		return value{}, err
+		return value{}, consumed, err
 	}
 
 	rest = strings.TrimSpace(rest)
 	if rest != "" && !strings.HasPrefix(rest, "#") {
-		return value{}, fmt.Errorf("unexpected %q after the value", rest)
+		return value{}, consumed, fmt.Errorf("unexpected %q after the value", rest)
 	}
-	return v, nil
+	return v, consumed, nil
 }
 
 // parseString reads a basic ("...") or literal ('...') string at the start of
@@ -260,6 +329,62 @@ func parseString(text string) (string, string, error) {
 	return s, text[2+end:], nil
 }
 
+// parseArray reads an array of strings starting at text, continuing onto the
+// following lines until it closes. Comments and a trailing comma are allowed,
+// as TOML allows them; any element that is not a quoted string is refused.
+func parseArray(text string, following []string) (items []string, rest string, consumed int, err error) {
+	cur := text[1:]
+	wantComma := false
+	for {
+		cur = strings.TrimLeft(cur, " \t")
+		switch {
+		case cur == "" || cur[0] == '#':
+			if consumed == len(following) {
+				return nil, "", consumed, errors.New("the list is not closed with ]")
+			}
+			cur = following[consumed]
+			consumed++
+		case cur[0] == ']':
+			return items, cur[1:], consumed, nil
+		case wantComma && cur[0] == ',':
+			cur = cur[1:]
+			wantComma = false
+		case wantComma:
+			return nil, "", consumed, fmt.Errorf("expected , or ] in the list, found %q", cur)
+		case cur[0] == '"' || cur[0] == '\'':
+			var s string
+			s, cur, err = parseString(cur)
+			if err != nil {
+				return nil, "", consumed, err
+			}
+			items = append(items, s)
+			wantComma = true
+		default:
+			return nil, "", consumed, fmt.Errorf("lists in %s hold only quoted strings, and this one has %s", FileName, describe(cur))
+		}
+	}
+}
+
+// decimal is an unsigned TOML integer with no underscores or leading zeros.
+var decimal = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+
+// parseInteger reads an unsigned decimal integer at the start of text.
+func parseInteger(text string) (int, string, error) {
+	end := strings.IndexAny(text, " \t#")
+	if end < 0 {
+		end = len(text)
+	}
+	token := text[:end]
+	if !decimal.MatchString(token) {
+		return 0, "", fmt.Errorf("%q is not a number this file accepts: write digits only, such as 4, with no underscores, leading zeros, decimals or dates", token)
+	}
+	n, err := strconv.Atoi(token)
+	if err != nil {
+		return 0, "", fmt.Errorf("%s is too large", token)
+	}
+	return n, text[end:], nil
+}
+
 // describe names the TOML construct a value looks like, so a refusal says what
 // was written rather than only what was expected.
 func describe(text string) string {
@@ -267,20 +392,31 @@ func describe(text string) string {
 	case text[0] == '{':
 		return "an inline table"
 	case text[0] == '[':
-		return "an array"
+		return "a nested list"
 	case strings.HasPrefix(text, "true") || strings.HasPrefix(text, "false"):
 		return "a boolean"
 	case strings.ContainsAny(text[:1], "+-0123456789") || strings.HasPrefix(text, "inf") || strings.HasPrefix(text, "nan"):
-		return "a number or date"
+		return "a signed number"
 	default:
 		return fmt.Sprintf("%q", text)
 	}
+}
+
+// wantKind refuses a value of the wrong type for a key, saying what it takes.
+func wantKind(v value, kind valueKind, example string) error {
+	if v.kind == kind {
+		return nil
+	}
+	return fmt.Errorf("takes %s", example)
 }
 
 // applyDistro reads distro = "name" or "name:version", the --distro syntax.
 // Whether avar supports the name and version is the resolver's question, where
 // it is answered the same way for the file as for the flag.
 func applyDistro(c *Config, v value) error {
+	if err := wantKind(v, kindString, `a quoted name, such as "ubuntu" or "ubuntu:24.04"`); err != nil {
+		return err
+	}
 	name, version, hasVersion := strings.Cut(strings.TrimSpace(v.str), ":")
 	name, version = strings.TrimSpace(name), strings.TrimSpace(version)
 	if name == "" {
@@ -296,10 +432,130 @@ func applyDistro(c *Config, v value) error {
 // applyArch reads arch = "arm64" or "amd64". As with distro, support is checked
 // where the flag's is.
 func applyArch(c *Config, v value) error {
+	if err := wantKind(v, kindString, `a quoted architecture, "arm64" or "amd64"`); err != nil {
+		return err
+	}
 	arch := strings.TrimSpace(v.str)
 	if arch == "" {
 		return errors.New(`names no architecture: write "arm64" or "amd64"`)
 	}
 	c.Arch = types.Arch(arch)
 	return nil
+}
+
+// applyCPUs reads cpus = N.
+func applyCPUs(c *Config, v value) error {
+	if err := wantKind(v, kindInteger, "a whole number, such as cpus = 4"); err != nil {
+		return err
+	}
+	if v.integer < 1 {
+		return errors.New("must be at least 1")
+	}
+	c.CPUs = v.integer
+	return nil
+}
+
+// memorySize is a whole number of gibibytes or mebibytes. Only the binary units
+// are accepted: "8GB" is ambiguous between two sizes, and a configuration file
+// is the wrong place to guess which one was meant.
+var memorySize = regexp.MustCompile(`^([1-9][0-9]*)(GiB|MiB)$`)
+
+// applyMemory reads memory = "8GiB" or "512MiB".
+func applyMemory(c *Config, v value) error {
+	const example = `a quoted size in GiB or MiB, such as memory = "8GiB"`
+	if err := wantKind(v, kindString, example); err != nil {
+		return err
+	}
+	m := memorySize.FindStringSubmatch(strings.TrimSpace(v.str))
+	if m == nil {
+		return fmt.Errorf("%q is not a size avar reads: write %s", v.str, example)
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n > 1<<20 {
+		return fmt.Errorf("%q is too large", v.str)
+	}
+	if m[2] == "GiB" {
+		n *= 1024
+	}
+	c.MemoryMiB = n
+	return nil
+}
+
+// formatMemory renders MiB in the unit a person would have written.
+func formatMemory(mib int) string {
+	if mib%1024 == 0 {
+		return strconv.Itoa(mib/1024) + "GiB"
+	}
+	return strconv.Itoa(mib) + "MiB"
+}
+
+// packageName is what a package name may look like. It is narrower than any one
+// package manager's rules on purpose, because the name reaches a package
+// manager running as root: no leading "-", so it can never be read as an
+// option; no "/", so it can never name a file in the project or a URL; no "=",
+// ":" or "*", so it can never pin a version, an architecture, or a pattern.
+// Debian, Ubuntu and Fedora package names all fit.
+var packageName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._-]*$`)
+
+// ValidPackageName reports whether name is a package name avar will pass to a
+// package manager.
+func ValidPackageName(name string) bool { return packageName.MatchString(name) }
+
+// applyPackages reads packages = ["name", ...].
+func applyPackages(c *Config, v value) error {
+	if err := wantKind(v, kindStrings, `a list of quoted package names, such as packages = ["ripgrep", "jq"]`); err != nil {
+		return err
+	}
+	names, err := distinct(v.strs, "package", func(name string) error {
+		if !ValidPackageName(name) {
+			return fmt.Errorf("%q is not a package name avar will install: names start with a letter or digit and hold only letters, digits and + . _ -", name)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	c.Packages = names
+	return nil
+}
+
+// variableName is a portable environment variable name.
+var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// applyForwardEnv reads forward_env = ["NAME", ...].
+func applyForwardEnv(c *Config, v value) error {
+	if err := wantKind(v, kindStrings, `a list of quoted variable names, such as forward_env = ["GITHUB_TOKEN"]`); err != nil {
+		return err
+	}
+	names, err := distinct(v.strs, "variable", func(name string) error {
+		if !variableName.MatchString(name) {
+			return fmt.Errorf("%q is not a variable name: names are letters, digits and _, and do not start with a digit", name)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	c.ForwardEnv = names
+	return nil
+}
+
+// distinct validates each name and refuses a name listed twice.
+func distinct(names []string, what string, check func(string) error) ([]string, error) {
+	seen := make(map[string]bool, len(names))
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if err := check(name); err != nil {
+			return nil, err
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("%s %q is listed twice", what, name)
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }

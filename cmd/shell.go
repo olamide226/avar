@@ -57,6 +57,14 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 		}
 	}
 
+	// A project's .avr.toml may ask to install packages and forward variables.
+	// Neither happens without the user's approval, and the question comes
+	// before any machine work so nobody waits through a boot to be asked.
+	target, err = reviewProjectGrants(app, target)
+	if err != nil {
+		return err
+	}
+
 	// Provisioning is the one slow thing a user waits through, and the only
 	// part of this path that may be interrupted. An interactive session must
 	// not be: once the guest holds the terminal, Ctrl-C belongs to it
@@ -89,7 +97,11 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 			Host:      envpolicy.HostEnviron(),
 			Forwarded: inv.Env,
 			EnvFile:   envFile,
-			Allowlist: forwardEnv(app),
+			// The standing grant from avar's own configuration, and the
+			// project's variables the user approved on this host. A name the
+			// project's file declares and the user never approved is in
+			// neither (PROP-23).
+			Allowlist: append(forwardEnv(app), approvedForwardEnv(target)...),
 		}),
 		TTY:             stdinIsTerminal(),
 		ForwardSSHAgent: inv.SSHAgent,
@@ -135,6 +147,9 @@ func runSetup(ctx context.Context, app *App, p provider.Provider, target resolve
 	if err != nil {
 		return "", err
 	}
+	if err := applyProjectConfig(ctx, app, p, target, guestCwd); err != nil {
+		return "", err
+	}
 
 	if inv.NativeFS {
 		return enterNativeWorkspace(ctx, app, p, target, progress)
@@ -160,12 +175,15 @@ func prepareEnvironment(ctx context.Context, app *App, p provider.Provider, targ
 	// routing decision was already made by choosing p, so naming any other
 	// backend here would be incoherent; the resolver's own view of which
 	// backend owns this machine is what recordMachine stores durably.
+	cpus, memoryGB := machineSize(p, target)
 	if err := p.EnsureMachine(ctx, provider.MachineSpec{
 		Name:     target.MachineName,
 		Provider: p.ID(),
 		Selector: target.Selector,
 		Kind:     target.Kind,
 		Mounts:   []types.MountSpec{mount},
+		CPUs:     cpus,
+		MemoryGB: memoryGB,
 	}, progress); err != nil {
 		return types.MountSpec{}, "", err
 	}

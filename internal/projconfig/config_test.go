@@ -56,6 +56,36 @@ func TestParse_Schema_REQ_15_1(t *testing.T) {
 			body: `distro = "ubuntu#x"`,
 			want: Config{Path: testPath, Distro: types.Distro("ubuntu#x")},
 		},
+		{
+			name: "cpus and memory in GiB",
+			body: "cpus = 8\nmemory = \"16GiB\"",
+			want: Config{Path: testPath, CPUs: 8, MemoryMiB: 16 * 1024},
+		},
+		{
+			name: "memory in MiB",
+			body: `memory = "1536MiB"`,
+			want: Config{Path: testPath, MemoryMiB: 1536},
+		},
+		{
+			name: "packages on one line, with the distro they belong to",
+			body: "distro = \"ubuntu\"\npackages = [\"ripgrep\", 'jq', \"g++\", \"python3.12-venv\"]",
+			want: Config{Path: testPath, Distro: types.DistroUbuntu, Packages: []string{"ripgrep", "jq", "g++", "python3.12-venv"}},
+		},
+		{
+			name: "a list over several lines with comments and a trailing comma",
+			body: "distro = \"fedora\"\npackages = [\n  \"gcc-c++\",  # compilers\n\n  \"python3-PyYAML\", # capitals are real Fedora names\n]\ncpus = 2",
+			want: Config{Path: testPath, Distro: types.DistroFedora, Packages: []string{"gcc-c++", "python3-PyYAML"}, CPUs: 2},
+		},
+		{
+			name: "an empty list asks for nothing, and needs no distro",
+			body: "packages = []\nforward_env = [ ]",
+			want: Config{Path: testPath},
+		},
+		{
+			name: "forward_env",
+			body: `forward_env = ["GITHUB_TOKEN", "_private", "AWS_PROFILE"]`,
+			want: Config{Path: testPath, ForwardEnv: []string{"GITHUB_TOKEN", "_private", "AWS_PROFILE"}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Parse(testPath, []byte(tc.body))
@@ -81,7 +111,7 @@ func TestParse_RefusesWhatItCannotReadExactly_REQ_15_1(t *testing.T) {
 		want string
 	}{
 		{"unknown key", `packges = ["jq"]`, 1, `unknown key "packges"`},
-		{"unknown key names the keys it knows", `cpu = 4`, 1, "understands distro, arch"},
+		{"unknown key names the keys it knows", `cpu = 4`, 1, "understands distro, arch, cpus, memory, packages, forward_env"},
 		{"duplicate key", "distro = \"ubuntu\"\n\ndistro = \"fedora\"", 3, "already set on line 1"},
 		{"table", "[tools]\nnode = \"20\"", 1, "tables are not supported"},
 		{"array of tables", "[[x]]", 1, "tables are not supported"},
@@ -91,7 +121,43 @@ func TestParse_RefusesWhatItCannotReadExactly_REQ_15_1(t *testing.T) {
 		{"no key", `= "ubuntu"`, 1, "needs a key"},
 		{"no value", "distro =", 1, "no value"},
 		{"bare word", "distro = ubuntu", 1, "write a quoted string"},
-		{"integer where a string is needed", "arch = 64", 1, "a number or date"},
+		{"integer where a string is needed", "arch = 64", 1, "takes a quoted architecture"},
+		{"string where an integer is needed", `cpus = "4"`, 1, "takes a whole number"},
+		{"list where a string is needed", `distro = ["ubuntu"]`, 1, "takes a quoted name"},
+		{"string where a list is needed", `packages = "jq"`, 1, "takes a list"},
+		{"zero cpus", "cpus = 0", 1, "at least 1"},
+		{"signed integer", "cpus = +4", 1, "a signed number"},
+		{"negative integer", "cpus = -4", 1, "a signed number"},
+		{"float", "cpus = 4.5", 1, "digits only"},
+		{"underscore in an integer", "cpus = 1_0", 1, "digits only"},
+		{"leading zero", "cpus = 04", 1, "digits only"},
+		{"hexadecimal", "cpus = 0x10", 1, "digits only"},
+		{"date", "cpus = 1979-05-27", 1, "digits only"},
+		{"integer too large", "cpus = 99999999999999999999999", 1, "too large"},
+		{"ambiguous memory unit", `memory = "8GB"`, 1, "GiB or MiB"},
+		{"memory without a unit", `memory = "8"`, 1, "GiB or MiB"},
+		{"fractional memory", `memory = "1.5GiB"`, 1, "GiB or MiB"},
+		{"memory as a number", "memory = 8", 1, "takes a quoted size"},
+		{"packages without a distro", `packages = ["jq"]`, 1, "packages needs distro"},
+		{"packages without a distro, reported on the packages line", "cpus = 2\npackages = [\"jq\"]", 2, "packages needs distro"},
+		{"a package that is an option", "distro = \"ubuntu\"\npackages = [\"--allow-unauthenticated\"]", 2, "not a package name"},
+		{"a package that is a file", "distro = \"ubuntu\"\npackages = [\"./evil.deb\"]", 2, "not a package name"},
+		{"a package that is a URL", "distro = \"ubuntu\"\npackages = [\"https://example.com/x.rpm\"]", 2, "not a package name"},
+		{"a package with a version pin", "distro = \"ubuntu\"\npackages = [\"jq=1.6\"]", 2, "not a package name"},
+		{"a package with an architecture", "distro = \"ubuntu\"\npackages = [\"libc6:amd64\"]", 2, "not a package name"},
+		{"a package pattern", "distro = \"ubuntu\"\npackages = [\"python3-*\"]", 2, "not a package name"},
+		{"a package with a space", "distro = \"ubuntu\"\npackages = [\"jq curl\"]", 2, "not a package name"},
+		{"a package listed twice", "distro = \"ubuntu\"\npackages = [\"jq\", \"jq\"]", 2, "listed twice"},
+		{"a variable name with =", `forward_env = ["A=b"]`, 1, "not a variable name"},
+		{"a variable name starting with a digit", `forward_env = ["1PASSWORD"]`, 1, "not a variable name"},
+		{"an empty variable name", `forward_env = [""]`, 1, "not a variable name"},
+		{"a list holding a number", "forward_env = [\"A\", 3]", 1, "only quoted strings"},
+		{"a nested list", `forward_env = [["A"]]`, 1, "a nested list"},
+		{"a list missing a comma", `forward_env = ["A" "B"]`, 1, "expected , or ]"},
+		{"a list with a leading comma", `forward_env = [, "A"]`, 1, "only quoted strings"},
+		{"a list that never closes, reported where it ran out", "forward_env = [\n  \"A\",\n", 3, "not closed"},
+		{"an error inside a multi-line list names its line", "forward_env = [\n  \"A\",\n  true,\n]", 3, "a boolean"},
+		{"trailing garbage after a list", `forward_env = ["A"] x`, 1, "unexpected"},
 		{"boolean", "distro = true", 1, "a boolean"},
 		{"inline table", `distro = { name = "ubuntu" }`, 1, "an inline table"},
 		{"unclosed string", `distro = "ubuntu`, 1, "not closed"},
@@ -242,6 +308,12 @@ var acceptedFixtures = []string{
 	"  distro=\"ubuntu\"   # trailing comment\r\n\r\narch='arm64'#tight\n",
 	`distro = "ubuntu#not-a-comment"`,
 	`distro = 'C:\literal'`,
+	"cpus = 4\nmemory = \"8GiB\"\n",
+	"memory = '1536MiB' # comment\n",
+	"distro = \"ubuntu\"\npackages = [\"ripgrep\", 'jq', \"g++\"]\n",
+	"distro = \"fedora\"\npackages = [\n  \"gcc-c++\",  # compilers\n\n  \"python3-PyYAML\", # a comment\n]\n",
+	"forward_env = [ \"GITHUB_TOKEN\" , '_x' ,]",
+	"forward_env = [\"A\",#comment\n\"C\"]",
 }
 
 // document renders a Config as the TOML document it was read from, in the
@@ -258,7 +330,27 @@ func document(c Config) map[string]any {
 	if c.Arch != "" {
 		doc["arch"] = string(c.Arch)
 	}
+	if c.CPUs != 0 {
+		doc["cpus"] = float64(c.CPUs) // JSON numbers decode as float64
+	}
+	if c.MemoryMiB != 0 {
+		doc["memory"] = formatMemory(c.MemoryMiB)
+	}
+	if c.Packages != nil {
+		doc["packages"] = strings2any(c.Packages)
+	}
+	if c.ForwardEnv != nil {
+		doc["forward_env"] = strings2any(c.ForwardEnv)
+	}
 	return doc
+}
+
+func strings2any(in []string) []any {
+	out := make([]any, len(in))
+	for i, s := range in {
+		out[i] = s
+	}
+	return out
 }
 
 // conformingTOMLParser finds a Python with tomllib (3.11 or later), or skips.

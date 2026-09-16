@@ -34,6 +34,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -455,6 +456,10 @@ func (t *Tx) PutMachine(rec types.MachineRecord) error {
 		if rec.CreatedAt.IsZero() {
 			rec.CreatedAt = old.CreatedAt
 		}
+		// Installed packages grow the way mounts do, for the same reason: a
+		// caller writing back a record it built without them must not make
+		// avar forget what it installed.
+		rec.Packages = unionNames(old.Packages, rec.Packages)
 	}
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = time.Now().UTC()
@@ -510,6 +515,42 @@ func (t *Tx) AddMount(machine string, mount types.MountSpec) error {
 	t.machines[machine] = rec
 	t.machinesDirty = true
 	return nil
+}
+
+// AddPackages records that avar installed packages into a machine. Like mounts,
+// the recorded set only grows while the machine exists, and a name already
+// recorded is not recorded twice.
+func (t *Tx) AddPackages(machine string, names []string) error {
+	if err := types.ValidateMachineName(machine); err != nil {
+		return fmt.Errorf("record installed packages: %w", err)
+	}
+	rec, ok := t.machines[machine]
+	if !ok {
+		return fmt.Errorf("record installed packages %v: avar has no record of machine %s", names, machine)
+	}
+	merged := unionNames(rec.Packages, names)
+	if len(merged) == len(rec.Packages) {
+		return nil
+	}
+	rec.Packages = merged
+	t.machines[machine] = rec
+	t.machinesDirty = true
+	return nil
+}
+
+// unionNames appends the names in added that existing does not already hold,
+// keeping the order they were first recorded in.
+func unionNames(existing, added []string) []string {
+	out := append([]string(nil), existing...)
+	for _, name := range added {
+		if !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // DeleteMachine drops a machine's record together with the sessions attached
@@ -706,6 +747,12 @@ func (s *Store) AddMount(machine string, mount types.MountSpec) error {
 	return s.Update(func(tx *Tx) error { return tx.AddMount(machine, mount) })
 }
 
+// AddPackages records packages avar installed into a machine (see
+// Tx.AddPackages).
+func (s *Store) AddPackages(machine string, names []string) error {
+	return s.Update(func(tx *Tx) error { return tx.AddPackages(machine, names) })
+}
+
 // DeleteMachine drops a deleted machine's record and its sessions.
 func (s *Store) DeleteMachine(name string) error {
 	return s.Update(func(tx *Tx) error { return tx.DeleteMachine(name) })
@@ -886,10 +933,19 @@ func copyProject(rec types.ProjectRecord) types.ProjectRecord {
 		sel := *rec.Selector
 		rec.Selector = &sel
 	}
+	rec.ApprovedForwardEnv = slices.Clone(rec.ApprovedForwardEnv)
+	if rec.ApprovedPackages != nil {
+		approved := make(map[string][]string, len(rec.ApprovedPackages))
+		for machine, names := range rec.ApprovedPackages {
+			approved[machine] = slices.Clone(names)
+		}
+		rec.ApprovedPackages = approved
+	}
 	return rec
 }
 
 func copyMachine(rec types.MachineRecord) types.MachineRecord {
 	rec.Mounts = append([]types.MountSpec(nil), rec.Mounts...)
+	rec.Packages = slices.Clone(rec.Packages)
 	return rec
 }

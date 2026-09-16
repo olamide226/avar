@@ -94,10 +94,13 @@ type Input struct {
 	EnvFile map[string]string
 
 	// Allowlist names host variables the user has granted standing
-	// permission to cross, through forward_env in avar's own configuration
-	// (REQ-12.4). It is the one grant that outlives a single invocation, and
-	// it is deliberately host-side: a grant that travelled with the project
-	// would let a cloned repository decide what leaves the user's machine.
+	// permission to cross: forward_env in avar's own configuration
+	// (REQ-12.4), and the names from a project's .avr.toml that the user
+	// approved for that project (REQ-15.1). These are the only grants that
+	// outlive a single invocation, and both are held host-side: a project's
+	// file can propose a name, but only the user's approval, recorded in the
+	// State_Dir, puts it here. A grant that travelled with the project would
+	// let a cloned repository decide what leaves the user's machine.
 	//
 	// Each name behaves like a bare --env: the host's value is forwarded if
 	// the host has one, and nothing happens if it does not. A name absent
