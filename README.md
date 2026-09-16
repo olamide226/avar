@@ -241,6 +241,28 @@ it is talking to. avar's contribution is the mental model: it maps your current
 directory and a chosen environment onto a machine, a mount, and a working
 directory, so that you never have to name any of the three.
 
+### What Linux can see
+
+Only the project folders you have run `avr` in. avar shares each one into the
+environment as you use it, and shares nothing else by default.
+
+- **On Windows**, WSL normally mounts every drive inside Linux, at `/mnt/c`,
+  `/mnt/d` and so on, so any Linux program could read your whole disk. avar
+  turns that off in every environment it creates, and checks afterwards,
+  refusing an environment that still has a Windows drive mounted. It also
+  stops your Windows `PATH` being added to Linux's, so `python` in Linux never
+  quietly runs `python.exe` from Windows.
+- **On macOS**, the virtual machine gets your project folders and nothing
+  more: not your home directory, and not the rest of the disk.
+- **On both**, Linux gets none of your environment variables beyond a few that
+  terminals need, no credentials, and no SSH agent, unless you pass them with
+  `--env`, `--env-file` or `--ssh-agent`.
+
+This limits what Linux can read. It is not a sandbox. On Windows, WSL still
+lets Linux start Windows programs, and a Windows program runs as you, with
+your usual access to your files. Treat code you run in avar as you would code
+you run on your own machine.
+
 ## Limitations
 
 These are real and current, not caveats about a beta.
