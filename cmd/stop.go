@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/olamide226/avar/internal/cli"
@@ -86,9 +87,10 @@ func stopSelected(ctx context.Context, app *App, p provider.Provider, inv cli.In
 		fmt.Fprintf(app.Out, "There is no %s environment yet, so there is nothing to stop.\n", label)
 		return nil
 	case machine.State == types.StateStopped:
-		// Ask the provider to converge a stale backend process too. Lima can
-		// report Stopped while an orphaned host agent is still consuming CPU.
-		if err := p.Stop(ctx, machine.Name, types.DiscardProgress); err != nil {
+		// Stop converges on stopped rather than shutting down, so it is still
+		// asked: a backend can leave processes running after the machine itself
+		// has stopped, and this is where they are released.
+		if err := p.Stop(ctx, machine.Name, stopProgress(app.Err)); err != nil {
 			return err
 		}
 		fmt.Fprintf(app.Out, "%s is already stopped.\n", label)
@@ -130,7 +132,7 @@ func stopEverything(ctx context.Context, app *App, p provider.Provider, machines
 		case types.StateStopped:
 			// A stopped VM can still have an orphaned backend process. Let Stop
 			// converge that cleanup without counting it as a newly stopped VM.
-			if err := p.Stop(ctx, machine.Name, types.DiscardProgress); err != nil {
+			if err := p.Stop(ctx, machine.Name, stopProgress(app.Err)); err != nil {
 				failures = append(failures, err)
 			}
 			alreadyIdle++
@@ -166,7 +168,7 @@ func stopEverything(ctx context.Context, app *App, p provider.Provider, machines
 // caller was asking for, not a failure.
 func stopOne(ctx context.Context, app *App, p provider.Provider, machine types.MachineStatus, label string) (stopped bool, err error) {
 	fmt.Fprintf(app.Out, "Stopping %s…\n", label)
-	switch err := p.Stop(ctx, machine.Name, types.DiscardProgress); {
+	switch err := p.Stop(ctx, machine.Name, stopProgress(app.Err)); {
 	case errors.Is(err, provider.ErrMachineNotFound):
 		return false, nil
 	case errors.Is(err, provider.ErrNotOwned):
@@ -176,6 +178,24 @@ func stopOne(ctx context.Context, app *App, p provider.Provider, machine types.M
 	default:
 		return true, nil
 	}
+}
+
+// stopProgress is where a stop sends what the backend reports along the way:
+// the same presentation every other command uses, so a warning that a machine
+// had to be ended outright, or that something it left running was cleaned up,
+// reaches the user.
+//
+// The backend's stopping event is the one thing dropped. `avr stop` announces
+// each environment by its label itself, and the event would repeat that — by
+// machine name on one backend and as an empty line on another.
+func stopProgress(w io.Writer) types.ProgressSink {
+	shown := progressTo(w)
+	return types.ProgressFunc(func(e types.ProgressEvent) {
+		if e.Kind == types.ProgressStopping {
+			return
+		}
+		shown.Progress(e)
+	})
 }
 
 // findMachine looks a resolved machine up in the backend's listing.

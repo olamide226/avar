@@ -113,13 +113,12 @@ type Options struct {
 // (see view), so two concurrent avr invocations cannot disagree because one of
 // them cached.
 type Provider struct {
-	limactl        string
-	runner         deps.Runner
-	records        Records
-	logsDir        string
-	host           HostResources
-	reapHostAgents func(context.Context, string, string) error
-	stopTimeout    time.Duration
+	limactl     string
+	runner      deps.Runner
+	records     Records
+	logsDir     string
+	host        HostResources
+	stopTimeout time.Duration
 }
 
 // New returns a Provider driving the given Lima installation.
@@ -133,13 +132,12 @@ func New(opts Options) (*Provider, error) {
 		return nil, errors.New("creating the Lima provider: no log directory was given; provisioning failures must be able to name a log file")
 	}
 	return &Provider{
-		limactl:        opts.Lima.Path,
-		runner:         opts.Runner,
-		records:        opts.Records,
-		logsDir:        opts.LogsDir,
-		host:           opts.Host,
-		reapHostAgents: reapHostAgents,
-		stopTimeout:    gracefulStopTimeout,
+		limactl:     opts.Lima.Path,
+		runner:      opts.Runner,
+		records:     opts.Records,
+		logsDir:     opts.LogsDir,
+		host:        opts.Host,
+		stopTimeout: gracefulStopTimeout,
 	}, nil
 }
 
@@ -330,7 +328,7 @@ func (p *Provider) Stop(ctx context.Context, machine string, progress types.Prog
 	if !inst.running() {
 		// Lima can report Stopped even when a host agent escaped its parent.
 		// Reaping that exact agent is still part of converging on stopped.
-		return p.reapHostAgents(ctx, p.limactl, machine)
+		return p.reapHostAgents(ctx, machine, progress)
 	}
 	progress.Progress(types.ProgressEvent{
 		Kind:    types.ProgressStopping,
@@ -368,16 +366,13 @@ func (p *Provider) stopMachine(ctx context.Context, machine string, progress typ
 		progress.Progress(types.ProgressEvent{
 			Kind:    types.ProgressWarning,
 			Machine: machine,
-			Message: fmt.Sprintf("%s did not shut down cleanly; ending it. Unsaved work inside it may be lost — your project files on this Mac are not affected.", machine),
+			Message: fmt.Sprintf("%s did not shut down cleanly; ending it. Unsaved work inside it may be lost — your project files on this Mac are not affected.", p.environmentLabel(machine)),
 		})
 		if _, forceErr := p.run(ctx, "stop", "--force", machine); forceErr != nil {
 			return fmt.Errorf("stopping machine %s: %w (it did not stop cleanly, and ending it outright also failed: %v)", machine, stopErr, forceErr)
 		}
 	}
-	if err := p.reapHostAgents(ctx, p.limactl, machine); err != nil {
-		return fmt.Errorf("removing orphaned Lima host agents for machine %s: %w", machine, err)
-	}
-	return nil
+	return p.reapHostAgents(ctx, machine, progress)
 }
 
 // Delete destroys the machine and everything inside it. Host project files are

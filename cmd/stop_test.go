@@ -210,6 +210,57 @@ func TestStop_AllLeavesAMachineThatIsNotUpAlone_PROP_7(t *testing.T) {
 	}
 }
 
+// A warning the backend raises while stopping — that it had to end a machine
+// outright, or clear something left behind by one that had already stopped —
+// is a safety message. `avr stop` shows it, where it used to discard it.
+func TestStop_ShowsWhatTheBackendWarnsAboutWhileStopping_REQ_5_2(t *testing.T) {
+	const warning = "Ubuntu 24.04 · arm64 did not shut down cleanly; ending it. Unsaved work inside it may be lost."
+
+	for _, tc := range []struct {
+		name  string
+		state types.MachineState
+		args  []string
+	}{
+		{name: "running", state: types.StateRunning},
+		{name: "already stopped", state: types.StateStopped},
+		{name: "running, with --all", state: types.StateRunning, args: []string{"--all"}},
+		{name: "already stopped, with --all", state: types.StateStopped, args: []string{"--all"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fake.New()
+			app := newTestApp(t, f)
+			target, _ := resolvedTarget(t, app)
+			seedMachine(t, f, target, ubuntu(), types.KindShared)
+			f.SetMachineState(target, tc.state)
+			f.SetStopWarning(target, warning)
+
+			if err := runStop(context.Background(), app.App, stopInvocation(tc.args...)); err != nil {
+				t.Fatalf("avr stop: %v", err)
+			}
+			if got := app.err.String(); got != "avr: "+warning+"\n" {
+				t.Errorf("stderr = %q, want the backend's warning and nothing else", got)
+			}
+		})
+	}
+}
+
+// `avr stop` announces each environment by its label itself, so the backend's
+// own stopping event — which may name the machine, or say nothing at all — is
+// not shown a second time (REQ-1.5).
+func TestStop_DoesNotRepeatTheBackendsStoppingEvent_REQ_1_5(t *testing.T) {
+	f := fake.New()
+	app := newTestApp(t, f)
+	target, _ := resolvedTarget(t, app)
+	seedMachine(t, f, target, ubuntu(), types.KindShared)
+
+	if err := runStop(context.Background(), app.App, stopInvocation()); err != nil {
+		t.Fatalf("avr stop: %v", err)
+	}
+	if got := app.err.String(); got != "" {
+		t.Errorf("stderr = %q, want nothing: stdout already says what is being stopped", got)
+	}
+}
+
 func TestStop_RejectsArgumentsItDoesNotUnderstand(t *testing.T) {
 	f := fake.New()
 	app := newTestApp(t, f)
