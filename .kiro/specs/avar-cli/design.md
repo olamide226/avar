@@ -28,7 +28,7 @@ avar is a single Go codebase that presents a **directory-centric, shell-first** 
 - **Go 1.23+**, `spf13/cobra` (CLI), `golang.org/x/term` (TTY detection/raw mode), `creack/pty` only if needed for tests.
 - **Lima ≥ 1.0** (minimum version pinned in code; checked at startup).
 - **Windows 11 22H2+**, x64 or Arm64, with the current Store-delivered WSL whose version and required flags pass capability probes. Windows 10 is outside the first WSL2Provider support matrix.
-- **Distribution**: GoReleaser → GitHub Releases; Homebrew tap (`brew install <tap>/avr`, formula depends on `lima`) for macOS; checksummed `avr.exe` archives for Windows initially.
+- **Distribution**: GoReleaser → GitHub Releases; Homebrew tap (`brew install --cask olamide226/tap/avar`, cask depends on `lima`) for macOS; checksummed `avr.exe` zip archives for Windows, also submitted to winget as `olamide226.avar` (a portable package, through a pull request to `microsoft/winget-pkgs` from a fork) with no WSL dependency declared, because WSL setup stays behind avar's own explained first-run offer (Req 18.3, 18.15).
 
 ### WSL research basis
 

@@ -356,3 +356,5 @@ unaffected and works on every environment.
 18.13 THE Windows build SHALL store state in a per-user, non-roaming application-data directory, canonicalize Windows project paths case-insensitively for Project_Identity, and prevent the same project path expressed with different drive-letter casing or separators from creating duplicate project records.
 
 18.14 THE Windows implementation SHALL ship as a self-contained `avr.exe` for supported Windows host architectures and SHALL keep all WSL-specific commands, parsing, lifecycle rules, and capability checks behind the Provider and dependency boundaries so that command-layer behavior remains provider-neutral.
+
+18.15 THE Windows release SHALL be installable with the Windows Package Manager as `winget install olamide226.avar`, a portable package built from the same per-architecture archives the release publishes, and SHALL NOT declare a WSL package dependency: WSL prerequisites remain the CLI's to identify, explain and offer under 18.3, not a package manager's to install silently.

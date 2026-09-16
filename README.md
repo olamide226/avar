@@ -44,11 +44,21 @@ and put `avr` somewhere on your `PATH`.
 Homebrew installs both `avr` and its `avar` alias; they run the same command.
 The shorter `avr` name remains canonical and is used throughout this guide.
 
-**Windows.** Download the `windows_amd64` or `windows_arm64` archive from the
-[releases page](https://github.com/olamide226/avar/releases), unzip it, and put
-`avr.exe` somewhere on your `PATH`. avar checks for WSL 2 on first run and
-offers to set it up. The binaries are unsigned, so SmartScreen may warn the
-first time.
+**Windows.** winget is the recommended route:
+
+```powershell
+winget install olamide226.avar
+```
+
+winget picks the build for your processor and puts `avr` on your `PATH`; open a
+new terminal afterwards so it is found. A new release reaches winget once
+Microsoft has reviewed and merged it, usually within a day or two of appearing
+on the [releases page](https://github.com/olamide226/avar/releases). To skip
+the wait, download the `windows_amd64` or `windows_arm64` archive from there,
+unzip it, and put `avr.exe` somewhere on your `PATH`.
+
+Either way, avar checks for WSL 2 on first run and offers to set it up. The
+binaries are unsigned, so SmartScreen may warn the first time.
 
 ## Sixty seconds to a Linux shell
 
