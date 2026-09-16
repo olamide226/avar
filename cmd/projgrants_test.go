@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/olamide226/avar/internal/cli"
+	"github.com/olamide226/avar/internal/projconfig"
 	"github.com/olamide226/avar/internal/provider"
 	"github.com/olamide226/avar/internal/provider/fake"
 	"github.com/olamide226/avar/internal/types"
@@ -299,7 +300,7 @@ func TestShell_ProjectSizeAppliesToAnIsolatedEnvironment_REQ_15_1(t *testing.T) 
 	if spec.CPUs != 6 || spec.MemoryGB != 12 {
 		t.Errorf("created with %d CPU and %v GB, want 6 and 12", spec.CPUs, spec.MemoryGB)
 	}
-	if strings.Contains(pt.err.String(), "avr:") {
+	if strings.Contains(pt.err.String(), projconfig.FileName) {
 		t.Errorf("avr advised about a size it applied:\n%s", pt.err.String())
 	}
 
