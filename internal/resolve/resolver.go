@@ -6,8 +6,8 @@
 // is that something, and it is the only place that decides:
 //
 //   - which environment applies, by precedence — explicit flags, then the
-//     project's remembered choice, then avar's global configuration, then
-//     avar's built-in defaults;
+//     project's remembered choice, then the project's own .avr.toml, then
+//     avar's global configuration, then avar's built-in defaults;
 //   - which (distro, version, arch) combinations exist at all, and what a bare
 //     distribution name means (see matrix.go);
 //   - what the target machine is called, deterministically, so that the same
@@ -16,8 +16,8 @@
 //
 // Resolve is a deterministic function of its arguments. It reads neither the
 // environment, the clock, nor the filesystem: everything it needs — the current
-// directory, the host architecture, the global configuration layer — arrives as
-// a parameter. Its only side effects go through the injected Store, which is
+// directory, the host architecture, the global configuration layer, a reader
+// for the project's configuration file — arrives as a parameter. Its only side effects go through the injected Store, which is
 // how a project's first use gets recorded and how `--isolate` is remembered
 // (REQ-11.2). That is what makes PROP-2 checkable against a fake store with no
 // VM in sight.
@@ -35,9 +35,11 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/olamide226/avar/internal/cli"
+	"github.com/olamide226/avar/internal/projconfig"
 	"github.com/olamide226/avar/internal/types"
 )
 
@@ -108,11 +110,22 @@ type Options struct {
 	// defaults, which sit below a project's remembered choice and above avar's
 	// built-in defaults.
 	//
-	// Parsing that file is not this package's business (task 22, REQ-15.1);
-	// this field is the seam it lands in. Until then callers leave it zero and
-	// the built-in defaults apply, and no part of the precedence chain has to
-	// be restructured when it stops being zero.
+	// Parsing that file is not this package's business; this field is the
+	// seam it lands in. Callers leave it zero today and the built-in defaults
+	// apply, and no part of the precedence chain has to be restructured when
+	// it stops being zero.
 	Config Preference
+
+	// ProjectConfig reads the configuration file in a project's directory,
+	// returning the zero Config when there is none (design §3.11). Nil means
+	// no project configuration at all, which resolves exactly as a project
+	// without the file does.
+	//
+	// It is injected rather than called directly so that Resolve stays free of
+	// I/O: the command layer passes projconfig.Load, and tests pass a function.
+	// It is given the project's directory and nothing else, because that is
+	// the only place a project's configuration is read from.
+	ProjectConfig func(projectDir string) (projconfig.Config, error)
 }
 
 // ResolvedTarget is one fully specified answer: everything a caller needs to
@@ -157,6 +170,12 @@ type ResolvedTarget struct {
 	// something only the backend can know (REQ-6.6, REQ-18.5, PROP-1).
 	HostCwd string
 
+	// Config is the project's .avr.toml as it was read during resolution, or
+	// the zero Config when the project has none. The selection it carries is
+	// already reflected in Selector; it is returned so that nothing later
+	// reads the file a second time and sees something different.
+	Config projconfig.Config
+
 	// Emulated reports that this environment can only run under CPU emulation
 	// on this host, which costs enough performance to be worth telling the user
 	// about once, at provision time (REQ-4.6).
@@ -186,8 +205,10 @@ type ResolvedTarget struct {
 // resolving it is filesystem work that would make this function impure.
 //
 // The environment is resolved by precedence, highest first: the flags the user
-// typed, the project's own remembered choices, opts.Config, then avar's
-// built-in defaults. A layer that names a distribution also fixes its version —
+// typed, the project's own remembered choices, the project's .avr.toml,
+// opts.Config, then avar's built-in defaults. The file sits below the project
+// record because the record is the user's own choice on this host and the file
+// is what somebody committed. A layer that names a distribution also fixes its version —
 // so `--distro fedora` never inherits Ubuntu's release number from a layer
 // below — and a distribution named without a version gets that distribution's
 // pinned release.
@@ -218,12 +239,19 @@ func Resolve(provider types.ProviderID, cwd string, sel cli.Selector, st Store, 
 		return ResolvedTarget{}, err
 	}
 
+	// Read before isolation is remembered, so that a file which cannot be read
+	// fails the invocation before it changes anything about the project.
+	config, err := readProjectConfig(opts.ProjectConfig, project.Path)
+	if err != nil {
+		return ResolvedTarget{}, err
+	}
+
 	isolated, project, err := resolveIsolation(sel, project, st)
 	if err != nil {
 		return ResolvedTarget{}, err
 	}
 
-	env, err := resolveEnvironment(sel, project, opts.Config, hostArch)
+	env, err := resolveEnvironment(sel, project, config, opts.Config, hostArch)
 	if err != nil {
 		return ResolvedTarget{}, err
 	}
@@ -246,8 +274,18 @@ func Resolve(provider types.ProviderID, cwd string, sel cli.Selector, st Store, 
 		Kind:        kind,
 		Project:     project,
 		HostCwd:     hostCwd,
+		Config:      config,
 		Emulated:    env.Arch != hostArch,
 	}, nil
+}
+
+// readProjectConfig reads the project's configuration through the injected
+// reader, if there is one.
+func readProjectConfig(read func(string) (projconfig.Config, error), projectDir string) (projconfig.Config, error) {
+	if read == nil {
+		return projconfig.Config{}, nil
+	}
+	return read(projectDir)
 }
 
 // hostWorkdir checks the directory avar was invoked from and returns it in the
@@ -373,21 +411,28 @@ func resolveIsolation(sel cli.Selector, project types.ProjectRecord, st Store) (
 
 // resolveEnvironment applies the precedence chain to the distribution, version
 // and architecture, and checks the result against the supported matrix.
-func resolveEnvironment(sel cli.Selector, project types.ProjectRecord, config Preference, hostArch types.Arch) (types.EnvironmentSelector, error) {
+func resolveEnvironment(sel cli.Selector, project types.ProjectRecord, file projconfig.Config, config Preference, hostArch types.Arch) (types.EnvironmentSelector, error) {
 	layers := []struct {
-		source string
-		pref   Preference
+		source   string
+		pref     Preference
+		fromFile bool
 	}{
-		{"the command line", Preference{Distro: sel.Distro, Version: sel.DistroVersion, Arch: sel.Arch}},
-		{fmt.Sprintf("the environment remembered for %s", project.Path), preferenceOf(project.Selector)},
-		{"avar's configuration", config},
-		{"avar's built-in defaults", Preference{Distro: DefaultDistro, Arch: hostArch}},
+		{source: "the command line", pref: Preference{Distro: sel.Distro, Version: sel.DistroVersion, Arch: sel.Arch}},
+		{source: fmt.Sprintf("the environment remembered for %s", project.Path), pref: preferenceOf(project.Selector)},
+		{source: file.Path, pref: Preference{Distro: file.Distro, Version: file.Version, Arch: file.Arch}, fromFile: true},
+		{source: "avar's configuration", pref: config},
+		{source: "avar's built-in defaults", pref: Preference{Distro: DefaultDistro, Arch: hostArch}},
 	}
 
 	var (
 		distro  types.Distro
 		version string
 		arch    types.Arch
+
+		// fileChose names the settings the project's file supplied, so that
+		// an unsupported one is reported against the file instead of leaving
+		// the user to wonder where a value they never typed came from.
+		fileChose []string
 	)
 	for _, layer := range layers {
 		pref := normalise(layer.pref)
@@ -401,9 +446,15 @@ func resolveEnvironment(sel cli.Selector, project types.ProjectRecord, config Pr
 		// layer underneath it.
 		if distro == "" && pref.Distro != "" {
 			distro, version = pref.Distro, pref.Version
+			if layer.fromFile {
+				fileChose = append(fileChose, "distro")
+			}
 		}
 		if arch == "" && pref.Arch != "" {
 			arch = pref.Arch
+			if layer.fromFile {
+				fileChose = append(fileChose, "arch")
+			}
 		}
 	}
 	if distro == "" || arch == "" {
@@ -416,15 +467,32 @@ func resolveEnvironment(sel cli.Selector, project types.ProjectRecord, config Pr
 	if version == "" {
 		pinned, ok := PinnedVersion(distro)
 		if !ok {
-			return types.EnvironmentSelector{}, fmt.Errorf("avar cannot run %q: %w; supported distributions are %s", distro, ErrUnsupportedEnvironment, joinDistros(SupportedDistros()))
+			err := fmt.Errorf("avar cannot run %q: %w; supported distributions are %s", distro, ErrUnsupportedEnvironment, joinDistros(SupportedDistros()))
+			return types.EnvironmentSelector{}, attributeToFile(err, "distro", file.Path, fileChose)
 		}
 		version = pinned
 	}
 
 	if err := checkSupported(distro, version, arch); err != nil {
-		return types.EnvironmentSelector{}, err
+		// The matrix refuses a release before it looks at the architecture,
+		// so an unknown release is the distro setting's fault and anything
+		// else is the arch setting's.
+		setting := "arch"
+		if len(SupportedArches(distro, version)) == 0 {
+			setting = "distro"
+		}
+		return types.EnvironmentSelector{}, attributeToFile(err, setting, file.Path, fileChose)
 	}
 	return types.EnvironmentSelector{Distro: distro, Version: version, Arch: arch}, nil
+}
+
+// attributeToFile names the project's configuration file in an error about one
+// setting when it was the file that chose that setting.
+func attributeToFile(err error, setting, path string, fileChose []string) error {
+	if !slices.Contains(fileChose, setting) {
+		return err
+	}
+	return fmt.Errorf("%w (%s is set in %s)", err, setting, path)
 }
 
 // preferenceOf reads a project's remembered distro/arch override.

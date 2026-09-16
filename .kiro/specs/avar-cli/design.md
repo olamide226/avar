@@ -85,7 +85,7 @@ graph TD
 
 1. **Parse**: `internal/cli.Parse` splits argv — avar's selector flags up to the first non-flag token; everything after is the guest command (Req 2.5). `--` forces the boundary (Req 2.6).
 2. **Select provider**: `internal/platform` maps the host OS to one provider ID (`lima` or `wsl2`). Unsupported hosts fail before state or dependency mutation.
-3. **Resolve**: `Resolver` computes the Environment_Selector from flags → project record/config → defaults and includes ProviderID in environment identity. Project_Identity hashes the platform-canonical host path (§3.2).
+3. **Resolve**: `Resolver` computes the Environment_Selector from flags → project record → the project's `.avr.toml` → global config → defaults (§3.11) and includes ProviderID in environment identity. Project_Identity hashes the platform-canonical host path (§3.2).
 4. **Ensure deps**: the selected dependency checker validates Lima on macOS or WSL 2 on Windows; no unrelated runtime is checked or installed.
 5. **Plan mapping**: the provider maps `(project root, cwd)` to a `MountSpec` plus GuestCwd. Lima preserves the path; WSL uses a deterministic root beneath `/mnt/avr/projects/`.
 6. **Ensure environment**: Provider creates (first use) or starts the target and reconciles the desired mount set. Slow or restart-requiring work is explained through `ProgressSink`.
@@ -122,6 +122,7 @@ cmd/  ─────────────────┐
 avr [selector flags] [--] [COMMAND [ARGS...]]     # no COMMAND → interactive shell
 avr [selector flags] status | stop [--all] | code | cursor | zed
 avr [selector flags] ports [--all] | open PORT         (Post-MVP, Req 16)
+avr [selector flags] init                              (Post-MVP, §3.11)
 avr snapshot [NAME] | restore NAME | reset [--yes]     (Phase 2)
 avr isolate off [--yes]                                (Phase 2)
 avr destroy [--yes] [--all | --orphaned]               (Phase 2)
@@ -147,7 +148,7 @@ Parsing in a pure function makes the split deterministic and fuzzable (Property 
 
 ### 3.2 Resolver (`internal/resolve`)
 
-**Purpose**: Turn (ProviderID, cwd, flags, state, optional `.avr.toml` post-MVP) into a fully specified selector plus target environment name. Provider-specific host-to-guest path mapping happens after resolution through `Provider.MapProjectPath`.
+**Purpose**: Turn (ProviderID, cwd, flags, state, the project's optional `.avr.toml` through an injected reader, §3.11) into a fully specified selector plus target environment name. Provider-specific host-to-guest path mapping happens after resolution through `Provider.MapProjectPath`.
 
 ```go
 type EnvironmentSelector struct {
@@ -174,7 +175,7 @@ func Resolve(provider ProviderID, cwd string, flags Flags, st *state.Store) (Res
 
 *(Amended during task 4.* The isolated name originally omitted the environment, which made a project's isolated machine identified by the project alone. An isolated environment is derived from a clean base image of **the selected** (distro, arch) — Req 11.1 — so the environment is part of what identifies it: without it, `avr --isolate --distro fedora` in a project already isolated on Ubuntu resolves to the existing Ubuntu machine and silently hands the user the wrong distribution (Req 4.2). It also keeps isolation consistent with Req 4.3, where each distinct (distro, arch) already gets its own machine. The project hash still guarantees the name is stable from any depth within the project. Longest name in the current matrix: 37 characters.)*
 
-**Precedence**: explicit flags > project record (remembered isolation, Req 11.2) > global State_Dir `config.toml` defaults > built-in defaults (ubuntu 24.04, host-native arch, shared). On WSL2Provider, a foreign architecture fails capability validation before any environment is created (Req 18.6).
+**Precedence**: explicit flags > project record (remembered isolation, Req 11.2) > the project's `.avr.toml` (distro/arch only, §3.11) > global State_Dir `config.toml` defaults > built-in defaults (ubuntu 24.04, host-native arch, shared). On WSL2Provider, a foreign architecture fails capability validation before any environment is created (Req 18.6).
 
 **Project identity**: macOS keeps `EvalSymlinks(abs(cwd))`. Windows first resolves the volume and final path, converts separators to `\`, removes non-root trailing separators, normalizes drive-letter/UNC casing using case-insensitive comparison semantics, and hashes a prefixed key such as `windows:c:\users\ola\code\app`. Display casing remains in `ProjectRecord.Path`; only `PathKey` is normalized. This prevents `C:\Code\App`, `c:/code/app`, and equivalent separator spellings from creating different records (Req 18.13).
 
@@ -210,7 +211,7 @@ Windows uses `ReplaceFile`/`MoveFileEx` semantics for atomic replacement rather 
 
 **Purpose**: Backend abstraction (Req 17.3, 18.14). Command orchestration depends only on this interface; the Resolver depends only on shared types.
 
-The operations are **segregated by capability** rather than gathered into one interface. `Provider` is the core set every backend must implement; `Snapshotter`, `EditorTargetProvider`, and `PortDiagnoser` describe optional abilities. Callers type-assert for a capability and report plainly when it is absent. Editor launch is modeled by a transport-neutral target, so WSL is not forced through SSH.
+The operations are **segregated by capability** rather than gathered into one interface. `Provider` is the core set every backend must implement; `Snapshotter`, `EditorTargetProvider`, `PortDiagnoser`, and `MachineSizer` describe optional abilities. Callers type-assert for a capability and report plainly when it is absent. Editor launch is modeled by a transport-neutral target, so WSL is not forced through SSH.
 
 ```go
 type Provider interface {
@@ -274,13 +275,20 @@ type PortDiagnostic struct {
     Process   string // its command line; empty when not determinable
 }
 
+// MachineSizer marks a backend that gives each machine its own CPU and memory
+// allocation, so MachineSpec.CPUs/MemoryGB mean something there (§3.11).
+// WSL 2 runs every distribution in one globally sized VM and does not implement it.
+type MachineSizer interface {
+    SizesMachines()
+}
+
 type MachineSpec struct {
     Name       string                     // avr-…, from the resolver (ownership marker)
     Provider   types.ProviderID
     Selector   types.EnvironmentSelector
     Kind       types.MachineKind          // shared | isolated | base
     Mounts     []MountSpec                 // provider-planned host → guest mappings
-    CPUs       int                        // zero → backend's host-proportional default (Req 17.4)
+    CPUs       int                        // zero → backend's host-proportional default (Req 17.4); non-zero honoured only by a MachineSizer
     MemoryGB   float64
     DiskGB     float64
     DeriveFrom string                     // optional pristine base to copy (Req 11.1); a hint, not a requirement
@@ -444,6 +452,141 @@ Using imported distributions avoids first-launch username prompts and prevents a
 
 On Windows, WSL2Provider invokes the guest through `/usr/bin/env -i` plus this computed map, clears `WSLENV`, and provisions `appendWindowsPath=false`; arbitrary Windows environment variables therefore do not cross merely because WSL supports interop.
 
+Project-declared `forward_env` names (§3.11) reach `Input.Allowlist` only after the user has approved them for that project, and approval is recorded in the State_Dir. The grant a repository *proposes* is therefore never the grant avar *applies*: what applies is what the host-side record says the user accepted, which is how Req 15.1's project allowlist stays inside Req 9.1 and 12.4.
+
+### 3.11 Project Configuration (`internal/projconfig`) — Post-MVP
+
+**Purpose**: Req 15. An optional `.avr.toml` lets a team write down the environment a project wants, and `avr init` proposes one from the project's manifests. Neither is ever required: a project without the file behaves exactly as it did before the file existed (Req 15.4, Property 24).
+
+The requirement names the settings and leaves the questions that matter open: which directory "the project root" is, what a file in a freshly cloned repository may do without asking, and what a per-project size means for a machine every project shares. Each is decided below, most conservative option first, with the reason. They are called out for review in the pull requests that introduce them.
+
+#### Schema
+
+```toml
+# .avr.toml — every key is optional; an empty file is valid
+distro      = "fedora"            # ubuntu | debian | fedora, optionally "name:version" — as --distro
+arch        = "amd64"             # arm64 | amd64 — as --arch
+cpus        = 4                   # isolated environments only, applied when the environment is created
+memory      = "8GiB"              # likewise; a whole number of GiB or MiB
+packages    = ["ripgrep", "jq"]   # names in the declared distro's own repositories; requires distro
+forward_env = ["GITHUB_TOKEN"]    # host variable names; each must be approved before it crosses
+```
+
+The file is flat. There are no tables, and every value is a string, a non-negative decimal integer, or an array of strings. The schema is closed: a key avar does not know is an error naming the keys it does know, never a warning. A misspelt `packges` that was silently ignored would mean a team's environment quietly differs between machines, which is the one thing the file exists to prevent. The cost is forward compatibility — a file using a key from a newer avar fails on an older one — and the error says so, suggesting an upgrade.
+
+`packages` requires `distro` because package names belong to a distribution: `golang-go` is Debian's name and `golang` is Fedora's. A list that silently meant different things depending on which distribution resolved would fail in the package manager at best.
+
+#### Parsing: a strict subset of TOML, in the standard library
+
+The standard library has no TOML parser. avar already reads `config.toml` with two small hand-rolled readers (`state.parseConfigList`, `session.parseTOMLKey`), and they are deliberately lenient: a typo in the user's own global file must not stop a shell. They cannot be extended to this file, for two reasons. The policy is the opposite one — a project file that is misread applies the wrong environment or, worse, reads a grant its author never wrote, so it must be refused. And they are not correct as parsers: the list reader splits on commas without regard to quotes, so `["a,b"]` is two names.
+
+`internal/projconfig` therefore has its own reader for a precisely defined subset of TOML: full-line and trailing `#` comments; bare keys; basic strings without escape sequences and literal strings; decimal integers without sign, underscores or leading zeros; arrays of strings, on one line or several, with comments and a trailing comma allowed. Everything else TOML allows — tables, dotted and quoted keys, inline tables, floats, booleans, dates, multi-line strings, escapes — is refused with the line number and what the reader does accept. Duplicate keys are refused, as TOML refuses them. The subset is chosen so that every file it accepts means the same thing to a conforming TOML parser; the tests feed each unsupported construct in and require a refusal. The file is capped at 64 KiB before parsing.
+
+A dependency (`BurntSushi/toml`, `pelletier/go-toml`) was considered and rejected. It would accept far more than the schema and every extra construct would then need rejecting by hand, so it buys little correctness for a six-key flat file, and CLAUDE.md puts the standard library first. Unifying the global `config.toml` readers onto this one is possible and would change what that file accepts; it is left as a follow-up rather than done silently here.
+
+#### Where it is read, and precedence
+
+`.avr.toml` is read from **the Project's own directory** — `ProjectRecord.Path`, the directory `Resolve` identifies as the project — and nowhere else. There is no search of parent directories and no special treatment of the working directory.
+
+- The Glossary defines the Project as the directory avar identifies and states that avar requires no repository root marker. Reading "the project root" as that directory keeps one definition of project in avar. Searching upward would make `.avr.toml` a second root marker by the back door.
+- It is the directory that is shared into the guest (Property 5). A file above it configures an environment from outside everything that environment can see.
+- An upward search reads files avar has no reason to trust as belonging to this project: one in `$HOME`, in a shared `/tmp`, in a monorepo parent the user never ran `avr` in.
+
+The consequence is stated rather than hidden: if the first `avr` in a repository was run in a subdirectory, that subdirectory is the project, and a `.avr.toml` at the repository root is not read from there. `avr init` shows the full path it will write before asking.
+
+The injected reader keeps the resolver pure. `resolve.Options` gains `ProjectConfig func(projectDir string) (projconfig.Config, error)`; the command layer supplies `projconfig.Load`, which reads that one file, and tests supply a function. `Resolve` calls it after identifying the project and returns the result in `ResolvedTarget.Config`, so every later step reads the same parse. A missing file is the zero `Config` and no error.
+
+Precedence, highest first:
+
+| Layer | distro / version / arch | isolation |
+|---|---|---|
+| Flags (`--distro`, `--arch`, `--isolate`, `--shared`) | ✔ | ✔ |
+| Project record in the State_Dir (remembered choices) | ✔ | ✔ (Req 11.2) |
+| `.avr.toml` | ✔ | — (not in the schema) |
+| Global `config.toml` defaults (`Options.Config`) | ✔ | — |
+| Built-in defaults (Ubuntu 24.04, host architecture, shared) | ✔ | ✔ |
+
+Flags win because they are what the user typed for this invocation. The project record sits above the file because it is the user's own choice on this host, while the file is what somebody committed; a file that arrives with `git pull` must not override a decision the user already made locally. (Today only isolation is written to the record — `ProjectRecord.Selector` is read but nothing sets it — so in practice the file decides distro and architecture whenever no flag does.) As everywhere else in the chain, a layer that names a distribution also fixes its version.
+
+Distro and architecture apply without asking. They choose among the environments avar itself supports and ships pinned images for; nothing of the host crosses, and creating a new environment is already announced before it happens (Req 4.7). Every command that resolves an environment — the shell, one-shot commands, `stop`, `reset`, `destroy`, `snapshot`, `restore`, the editor commands — therefore targets the environment the file selects, so `avr stop` stops the environment `avr` started.
+
+A file that cannot be read or parsed fails the invocation before any machine work, naming the file, the line, and the problem. Guessing past it would apply an environment the author did not write. A distro or architecture the file names that avar does not support fails exactly as the flag would (exit 2, supported values listed), with the file named as the source.
+
+#### cpus and memory: isolated environments, at creation
+
+A Shared_Machine serves every project with the same selector (Req 4.3), so a project cannot own its size: whichever project happened to create it first would decide for all of them, and a project arriving later would silently get somebody else's allocation. Resizing an existing machine needs a restart that disconnects every other project's sessions, which is not a thing a file in one repository may cause.
+
+So `cpus` and `memory` apply **only to the project's Isolated_Environment, and only when it is created**. They are passed through `MachineSpec.CPUs`/`MemoryGB`, which already mean exactly that. Nothing is ever resized or restarted because of the file. Where the declaration cannot apply, avar says so once for that declaration (tracked in `ProjectRecord.AdvisedResources`), naming the reason and the way forward:
+
+- the project uses the shared environment → "run `avr --isolate` to give it its own";
+- the isolated environment already exists at a different size → "run `avr reset` to recreate it at the declared size";
+- the backend cannot size environments individually → the declaration cannot apply on this host.
+
+The last case is WSL 2, where every distribution runs in one utility VM sized globally by `.wslconfig`. Silently passing a size a backend ignores is the `--ssh-agent` defect again (docs/lessons.md), and naming the backend in `cmd/` is forbidden, so this is a capability: `provider.MachineSizer`, implemented by backends that give each machine its own allocation. LimaProvider implements it; WSL2Provider does not. Implementing it for Lima surfaced two defects that had been harmless only because no caller passed a size: the clone path (Req 11.1) inherited the base machine's size and ignored the spec, and the base machine was created with whatever size the first isolated spec carried, which every later clone would then have inherited. The clone now applies the size in the same `limactl edit` that adds its mounts, and the base is always created at the defaults.
+
+Checking whether an existing environment matches costs one `Provider.Status` call, made only while the declaration is unadvised, never on an ordinary warm invocation.
+
+#### packages and forward_env: nothing without approval
+
+A cloned repository is not the user. Distro and architecture choose among avar's own environments; `packages` runs a package manager as root inside a machine that other projects' directories are mounted into, and `forward_env` sends host values — the kind of thing `AWS_SECRET_ACCESS_KEY` is — into the guest. Requirement 15.3 forbids acting on detection without confirmation, and the spirit of Requirement 9 is that nothing crosses without a grant. Both settings therefore apply only after the user approves them, on this host, for this project.
+
+- **What is approved** is names, not files. `ProjectRecord.ApprovedForwardEnv` holds the variable names approved for the project. `ProjectRecord.ApprovedPackages` holds package names per machine name, because where a package is installed changes who it affects: approving `jq` for a project's isolated environment is not approving it for the shared one every other project uses. Adding a name to the file asks about that name alone; removing one stops applying it; editing a comment asks nothing.
+- **When avar asks**: in `avr`, `avr <command>` and the editor commands, after resolving and before any machine work, and only when the file declares a name that is not yet approved. The prompt lists each pending package and the environment it would be installed into — saying when that environment is shared by every project — and each pending variable with a statement that its host value will be forwarded into every session in the project. Anything but an explicit yes is a no.
+- **Declining** records nothing and continues with whatever was approved before; avar asks again next time. Remembering a refusal would need a way to change one's mind, and a second command for that is not worth the surface.
+- **With no terminal** nothing is asked and nothing pending applies: one line on stderr names what is waiting and says to run `avr` in that directory from a terminal. A script is never blocked, and never silently granted.
+- `avr init` writing a file is not an approval. Confirming a file and confirming an install into a named environment are different questions, and keeping one consent path is simpler to reason about than two.
+
+Validation happens at parse time. A package name must match `^[A-Za-z0-9][A-Za-z0-9+._-]*$`: no leading `-` (so it can never be read as an option), no `/` (so `./evil.deb` or a URL can never be installed from the project directory), no `=`, `:`, `*` or whitespace. A variable name must match `^[A-Za-z_][A-Za-z0-9_]*$`.
+
+**Installing** is provider-neutral and happens in the command layer, through `Provider.Shell` as the guest user with passwordless `sudo` (Req 1.4), after the environment is ready and the project is mounted. The distribution decides the command, which is avar vocabulary rather than backend vocabulary (`projconfig.InstallCommands`):
+
+- Ubuntu, Debian: `sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update`, then `sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y <names>`
+- Fedora: `sudo -n dnf install -y <names>`
+
+Each is an argv, never a shell string. Output goes to avar's stderr, so `avr <cmd> | consumer` still receives only the guest command's output (Req 2.3). What avar installed is recorded on the machine (`MachineRecord.Packages`, which like `Mounts` only grows while the machine exists and disappears with it), so a warm invocation performs no guest round-trip to check: the set to install is approved ∩ declared − recorded, computed from state. `avr reset` and `avr destroy` remove the record with the machine, so the next invocation installs the approved packages into the fresh environment. A package removed by hand inside the guest is not reinstalled; the record is avar's, not a survey of the guest.
+
+Packages declared for a distro other than the one that resolved — `avr --distro fedora` in a project whose file says `distro = "ubuntu"` — are neither offered nor installed, and avar says so once per invocation in which it happens.
+
+An install that fails is reported with the package manager's exit status and does not stop the session: nothing is recorded, so the next invocation retries. Refusing a shell because a mirror is unreachable would make the file a way to lose access to one's own environment.
+
+#### `avr init`
+
+`avr [selector flags] init` takes no arguments and starts no environment. It resolves the project (registering it, as every command does), refuses if `<project>/.avr.toml` already exists, and inspects that directory — not its subdirectories — for the manifests Req 15.2 names: `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `Dockerfile`, `docker-compose.yml` (and `.yaml`), `.tool-versions`, `mise.toml`.
+
+Detection is pure (`projconfig.Detect` reads the named files and nothing else) and deliberately shallow. Each manifest yields a finding: the stack it indicates and, where the file states one, the version it pins. Findings map to a proposal:
+
+- **distro**: the selector flag if the user gave one; otherwise a supported distribution inferred from the final `FROM` in the Dockerfile (`ubuntu`, `debian` and `fedora` images, and the Debian-based official language images); otherwise avar's default. Always written, because packages need it.
+- **arch**: only from an explicit `--platform=linux/<arch>` on that `FROM`.
+- **packages**: the distribution's own packages for each detected runtime (Node.js, Python, Go, Rust, Ruby). Where a manifest pins a version, the proposal says plainly that the distribution's version is what will be installed, not the pinned one.
+- **cpus, memory, forward_env**: never proposed. No manifest states them, and proposing a credential grant from detection is exactly what Req 15.3 rules out.
+- Docker Compose is reported as detected and proposes nothing: installing a container engine is not a package line.
+
+The proposal is shown as the detected stack followed by the exact file that would be written, then one question. A yes writes the file with exclusive creation, so a file that appeared meanwhile is never overwritten. Anything else writes nothing. Without a terminal the proposal is still printed, nothing is written, and the command exits 1 saying to run `avr init` from a terminal. There is no `--yes`: `reset` and `destroy` have one because Req 5.6 and 10.3 grant the bypass explicitly, and Req 15.2 does not. A project in which nothing is detected gets a sentence saying so and that avar needs no configuration, and exit 0.
+
+`init` joins the reserved subcommand names (Req 2.6), so a guest program called `init` needs `avr -- init`.
+
+```go
+package projconfig
+
+type Config struct {
+    Path       string       // the file read; "" when there is none
+    Distro     types.Distro // "" when not set
+    Version    string
+    Arch       types.Arch
+    CPUs       int          // 0 when not set
+    MemoryMiB  int          // 0 when not set
+    Packages   []string
+    ForwardEnv []string
+}
+
+func Parse(path string, body []byte) (Config, error) // strict; errors name path and line
+func Load(projectDir string) (Config, error)          // reads <projectDir>/.avr.toml; absent → zero Config
+func Render(c Config) []byte                          // Parse(Render(c)) == c
+func InstallCommands(d types.Distro, names []string) ([][]string, error)
+func Detect(projectDir string) ([]Finding, error)
+func Propose(findings []Finding, sel Preference) Proposal
+```
+
 ## 4. Data Models
 
 ```go
@@ -454,6 +597,9 @@ type ProjectRecord struct {
     Isolated    bool      `json:"isolated"` // remembered --isolate default (Req 11.2)
     Selector    *EnvironmentSelector `json:"selector,omitempty"` // remembered distro/arch overrides
     NativeFSAdvisoryDismissed bool `json:"native_fs_advisory_dismissed,omitempty"`
+    ApprovedForwardEnv []string            `json:"approved_forward_env,omitempty"` // .avr.toml names the user approved (§3.11)
+    ApprovedPackages   map[string][]string `json:"approved_packages,omitempty"`    // machine name → approved package names
+    AdvisedResources   string              `json:"advised_resources,omitempty"`    // cpus/memory declaration already advised on
     CreatedAt   time.Time `json:"created_at"`
     LastUsedAt  time.Time `json:"last_used_at"`
 }
@@ -465,6 +611,7 @@ type MachineRecord struct {
     Kind       string              `json:"kind"`       // shared | isolated | base
     ProjectID  string              `json:"project_id,omitempty"` // for isolated
     Mounts     []MountSpec         `json:"mounts"`     // applied host → guest mappings
+    Packages   []string            `json:"packages,omitempty"` // installed by avar from approved .avr.toml packages; only grows
     CreatedAt  time.Time           `json:"created_at"`
     Runtime    string              `json:"runtime"`    // vz | qemu | wsl2 (status display)
     ImageDigest string             `json:"image_digest"`
@@ -594,6 +741,16 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 
 *Added with Requirement 14.* Property 20 covers the advisory that recommends native mode and stops at "accepting it uses Requirement 14's rules"; this is what those rules are. The three clauses are deliberately separate because they fail separately: a comparison that picks a winner, an apply the user never saw, and a crash that leaves a tree nobody can interpret are three different defects, and a property covering only the first would be green while either of the others shipped (see docs/lessons.md, "A property that quantifies over part of the design gives false confidence").
 
+### Property 23: Project-configuration consent
+_For any_ `.avr.toml` and _for any_ invocation, the packages avar installs because of that file SHALL be a subset of the names the user approved for that project and that environment, and the host variables forwarded because of it SHALL be a subset of the names the user approved for that project, each approval given through an interactive confirmation that displayed those names. _For any_ invocation without a terminal, no approval SHALL be recorded. Distro, arch, cpus and memory are selection and sizing, not grants, and are outside this property.
+**Validates: 15.1, 15.3, 9.1, 12.4**
+
+### Property 24: Zero-configuration invariance
+_For any_ invocation in a project with no `.avr.toml`, `Resolve` SHALL return the same `ResolvedTarget` it returns with no project-configuration reader at all, and the command SHALL perform the same provider operations and print nothing about project configuration. _For any_ project, `avr init` SHALL write nothing unless the user confirmed the proposal in an interactive terminal.
+**Validates: 15.2, 15.4**
+
+*Added with Requirement 15.* Property 24's second clause belongs with the first because both are about the file never arriving or acting unasked: a project gains configuration only by a person writing it, and loses nothing by not having it.
+
 ## 6. Error Handling
 
 **Principles**: every failure names (what avar was doing) + (underlying cause, with the tail of the relevant log) + (one suggested next step). Guest command failures are *not* avar errors — stderr and exit code pass through untouched.
@@ -629,6 +786,14 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 | Editor cannot connect to the target the backend describes | `Editor.Args` returns `ErrUnsupportedTarget` | Exit 1 saying the editor cannot open this environment and suggesting `avr code`; write no SSH configuration and propose no Include (Req 13.8). The message names the connection kind, never the machine (Req 1.5). |
 | Editor launcher rejects avar's arguments (e.g. an old Zed without `--wsl`) | launcher exits non-zero | Pass the launcher's stderr through and report `launch <editor> with <argv>: <exit status>` (Req 13.5, 13.6). |
 | `--env-file` missing/unparseable | pre-flight | Exit 1 before any machine work (Req 12.2). |
+| `.avr.toml` unreadable, over 64 KiB, or outside the supported TOML subset; unknown key; invalid value | `projconfig.Load` during resolution | Exit 1 before any machine work, naming the file, the line, the problem and the keys or syntax avar accepts; an unknown key suggests upgrading avar in case it is from a newer version. Never apply part of a file (Req 15.1). |
+| `.avr.toml` names a distro or arch avar does not support | resolver matrix check | Exit 2 listing the supported values, as the flag does, and naming the file as the source (Req 4.4, 15.1). |
+| `.avr.toml` declares packages or forward_env the user has not approved | approved sets in `ProjectRecord` | Interactive: list each pending name and where it applies, ask; no → continue with what was approved before. No terminal: one stderr line naming what is pending and to run `avr` from a terminal; continue. Never approve implicitly (Req 15.3, Property 23). |
+| Approved package install fails | package manager exit status via `Provider.Shell` | Warn with the command and status; record nothing so the next invocation retries; the session still starts (Req 15.1). |
+| `.avr.toml` packages are for a different distro than the one resolved | declared vs resolved distro | Say the packages were not installed and why; install nothing (Req 15.1). |
+| `.avr.toml` cpus/memory cannot apply: shared environment, existing isolated environment of another size, or a backend that is not a `MachineSizer` | resolved kind, one `Provider.Status`, capability assertion | Say so once per declaration, with the next step (`avr --isolate`, `avr reset`, or that this host sizes environments together). Never resize or restart (Req 15.1, 17.4). |
+| `avr init` finds an existing `.avr.toml` | stat before proposing | Exit 1 saying the file exists and nothing was changed (Req 15.2). |
+| `avr init` without a terminal, or the user does not confirm | TTY check / answer | Print the proposal; write nothing. Exit 1 without a terminal, saying to run `avr init` from one; exit 0 when declined (Req 15.2, Property 24). |
 | Ctrl-C during provisioning | context cancellation | Stop the provider subprocess, reconcile/clean only the journaled partial target, and exit 130. |
 
 ## 7. Testing Strategy
@@ -640,6 +805,8 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 - WSL architecture capability rejection before side effects (Property 18).
 - Argv grammar: subcommand vs guest command vs `--` (Property 9) — table-driven over tricky argvs (`avr status`, `avr -- status`, `avr --arch amd64 npm test`, `avr --distro fedora code`).
 - Env policy allowlist composition (Property 4).
+- `.avr.toml` parsing: every schema key, malformed input, unknown keys, each refused TOML construct, and `Parse(Render(c)) == c`; manifest detection per manifest type; install argv per distribution (§3.11).
+- Resolver precedence with the project-configuration layer, and zero-configuration invariance against a reader that finds nothing (Property 24).
 - State store: schema-v1→v2 migration, Windows atomic replace adapter, lock behavior, and create/restore journal decision tables (Properties 7, 16).
 - limactl output parsing against recorded `limactl list --json` fixtures from the pinned minimum Lima version.
 - WSL output parsing fixtures for UTF-8/UTF-16, stopped/running, WSL 1/2, unexpected whitespace, and localized headers; only numeric/version/name fields may drive mutation.
@@ -649,7 +816,7 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 
 **Integration tests — FakeProvider/FakeRunner**:
 
-- Full provider-neutral command flows (`avr` first-run, mount-add flow, `stop --all`, isolation remembering, reset scoping, editor launch) assert call sequences without a VM. Editor flows put the test binary on PATH under the editor's name and assert the argv it was actually executed with.
+- Full provider-neutral command flows (`avr` first-run, mount-add flow, `stop --all`, isolation remembering, reset scoping, editor launch) assert call sequences without a VM. Project-configuration flows assert that unapproved packages and variables never reach `Shell`, that approval is never recorded without a terminal, and that sizes reach `EnsureMachine` only for an isolated environment on a `MachineSizer` (Property 23). Editor flows put the test binary on PATH under the editor's name and assert the argv it was actually executed with.
 - WSL2Provider tests run on ordinary Windows CI against a fake `wsl.exe` runner and temporary State_Dir, asserting exact argv arrays for import, selective mounts, shell, terminate, export/import and unregister. Tests reject any use of `wsl --shutdown` and any operation against a non-recorded distro.
 - Static import/lint rules fail if WSL-specific packages appear in `cmd/` or `internal/resolve` (Property 21).
 
