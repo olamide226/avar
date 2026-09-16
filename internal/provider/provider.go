@@ -437,6 +437,23 @@ type PortDiagnoser interface {
 	PortDiagnostics(ctx context.Context, machine string) ([]PortDiagnostic, error)
 }
 
+// MachineSizer is implemented by backends that give each machine its own CPU
+// and memory allocation, so that MachineSpec.CPUs and MachineSpec.MemoryGB mean
+// something there.
+//
+// Not every backend can. WSL 2 runs every distribution inside one utility VM
+// whose size is global to the host, so a size for one distribution has nowhere
+// to go. A caller that has a size to ask for checks for this capability first,
+// and tells the user when it is absent, rather than passing a size the backend
+// would silently ignore (design §3.11; docs/lessons.md, "`--ssh-agent` was
+// accepted, plumbed, and did nothing").
+type MachineSizer interface {
+	// SizesMachines marks the capability. It does nothing: whether a backend
+	// sizes machines individually is a fact about the backend, not an
+	// operation on one.
+	SizesMachines()
+}
+
 // MachineSpec fully describes the machine a caller wants to exist. It is the
 // resolver's decision stated in backend-neutral terms: no image references, no
 // configuration file, no virtualization mode.
@@ -473,6 +490,8 @@ type MachineSpec struct {
 	// ignored for one that already exists. Zero means "the backend's
 	// conservative, host-proportional default", which keeps REQ-17.4's
 	// defaults in one place instead of having every caller restate them.
+	// Only a MachineSizer honours a non-zero CPUs or MemoryGB; callers must
+	// not pass one to a backend that is not.
 	CPUs     int
 	MemoryGB float64
 	DiskGB   float64

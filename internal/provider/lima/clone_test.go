@@ -328,3 +328,120 @@ func TestEnsureMachine_IsolatedFallsBackOnCloneFailure_REQ_11_1(t *testing.T) {
 		t.Errorf("fallback to config-based provisioning did not happen: %v", argvs)
 	}
 }
+
+// A size in the spec reaches the clone. Cloning copies the base's configuration
+// verbatim, so before this the clone silently had the base's size whatever the
+// spec asked for — the defect that stays invisible until a caller passes a size
+// (design §3.11).
+func TestCreateFromBase_AppliesTheSpecSize_REQ_15_1(t *testing.T) {
+	stoppedBase := []byte(`{"name":"avr-base-ubuntu-24.04-arm64","status":"Stopped","dir":"/tmp/base","vmType":"vz","arch":"aarch64","cpus":4,"memory":8589934592,"disk":107374182400,"config":{}}`)
+
+	for _, tc := range []struct {
+		name     string
+		mounts   bool
+		cpus     int
+		memoryGB float64
+		want     string
+	}{
+		{"size and mounts in one edit", true, 6, 12, "--set .cpus = 6 --set .memory = \"12GiB\" --tty=false"},
+		{"a fractional size is written in MiB", true, 0, 1.5, "--set .memory = \"1536MiB\" --tty=false"},
+		{"a size with no mounts still edits", false, 2, 0, "limactl edit " + testIsolatedMachine + " --set .cpus = 2 --tty=false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := newFakeRunner().listing(stoppedBase)
+			p := newTestProvider(t, runner, newFakeRecords())
+
+			spec := provider.MachineSpec{
+				Name:     testIsolatedMachine,
+				Selector: nativeSelector(),
+				Kind:     types.KindIsolated,
+				CPUs:     tc.cpus,
+				MemoryGB: tc.memoryGB,
+			}
+			if tc.mounts {
+				spec.Mounts = shares(t.TempDir())
+			}
+			mounts, err := normalizeMounts(spec.Mounts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logPath := filepath.Join(t.TempDir(), "create.log")
+			logFile, err := os.Create(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer logFile.Close()
+
+			if err := p.createFromBase(context.Background(), spec, mounts, logPath, logFile, &recordingSink{}); err != nil {
+				t.Fatalf("createFromBase: %v", err)
+			}
+
+			var edit string
+			for _, a := range runner.limactlArgvs() {
+				if strings.HasPrefix(a, "limactl edit") {
+					if edit != "" {
+						t.Fatalf("more than one edit of the clone: %q and %q", edit, a)
+					}
+					edit = a
+				}
+			}
+			if !strings.Contains(edit, tc.want) {
+				t.Errorf("edit of the clone = %q, want it to contain %q", edit, tc.want)
+			}
+		})
+	}
+}
+
+// A spec with no size changes nothing about the clone beyond its mounts.
+func TestCreateFromBase_NoSizeNoMountsNoEdit(t *testing.T) {
+	stoppedBase := []byte(`{"name":"avr-base-ubuntu-24.04-arm64","status":"Stopped","dir":"/tmp/base","vmType":"vz","arch":"aarch64","cpus":4,"memory":8589934592,"disk":107374182400,"config":{}}`)
+	runner := newFakeRunner().listing(stoppedBase)
+	p := newTestProvider(t, runner, newFakeRecords())
+	logPath := filepath.Join(t.TempDir(), "create.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logFile.Close()
+
+	spec := provider.MachineSpec{Name: testIsolatedMachine, Selector: nativeSelector(), Kind: types.KindIsolated}
+	if err := p.createFromBase(context.Background(), spec, nil, logPath, logFile, &recordingSink{}); err != nil {
+		t.Fatalf("createFromBase: %v", err)
+	}
+	for _, a := range runner.limactlArgvs() {
+		if strings.HasPrefix(a, "limactl edit") {
+			t.Errorf("an unsized, unmounted clone was edited: %q", a)
+		}
+	}
+}
+
+// The base is shared by every isolated environment of its (distro, arch), so it
+// is created at the defaults whatever the first isolated spec asked for.
+// Otherwise the first project to isolate would size the base, and through it
+// every later clone that asked for no size of its own.
+func TestEnsureBase_IsCreatedAtTheDefaultSize_REQ_15_1(t *testing.T) {
+	runner := newFakeRunner().listing(emptyListing(t))
+	p := newTestProvider(t, runner, newFakeRecords())
+
+	spec := provider.MachineSpec{
+		Name:     testIsolatedMachine,
+		Selector: nativeSelector(),
+		Kind:     types.KindIsolated,
+		CPUs:     7,
+		MemoryGB: 13,
+	}
+	if err := p.ensureBase(context.Background(), spec, testBaseMachine, &recordingSink{}); err != nil {
+		t.Fatalf("ensureBase: %v", err)
+	}
+
+	config := runner.configWritten
+	if config == "" {
+		t.Fatal("no base configuration was written, so this test would check nothing")
+	}
+	if strings.Contains(config, "cpus: 7") || strings.Contains(config, "13GiB") {
+		t.Errorf("the base took the isolated spec's size:\n%s", config)
+	}
+	if !strings.Contains(config, "cpus: 4") || !strings.Contains(config, `"8GiB"`) {
+		t.Errorf("the base is not at the host-proportional defaults (4 CPU, 8GiB on the test host):\n%s", config)
+	}
+}

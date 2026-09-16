@@ -100,14 +100,16 @@ func (p *Provider) createFromBase(ctx context.Context, spec provider.MachineSpec
 				spec.Selector.Label(), base, err))
 	}
 
-	// Step 2: add the project mounts to the clone's configuration. The base
-	// machine was provisioned without any project shares, so the clone
-	// inherits an empty mount list.  The edit happens while the clone is
-	// still stopped — no restart is needed.
-	if len(mounts) > 0 {
-		if _, err := p.run(ctx, "edit", spec.Name, "--set", mountsExpression(mounts), "--tty=false"); err != nil {
+	// Step 2: give the clone its own mounts and size. The base machine was
+	// provisioned without project shares and at the default size, and a clone
+	// copies its configuration verbatim, so anything the spec asks for beyond
+	// that has to be written now. The edit happens while the clone is still
+	// stopped — no restart is needed.
+	if edits := cloneEdits(spec, mounts); len(edits) > 0 {
+		args := append(append([]string{"edit", spec.Name}, edits...), "--tty=false")
+		if _, err := p.run(ctx, args...); err != nil {
 			return p.abandonCreate(ctx, spec, logPath,
-				fmt.Errorf("configuring shared directories for the cloned %s environment: %w",
+				fmt.Errorf("configuring shared directories and resources for the cloned %s environment: %w",
 					spec.Selector.Label(), err))
 		}
 	}
@@ -126,6 +128,28 @@ func (p *Provider) createFromBase(ctx context.Context, spec provider.MachineSpec
 	}
 
 	return nil
+}
+
+// cloneEdits is the `limactl edit` arguments that turn a fresh clone of a base
+// into the machine spec describes: its mounts, and any size the spec sets. It
+// is empty when the clone needs nothing beyond what the base already has.
+//
+// The size is written with --set rather than --cpus/--memory so that memory
+// goes through formatGiB, as it does in a generated configuration, and no
+// decimal point reaches Lima. `limactl edit --set '.cpus = N' --set '.memory =
+// "1536MiB"'` was checked against Lima 2.2.0 on a configuration file.
+func cloneEdits(spec provider.MachineSpec, mounts []types.MountSpec) []string {
+	var edits []string
+	if len(mounts) > 0 {
+		edits = append(edits, "--set", mountsExpression(mounts))
+	}
+	if spec.CPUs > 0 {
+		edits = append(edits, "--set", fmt.Sprintf(".cpus = %d", spec.CPUs))
+	}
+	if spec.MemoryGB > 0 {
+		edits = append(edits, "--set", fmt.Sprintf(".memory = %q", formatGiB(spec.MemoryGB)))
+	}
+	return edits
 }
 
 // ensureBase makes certain a pristine base machine exists for the given
@@ -168,6 +192,10 @@ func (p *Provider) ensureBase(ctx context.Context, spec provider.MachineSpec, ba
 	baseSpec.Kind = types.KindBase
 	baseSpec.Mounts = nil
 	baseSpec.Provider = "" // Accept whichever backend receives this.
+	// The base serves every isolated environment of its (distro, arch), so it
+	// takes the defaults. A size the first isolated spec asked for belongs to
+	// that one clone, and is applied to it in cloneEdits.
+	baseSpec.CPUs, baseSpec.MemoryGB, baseSpec.DiskGB = 0, 0, 0
 
 	progress.Progress(types.ProgressEvent{
 		Kind:    types.ProgressCreating,
