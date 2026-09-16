@@ -419,12 +419,21 @@ type NativeWorkspacer interface {
 // (REQ-7.1, REQ-7.3), so there is nothing to call — only something to report.
 // This exists so that a port which could not be published because the host
 // port was already taken is discoverable in avar's diagnostics instead of
-// silently missing (REQ-7.2).
+// silently missing (REQ-7.2), and so that `avr ports` and `avr open` can say
+// which ports are reachable and what is serving them (REQ-16.1, REQ-16.2).
 type PortDiagnoser interface {
 	// PortDiagnostics reports what the backend knows about the machine's
 	// forwarded ports, ordered by guest port. It is a read-only query and
 	// never fails merely because forwarding is broken — an unforwardable port
 	// is data in the result, not an error.
+	//
+	// Every entry describes a port a guest process is listening on now. A
+	// port the backend once forwarded and whose listener has since closed is
+	// not in the result, because a caller that opens a browser on it would
+	// open nothing (REQ-7.3, REQ-16.2).
+	//
+	// A machine that is not running has nothing forwarded and reports an
+	// empty result.
 	PortDiagnostics(ctx context.Context, machine string) ([]PortDiagnostic, error)
 }
 
@@ -584,4 +593,10 @@ type PortDiagnostic struct {
 	// that the host port is already in use by another process. Empty when the
 	// port is forwarded.
 	Reason string
+	// PID and Process identify the guest process listening on the port — its
+	// process id and command line — where the backend could determine them,
+	// and are zero and empty where it could not (REQ-16.1). A process the
+	// guest account avar asks with cannot see is the usual reason.
+	PID     int
+	Process string
 }

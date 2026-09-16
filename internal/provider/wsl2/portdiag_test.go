@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/olamide226/avar/internal/provider"
+	"github.com/olamide226/avar/internal/provider/listeners"
 )
 
 // --- Editor target --------------------------------------------------------
@@ -90,34 +91,72 @@ func TestEditorTarget_RefusesADistributionAvarDoesNotOwn_PROP_6(t *testing.T) {
 
 // --- Port diagnostics -----------------------------------------------------
 
-// /proc/net/tcp writes the local address as hexadecimal, little-endian, with a
-// different layout in each address family. Only the port is read, because it is
-// the part that is the same in both — and a listener bound to loopback inside
-// Linux is deliberately not exposed, so reporting it as unforwarded would report
-// the user's own choice as a problem.
-func TestParseListeningPorts_ReadsWhatTheKernelWrites_REQ_18_9(t *testing.T) {
+// The guest's listener report is read by the shared parser, which has its own
+// tests against real output; what belongs here is what the WSL backend does
+// with it. A server bound to the guest's loopback address is published by WSL
+// when localhost forwarding covers it, and it is the server `avr ports` most
+// needs to find — so it is reported when Windows can reach it, and named.
+func TestPortDiagnostics_ReportsAReachableLoopbackListener_REQ_16_1(t *testing.T) {
 	t.Parallel()
 
-	// Ports 3000 (0BB8) and 8080 (1F90) on 0.0.0.0 and ::, and 5432 (1538) on
-	// 127.0.0.1 and ::1, which are not published.
-	const procNetTCP = "00000000:0BB8\n" +
-		"0100007F:1538\n" +
-		"00000000000000000000000000000000:1F90\n" +
-		"00000000000000000000000001000000:1538\n" +
-		// A duplicate: the same port in both address families is one port.
-		"00000000:0BB8\n" +
-		// Not an address at all.
-		"\n"
-
-	got := parseListeningPorts(procNetTCP)
-	want := []int{3000, 8080}
-	if len(got) != len(want) {
-		t.Fatalf("parseListeningPorts = %v, want %v", got, want)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("taking a port to answer on: %v", err)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("parseListeningPorts = %v, want %v (ordered)", got, want)
-		}
+	defer func() { _ = listener.Close() }()
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	f := newFakeWSL()
+	f.register(testMachine, 2, true)
+	f.loopbackListeners = []int{port}
+	p := newProvider(t, f, recorded(testMachine))
+
+	got, err := p.PortDiagnostics(context.Background(), testMachine)
+	if err != nil {
+		t.Fatalf("PortDiagnostics: %v", err)
+	}
+	if len(got) != 1 || !got[0].Forwarded || got[0].GuestPort != port {
+		t.Fatalf("PortDiagnostics = %+v, want port %d reported as forwarded", got, port)
+	}
+	if got[0].PID != port || got[0].Process != fmt.Sprintf("server --port %d", port) {
+		t.Errorf("the listener is attributed to pid %d %q, want the process the guest reported", got[0].PID, got[0].Process)
+	}
+}
+
+// A loopback listener Windows cannot reach is a deliberate bind as far as avar
+// can tell, and reporting it as a forwarding failure would be noise in
+// `avr status`.
+func TestPortDiagnostics_OmitsAnUnreachableLoopbackListener_REQ_7_2(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeWSL()
+	f.register(testMachine, 2, true)
+	f.loopbackListeners = []int{freePort(t)}
+	p := newProvider(t, f, recorded(testMachine))
+
+	got, err := p.PortDiagnostics(context.Background(), testMachine)
+	if err != nil {
+		t.Fatalf("PortDiagnostics: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("PortDiagnostics = %+v, want an unreachable loopback bind left out", got)
+	}
+}
+
+// The probe is the shared listener script, whose parsing is proven against real
+// guest output in internal/provider/listeners.
+func TestPortDiagnostics_RunsTheSharedListenerScript_REQ_16_1(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeWSL()
+	f.register(testMachine, 2, true)
+	p := newProvider(t, f, recorded(testMachine))
+
+	if _, err := p.PortDiagnostics(context.Background(), testMachine); err != nil {
+		t.Fatalf("PortDiagnostics: %v", err)
+	}
+	if got := f.lastGuestScript(t, "/proc/net/tcp"); got != listeners.Script {
+		t.Errorf("the guest ran a different script:\n%s", got)
 	}
 }
 
