@@ -392,12 +392,12 @@ func pluralize(count int, singular, plural string) string {
 // The rule is the host's stdin, not the presence of a command: `avr` with no
 // arguments in a pipeline is still not interactive, and `avr npm test` typed at
 // a prompt still is (REQ-2.3, PROP-8).
+//
+// It asks whether stdin is a terminal, not whether it is a character device:
+// /dev/null is the latter, and `avr <cmd> </dev/null` is how scripts and cron
+// jobs run avar (PROP-8).
 func stdinIsTerminal() bool {
-	stat, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return stat.Mode()&os.ModeCharDevice != 0
+	return isTerminal(os.Stdin)
 }
 
 // forwardEnv reads the standing forward_env grant from avar's configuration
