@@ -123,6 +123,25 @@ retargeted first, rather than by merging what the queue says is mergeable.
 
 ---
 
+### A check that finds nothing to check passes
+
+`make lint`'s formatting check built its file list with
+`find . -type d \( -name '.*' … \) -prune`, meant to skip dot-directories. But
+the starting point is itself named `.`, which matches `'.*'`, so find pruned the
+whole tree and the list was empty. `gofmt -s -l` with no files reads stdin. In
+CI stdin is empty, so it printed nothing and the check passed. On a terminal it
+waited forever for input. From the commit that introduced the list until
+2026-09-16, the macOS CI job's formatting gate checked no file. Formatting only
+stayed clean because the Windows job names its directories explicitly. Every
+PR in that window that listed `make lint` as verification had verified vet
+alone.
+
+A gate built from a computed input (a file glob, a package list, a test filter)
+has a failure mode no fixture exercises: the input is empty and the gate passes
+vacuously. Make that case a failure, as `fmt-check` now does. Prove a new gate
+by feeding it something it must reject, as `cmd/purity_test.go` does with its
+violating fixture, not only by watching it pass on clean code.
+
 ## Specification
 
 ### The spec can be wrong in ways only implementation reveals

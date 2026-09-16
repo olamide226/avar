@@ -49,10 +49,19 @@ fmt:
 
 # gofmt, unlike the go tool, walks into dot-directories. Prune them explicitly
 # so build output and any nested checkouts are not linted as project source.
-GOFILES = $(shell find . -type d \( -name '.*' -o -name dist -o -name bin \) -prune -o -type f -name '*.go' -print)
+#
+# -mindepth 1 matters: the starting point is itself named ".", which matches
+# '.*', so without it find prunes the whole tree and GOFILES is empty. gofmt
+# given no files reads stdin, which in CI is empty, so the check passed while
+# checking nothing. The guard below makes an empty list a failure rather than a
+# pass, so the same mistake cannot hide again.
+GOFILES = $(shell find . -mindepth 1 -type d \( -name '.*' -o -name dist -o -name bin \) -prune -o -type f -name '*.go' -print)
 
 .PHONY: fmt-check
 fmt-check:
+	@if [ -z "$(strip $(GOFILES))" ]; then \
+		echo "fmt-check found no Go files to check; the GOFILES pattern is broken"; exit 1; \
+	fi
 	@unformatted=$$(gofmt -s -l $(GOFILES)); \
 	if [ -n "$$unformatted" ]; then \
 		echo "gofmt -s needed:"; echo "$$unformatted"; exit 1; \
