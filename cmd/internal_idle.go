@@ -123,29 +123,45 @@ func ensureIdleScheduler(app *App) {
 // ~/Library/LaunchAgents/ so launchd picks it up at the next login; avar loads
 // it immediately so no logout is needed.
 //
-// It is a no-op when the plist is already there.
+// It costs one read when the agent is already current, and repairs one that
+// runs a different binary (see installLaunchdAgent).
 func ensureLaunchdAgent(app *App) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
 	}
-	launchAgentsDir := filepath.Join(home, "Library", "LaunchAgents")
-	plistPath := filepath.Join(launchAgentsDir, launchdPlist)
-
-	if _, err := os.Stat(plistPath); err == nil {
-		return // already installed
-	}
-
 	bin, err := os.Executable()
 	if err != nil {
+		return
+	}
+	installLaunchdAgent(app, filepath.Join(home, "Library", "LaunchAgents"), bin, launchctl)
+}
+
+// installLaunchdAgent is ensureLaunchdAgent with its host dependencies passed
+// in: the LaunchAgents directory, the binary the agent should run, and how to
+// run launchctl.
+//
+// The plist is compared with what this binary would write, not merely looked
+// for. An agent that runs some other binary (an upgrade that moves avr, or the
+// one a test run once installed pointing at a deleted test binary) fails every ten minutes indefinitely, and trusting its
+// mere existence meant idle auto-stop silently never ran again. The warm path
+// is still one read: this runs on every `avr` (REQ-17.1).
+func installLaunchdAgent(app *App, launchAgentsDir, bin string, launchctl func(args ...string) error) {
+	plistPath := filepath.Join(launchAgentsDir, launchdPlist)
+	plist := launchdPlistContent(bin)
+
+	current, err := os.ReadFile(plistPath)
+	if err == nil {
+		if string(current) == plist {
+			return
+		}
+		repairLaunchdAgent(plistPath, plist, launchctl)
 		return
 	}
 
 	if err := os.MkdirAll(launchAgentsDir, 0o755); err != nil {
 		return
 	}
-
-	plist := launchdPlistContent(bin)
 	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
 		return
 	}
@@ -155,6 +171,25 @@ func ensureLaunchdAgent(app *App) {
 	_ = launchctl("load", plistPath)
 
 	printIdleNotice(app, "launchctl bootout gui/$(id -u)/"+launchdLabel)
+}
+
+// repairLaunchdAgent points an existing agent at this binary.
+//
+// It is reloaded only if it is loaded now. An agent that is not loaded was
+// unloaded by the user, and correcting the file must not turn back on
+// something they turned off. The notice is not repeated either: whoever has
+// this plist has already been told once.
+func repairLaunchdAgent(plistPath, plist string, launchctl func(args ...string) error) {
+	loaded := launchctl("list", launchdLabel) == nil
+	if loaded {
+		_ = launchctl("unload", plistPath)
+	}
+	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
+		return
+	}
+	if loaded {
+		_ = launchctl("load", plistPath)
+	}
 }
 
 // printIdleNotice is the one-time explanation, shared by both schedulers.

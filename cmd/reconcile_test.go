@@ -48,6 +48,7 @@ func newReconcileTestApp(t *testing.T, f *fake.Fake) *testApp {
 	// The store is ready-made; only the backend is built lazily.
 	app.once.store.Do(func() {})
 	app.buildBackend = func(context.Context) (provider.Provider, error) { return f, nil }
+	app.scheduleIdleCheck = func(*App) {}
 
 	return &testApp{App: app, out: app.Out.(*bytes.Buffer), err: app.Err.(*bytes.Buffer), store: store}
 }

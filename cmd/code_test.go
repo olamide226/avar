@@ -66,17 +66,6 @@ func newEditorTest(t *testing.T, launchers ...string) *editorTest {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	// Creating an environment installs the idle-check agent unless its plist
-	// is already in ~/Library/LaunchAgents. With HOME moved, an empty one here
-	// is what keeps these tests from running launchctl against the real
-	// session.
-	agents := filepath.Join(home, "Library", "LaunchAgents")
-	if err := os.MkdirAll(agents, 0o755); err != nil {
-		t.Fatalf("creating a stand-in LaunchAgents directory: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(agents, launchdPlist), nil, 0o644); err != nil {
-		t.Fatalf("creating a stand-in idle-check agent: %v", err)
-	}
 
 	bin := t.TempDir()
 	for _, name := range launchers {

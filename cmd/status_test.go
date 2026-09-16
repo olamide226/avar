@@ -56,6 +56,9 @@ func newTestApp(t *testing.T, p provider.Provider) *testApp {
 	// directory is ever reached from a test.
 	app.once.provider.Do(func() {})
 	app.once.store.Do(func() {})
+	// Creating an environment registers the idle-check with the host
+	// scheduler; a test must never touch the real one.
+	app.scheduleIdleCheck = func(*App) {}
 
 	return &testApp{App: app, out: app.Out.(*bytes.Buffer), err: app.Err.(*bytes.Buffer), store: store}
 }
