@@ -351,6 +351,41 @@ func TestEditorCommands_MissingLauncherFailsBeforeStartingAnything_REQ_13_7(t *t
 	}
 }
 
+// REQ-14.4: `avr --native-fs code` on a backend that reaches the project
+// directly refuses before any machine work, as the shell path does. Refusing
+// after prepareEnvironment would boot a stopped machine, or provision a missing
+// one, only to say the flag had nothing to do.
+func TestEditorCommands_NativeFSRefusesBeforeMachineWorkWhereUnnecessary_REQ_14_4(t *testing.T) {
+	for _, command := range []string{"code", "cursor", "zed"} {
+		t.Run(command, func(t *testing.T) {
+			e := newEditorTest(t, command)
+			e.App.prov = directProvider{e.f}
+			seedMachine(t, e.f, e.machine, ubuntu(), types.KindShared)
+			e.f.SetMachineState(e.machine, types.StateStopped)
+			e.f.Reset()
+
+			inv := editorInvocation(command)
+			inv.NativeFS = true
+			err := e.run(t, inv)
+			if err == nil {
+				t.Fatalf("`avr --native-fs %s` succeeded on a backend with no native workspace", command)
+			}
+			if !strings.Contains(err.Error(), "without --native-fs") {
+				t.Errorf("the error does not say the flag is unnecessary: %v", err)
+			}
+			for _, op := range []fake.Op{fake.OpEnsureMachine, fake.OpSetMounts, fake.OpEditorTarget} {
+				if n := e.f.Count(op); n != 0 {
+					t.Errorf("%s was called %d time(s) before the refusal, want none", op, n)
+				}
+			}
+			e.f.AssertMachineState(t, e.machine, types.StateStopped)
+			if _, err := os.Stat(e.log); err == nil {
+				t.Errorf("`avr --native-fs %s` launched the editor", command)
+			}
+		})
+	}
+}
+
 // An editor that cannot connect to the kind of environment the backend
 // describes says so, and leaves nothing behind: no launcher run, no SSH
 // configuration written, no Include line proposed.

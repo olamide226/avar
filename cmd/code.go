@@ -125,6 +125,14 @@ func openInEditor(ctx context.Context, app *App, inv cli.Invocation, ed editor.E
 		return err
 	}
 
+	// As on the shell path, --native-fs on a backend with no native workspace
+	// is refused before bringing anything up (REQ-14.4).
+	if inv.NativeFS {
+		if _, err := nativeWorkspacer(p); err != nil {
+			return err
+		}
+	}
+
 	// Bring the machine up and make the project visible inside it, exactly
 	// as the shell path does. The shared prepareEnvironment gives the editor
 	// commands the same auto-provision behaviour as `avr`, so a first-time
