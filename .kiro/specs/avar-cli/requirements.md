@@ -259,9 +259,9 @@ unaffected and works on every environment.
 
 12.4 Forwarding SHALL be per-invocation: no `--env`/`--ssh-agent` grant SHALL persist beyond the session it was given to, unless the user configures a persistent allowlist in avar's own (host-side) configuration.
 
-### Requirement 13: Editor Integration (`avr code`) — *Phase 2*
+### Requirement 13: Editor Integration (`avr code`, `avr cursor`, `avr zed`) — *Phase 2 (13.1–13.4), Post-MVP (13.5–13.9)*
 
-**User Story:** As a developer, I want `avr code` to open VS Code attached to the Linux environment at my project path, so that editing and running both happen in Linux without manual SSH setup.
+**User Story:** As a developer, I want `avr code` — or `avr cursor` or `avr zed`, for the editor I use — to open that editor attached to the Linux environment at my project path, so that editing and running both happen in Linux without manual SSH setup.
 
 #### Acceptance Criteria
 
@@ -272,6 +272,16 @@ unaffected and works on every environment.
 13.3 THE SSH configuration avar writes SHALL live in an avar-owned file included from the State_Dir and SHALL NOT modify the user's existing `~/.ssh/config` entries.
 
 13.4 `avr code` SHALL respect the same Environment_Selector flags as other commands (`avr --isolate code`, `avr --distro fedora code`).
+
+13.5 WHEN a user runs `avr cursor` THEN THE CLI SHALL ensure the target machine is running and launch Cursor with `cursor --remote <authority> <guest-path>`, where the authority and the connection preparation are exactly those `avr code` uses for the same environment: on macOS an SSH host entry in avar-managed SSH configuration (13.1, 13.3) opened through Cursor's Remote-SSH support; on Windows the `wsl+<distribution>` authority opened through Cursor's WSL support, with no SSH configuration required or generated (18.10).
+
+13.6 WHEN a user runs `avr zed` THEN THE CLI SHALL ensure the target machine is running and open the project at the matching guest path in Zed: on macOS through Zed's SSH remote development as `zed ssh://<host>/<guest-path>`, where `<host>` is the host entry avar manages (13.1, 13.3) and no user, port, or key appears on the command line; on Windows through Zed's WSL remote development as `zed --wsl <distribution> <guest-path>` for the selected avar-managed distribution, with no SSH configuration required or generated (18.10).
+
+13.7 IF the launcher for the requested editor (`code`, `cursor`, or `zed`) is not on PATH THEN THE CLI SHALL exit non-zero before ensuring, starting, or provisioning any machine, naming the missing command and giving platform-appropriate instructions for installing it.
+
+13.8 IF the backend describes an editor target the requested editor has no way to connect to THEN THE CLI SHALL exit non-zero without launching the editor and without writing SSH configuration or proposing a change to the user's SSH configuration, stating plainly that this editor cannot open this environment and suggesting another editor command to use instead.
+
+13.9 `avr cursor` and `avr zed` SHALL respect the same Environment_Selector flags as `avr code` (13.4), SHALL take no arguments, and SHALL be reserved subcommand names under Requirement 2.5, so that a program named `cursor` or `zed` inside the guest is run with `avr -- cursor` or `avr -- zed` (2.6).
 
 ### Requirement 14: Linux-Native Workspace Mode — *Post-MVP*
 

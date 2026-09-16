@@ -124,7 +124,12 @@ const commandIndex = `Management commands:
                                  host copy and its Linux-native one
   destroy [--all|--orphaned] [--yes]
                                  Remove environments after confirmation
-  code                           Open this project in VS Code over Remote-SSH
+  code                           Open this project in VS Code in its Linux
+                                 environment
+  cursor                         Open this project in Cursor in its Linux
+                                 environment
+  zed                            Open this project in Zed in its Linux
+                                 environment
   help [command]                 Show general or command-specific help
   version                        Print the avr version
 
@@ -142,7 +147,15 @@ type commandHelp struct {
 var publicCommandHelp = map[string]commandHelp{
 	"code": {
 		usage:       "avr [selector flags] code",
-		description: "Open the current project in VS Code attached to its Linux environment.",
+		description: "Open the current project in VS Code attached to its Linux environment: over Remote-SSH on macOS, through VS Code's WSL integration on Windows. Needs the `code` command on your PATH.",
+	},
+	"cursor": {
+		usage:       "avr [selector flags] cursor",
+		description: "Open the current project in Cursor attached to its Linux environment: over Remote-SSH on macOS, through Cursor's WSL integration on Windows. Needs the `cursor` command on your PATH.\n\n`cursor` is an avar command, so it does not reach the guest: to run a program called `cursor` in Linux, use `avr -- cursor`.",
+	},
+	"zed": {
+		usage:       "avr [selector flags] zed",
+		description: "Open the current project in Zed attached to its Linux environment: through Zed's SSH remote development on macOS, and its WSL support on Windows. Needs the `zed` command on your PATH.\n\n`zed` is an avar command, so it does not reach the guest: to run a program called `zed` in Linux, use `avr -- zed`.",
 	},
 	"destroy": {
 		usage:       "avr [selector flags] destroy [--all | --orphaned] [--yes]",

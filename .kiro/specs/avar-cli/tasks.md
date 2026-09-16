@@ -235,7 +235,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _writes: cmd/ports.go, internal/provider/lima/portdiag.go_
 
 - [ ] 24. Additional editors (`avr cursor`, `avr zed`) reusing the SSH plumbing
-  - _Requirements: 13.x pattern_
+  - _Requirements: 13.5, 13.6, 13.7, 13.8, 13.9 (criteria added with this task; 13.x pattern)_
   - _writes: internal/editor/cursor.go, internal/editor/zed.go, cmd/code.go_
 
 - [x] 25. Second provider (OrbStack or SSH) behind the Provider interface  _(retired: satisfied by the WSL2Provider, Phase 4)_

@@ -582,6 +582,33 @@ func TestParse_NativeWorkspaceFlagAndSubcommand_REQ_14_1(t *testing.T) {
 	})
 }
 
+func TestParse_EditorCommandsAreReservedWithAnEscapeHatch_REQ_13_9(t *testing.T) {
+	t.Parallel()
+
+	runParseCases(t, []parseCase{
+		{
+			name: "cursor is an avar subcommand",
+			argv: []string{"cursor"},
+			want: Invocation{Mode: ModeSubcommand, Subcommand: "cursor"},
+		},
+		{
+			name: "zed takes selector flags",
+			argv: []string{"--isolate", "--distro", "fedora", "zed"},
+			want: Invocation{Mode: ModeSubcommand, Subcommand: "zed", Selector: Selector{Distro: types.DistroFedora, Isolate: true}},
+		},
+		{
+			name: "-- forces a guest command named zed",
+			argv: []string{"--", "zed", "."},
+			want: Invocation{Mode: ModeGuestCommand, Guest: []string{"zed", "."}},
+		},
+		{
+			name: "-- forces a guest command named cursor",
+			argv: []string{"--distro", "debian", "--", "cursor", "--version"},
+			want: Invocation{Mode: ModeGuestCommand, Selector: Selector{Distro: types.DistroDebian}, Guest: []string{"cursor", "--version"}},
+		},
+	})
+}
+
 func TestMode_String(t *testing.T) {
 	t.Parallel()
 

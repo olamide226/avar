@@ -121,6 +121,7 @@ type Invocation struct {
 // land, or a project script named `snapshot` would silently stop working.
 var subcommands = []string{
 	"code",
+	"cursor",
 	"destroy",
 	"help",
 	"internal",
@@ -132,6 +133,7 @@ var subcommands = []string{
 	"stop",
 	"sync",
 	"version",
+	"zed",
 }
 
 // Subcommands returns avar's subcommand names in sorted order.

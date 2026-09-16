@@ -40,6 +40,14 @@ The Windows design uses only documented platform behavior:
 - Windows-to-WSL localhost forwarding is automatic on normal WSL 2 installations; mirrored networking improves bidirectional and VPN behavior on Windows 11 22H2+ ([networking guidance](https://learn.microsoft.com/windows/wsl/networking)).
 - VS Code accepts a WSL remote authority in the form `wsl+<distro name>` ([VS Code CLI](https://code.visualstudio.com/docs/configure/command-line)).
 
+### Additional editors research basis (Req 13.5–13.9)
+
+Neither editor was installed on the host this was designed on; what follows is from documentation and source, and the parts not yet exercised against the real editors are listed as such in the PR that introduced them.
+
+- **Cursor** is built from VS Code and keeps its launcher: `cursor --remote ssh-remote+<host> <path>` is the form Cursor staff treated as supported when a regression broke it in 1.6.14 and was fixed in 1.6.26 ([forum report](https://forum.cursor.com/t/cursor-remote-ssh-remote-open-undesired-cli-agent/133654)). Cursor's WSL windows use the same `vscode-remote://wsl+<distro>` authority ([forum report](https://forum.cursor.com/t/cursor-deep-links-to-wsl-files-no-longer-reuse-the-existing-cursor-wsl-window-and-now-open-a-new-window/158160/5)), served by its own `anysphere.remote-ssh` / `anysphere.remote-wsl` extensions rather than Microsoft's. Cursor 3's Agent Window does not attach to WSL; the Editor Window does ([forum report](https://forum.cursor.com/t/cursor-3-extension-wsl-is-required-to-open-the-remote-window/156531)).
+- **Zed** opens an SSH project with `zed ssh://[<user>@]<host>[:<port>]/<path>`, shells out to the `ssh` on PATH, and inherits `~/.ssh/config` for the host ([remote development](https://zed.dev/docs/remote-development), [CLI reference](https://zed.dev/docs/reference/cli)). The URL is parsed with the `url` crate and its path percent-decoded (`crates/zed/src/zed/open_listener.rs`), so avar percent-encodes the path and names only the host alias, leaving user, port and key to avar's stanza.
+- **Zed on Windows** opens WSL folders natively. Its CLI has a Windows-only `--wsl [<user>@]<distro>` flag (`crates/cli/src/main.rs`, added in zed-industries/zed#37035) that the `zed` script Zed installs for use inside WSL passes on every invocation (`crates/zed/resources/windows/zed.sh`). It is not in the public CLI reference, and its help text says it is not meant to be filled in by hand; avar uses it without a user, which selects the distribution's default user, as VS Code's `wsl+<distro>` does. This is the one editor interface avar relies on that its vendor does not document.
+
 ## 2. Architecture
 
 ```mermaid
@@ -112,7 +120,7 @@ cmd/  ─────────────────┐
 
 ```
 avr [selector flags] [--] [COMMAND [ARGS...]]     # no COMMAND → interactive shell
-avr [selector flags] status | stop [--all] | code
+avr [selector flags] status | stop [--all] | code | cursor | zed
 avr snapshot [NAME] | restore NAME | reset [--yes]     (Phase 2)
 avr isolate off [--yes]                                (Phase 2)
 avr destroy [--yes] [--all | --orphaned]               (Phase 2)
@@ -395,13 +403,17 @@ Using imported distributions avoids first-launch username prompts and prevents a
 - Idle stop: avar installs (with one-time notice) a per-user scheduled invocation of `avr internal idle-check` every 10 minutes: `launchd` on macOS, Task Scheduler on Windows. For each running avar environment with zero live sessions and `last_activity + IdleTimeout < now`, call its recorded Provider's `Stop`. `idle_timeout = "0"` disables it.
 - Windows Task Scheduler registration uses the current user's token and the absolute `avr.exe` path, requires no elevation, and is updated after binary upgrades. Removing avar removes only its named task.
 
-### 3.9 Editor Launcher (`internal/editor`) — Phase 2
+### 3.9 Editor Launcher (`internal/editor`) — Phase 2, extended post-MVP
 
-**Purpose**: Req 13/18.10. Ensure the environment is running, request an `EditorTarget`, then execute `code --remote <authority> <guest-path>`.
+**Purpose**: Req 13/18.10. Ensure the environment is running, request an `EditorTarget`, then execute the requested editor's launcher with arguments built from that target.
 
-- Lima returns `ssh-remote+<alias>` plus an SSH stanza. The launcher writes/refreshes the State_Dir SSH file and asks once before adding its `Include` to the user's SSH config (Req 13.3).
-- WSL returns `wsl+<distribution>` and no SSH material. The launcher checks that the VS Code WSL extension/authority can be resolved and gives installation guidance if not.
-- Missing `code` produces platform-appropriate PATH guidance. No backend-specific branch exists in `cmd/code.go`.
+- `internal/editor.Editor` describes one editor: its display name, its launcher command, platform install guidance, and a function from `(authority, guest path)` to launcher arguments. `cmd/code.go` registers `code`, `cursor`, and `zed` against one shared flow and never branches on the editor or the backend.
+- The flow is: refuse arguments → locate the launcher on PATH (before any backend call, Req 13.7) → resolve → ensure the environment → `EditorTarget` → build the launcher arguments (an editor that cannot reach the target is refused here, before anything is written, Req 13.8) → write SSH material if the target carries any → launch.
+- `EditorTarget.Authority` is in VS Code's vocabulary (`ssh-remote+<alias>`, `wsl+<distribution>`). VS Code and Cursor take it verbatim as `--remote <authority> <path>`. Zed translates it: `ssh-remote+<alias>` → `ssh://<alias><escaped path>`, `wsl+<distribution>` → `--wsl <distribution> <path>`; any other kind is `ErrUnsupportedTarget`. The translation lives in `internal/editor` because it is knowledge about the editor, not about the backend — a new backend that returns one of these authority kinds is opened by every editor without change.
+- Lima returns `ssh-remote+<alias>` plus an SSH stanza. The launcher writes/refreshes the State_Dir SSH file and asks once before adding its `Include` to the user's SSH config (Req 13.3). VS Code, Cursor and Zed all resolve the alias through the user's `~/.ssh/config`, so the same Include serves all three.
+- WSL returns `wsl+<distribution>` and no SSH material, for every editor (Req 18.10).
+- The launcher's own stderr is passed through, because when it refuses (for example a Zed too old to know `--wsl`) its message is the only explanation available.
+- Missing launcher produces platform-appropriate PATH guidance naming that editor's install step. No backend-specific branch exists in `cmd/code.go`.
 
 ### 3.10 Env/Credential Forwarding Policy (`internal/envpolicy`) — Phase 2 (defaults enforced from Phase 1)
 
@@ -534,8 +546,8 @@ _For any_ snapshot restore, reset, isolation change, interrupted create, or inte
 **Validates: 18.7, 18.12**
 
 ### Property 17: Provider-specific editor target
-_For any_ Windows `avr code` target, the editor authority SHALL be `wsl+<owned-distribution>` with no SSH configuration output; _for any_ Lima target, it SHALL be an avar-owned SSH authority with its stanza confined to the State_Dir.
-**Validates: 13.1, 13.3, 18.10**
+_For any_ Windows `avr code`, `avr cursor`, or `avr zed` target, the editor authority SHALL be `wsl+<owned-distribution>` with no SSH configuration output; _for any_ Lima target, it SHALL be an avar-owned SSH authority with its stanza confined to the State_Dir. The target is the same whichever editor asked for it: editors differ only in how they are handed it.
+**Validates: 13.1, 13.3, 13.5, 13.6, 18.10**
 
 ### Property 18: Architecture capability rejection
 _For any_ WSL selector whose architecture differs from the Windows host architecture, resolution SHALL return the supported architecture list before download, import, state mutation, or distribution creation.
@@ -587,6 +599,9 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 | Native workspace: the environment lacks `find` or `sha256sum` | tool probe at the head of the scan script | Name the missing tool and how to install it; read no manifest and change no file, because an empty manifest is indistinguishable from an empty project and would propose deleting the other copy (Req 14.2). |
 | Native workspace requested on a backend that has none | `provider.NativeWorkspacer` type assertion in `cmd/`, before any machine work | Say the environment reaches the project directly and that the flag is unnecessary, before starting or provisioning anything, so nobody waits through a boot to be told there was nothing to do (Req 14.4, Req 17.3). |
 | `code` CLI or required remote integration missing | PATH and editor-target launch probe | Give platform-appropriate VS Code guidance; WSL flow never falls back to SSH (Req 13.2, 18.10). |
+| `cursor` or `zed` launcher not on PATH | `exec.LookPath` before resolving or touching the backend | Exit 1 naming the command and the editor's own install step (Cursor: "Shell Command: Install 'cursor' command in PATH"; Zed: "cli: install cli binary" on macOS, the installer's "Add to PATH" option on Windows). No environment is started or provisioned (Req 13.7). |
+| Editor cannot connect to the target the backend describes | `Editor.Args` returns `ErrUnsupportedTarget` | Exit 1 saying the editor cannot open this environment and suggesting `avr code`; write no SSH configuration and propose no Include (Req 13.8). The message names the connection kind, never the machine (Req 1.5). |
+| Editor launcher rejects avar's arguments (e.g. an old Zed without `--wsl`) | launcher exits non-zero | Pass the launcher's stderr through and report `launch <editor> with <argv>: <exit status>` (Req 13.5, 13.6). |
 | `--env-file` missing/unparseable | pre-flight | Exit 1 before any machine work (Req 12.2). |
 | Ctrl-C during provisioning | context cancellation | Stop the provider subprocess, reconcile/clean only the journaled partial target, and exit 130. |
 
@@ -603,11 +618,12 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 - limactl output parsing against recorded `limactl list --json` fixtures from the pinned minimum Lima version.
 - WSL output parsing fixtures for UTF-8/UTF-16, stopped/running, WSL 1/2, unexpected whitespace, and localized headers; only numeric/version/name fields may drive mutation.
 - EditorTarget rendering proves WSL emits `wsl+<name>` with no SSH material and Lima behavior remains unchanged (Property 17).
+- Editor argument construction for VS Code, Cursor and Zed, including Zed's ssh:// URL surviving paths with spaces, `#`, `?` and non-ASCII, and the host in that URL resolving through avar's Include to the stanza's endpoint with the real `ssh -G` (Req 13.5–13.8).
 - Native-workspace advisory heuristic and dismissal persistence (Property 20).
 
 **Integration tests — FakeProvider/FakeRunner**:
 
-- Full provider-neutral command flows (`avr` first-run, mount-add flow, `stop --all`, isolation remembering, reset scoping, editor launch) assert call sequences without a VM.
+- Full provider-neutral command flows (`avr` first-run, mount-add flow, `stop --all`, isolation remembering, reset scoping, editor launch) assert call sequences without a VM. Editor flows put the test binary on PATH under the editor's name and assert the argv it was actually executed with.
 - WSL2Provider tests run on ordinary Windows CI against a fake `wsl.exe` runner and temporary State_Dir, asserting exact argv arrays for import, selective mounts, shell, terminate, export/import and unregister. Tests reject any use of `wsl --shutdown` and any operation against a non-recorded distro.
 - Static import/lint rules fail if WSL-specific packages appear in `cmd/` or `internal/resolve` (Property 21).
 
@@ -636,4 +652,4 @@ _For any_ project with a Linux-native workspace, and _for any_ file in it, avar 
 
 Windows hosts through avar-owned WSL 2 distributions (Req 18) and Linux-native workspace mode on the WSL backend (Req 14) have shipped. Still out of scope on Windows: Windows Server, Windows 10, WSL 1 execution, adoption or management of user-owned WSL distributions, automatic mutation of global `%UserProfile%\.wslconfig`, Docker Desktop integration, and Windows-native containers.
 
-Not yet built: `.avr.toml` + `avr init` (Req 15), `avr ports`/`avr open` (Req 16), and additional editors. Not planned: Linux-native workspace mode on Lima, which already shares projects at native speed (Req 14.4); further providers (OrbStack, SSH, cloud), since WSL 2 already showed a second backend fits behind the Provider interface; and a VS Code terminal-picker extension, which has no requirement yet. Out of scope on any host: Linux hosts and GUI (Req 17.6).
+Not yet built: `.avr.toml` + `avr init` (Req 15) and `avr ports`/`avr open` (Req 16). Not planned: Linux-native workspace mode on Lima, which already shares projects at native speed (Req 14.4); further providers (OrbStack, SSH, cloud), since WSL 2 already showed a second backend fits behind the Provider interface; and a VS Code terminal-picker extension, which has no requirement yet. Out of scope on any host: Linux hosts and GUI (Req 17.6).

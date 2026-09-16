@@ -1,6 +1,7 @@
 // Package editor owns avar's editor integration, which is the surface behind
-// `avr code`. It manages avar-owned SSH configuration — never the user's own
-// ~/.ssh/config — and launches editors that connect through it.
+// `avr code`, `avr cursor` and `avr zed`. It manages avar-owned SSH
+// configuration — never the user's own ~/.ssh/config — and launches editors
+// that connect through it.
 //
 // The SSH configuration lives in the state store's ssh directory, which the
 // caller supplies — this package derives no paths of its own, so avar has a
@@ -126,7 +127,7 @@ func AddInclude(userConfig, configPath string) error {
 	}
 
 	var buf bytes.Buffer
-	buf.WriteString("# Added by avar so that `avr code` can reach your Linux environments.\n")
+	buf.WriteString("# Added by avar so that `avr code`, `avr cursor` and `avr zed` can reach your Linux environments.\n")
 	buf.WriteString("# Remove this line to disconnect them; nothing else here is avar's.\n")
 	buf.WriteString(IncludeLine(configPath) + "\n")
 	if len(existing) > 0 {
