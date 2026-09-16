@@ -48,6 +48,13 @@ type App struct {
 	// against a fake without going near a real one. Nil means the host's
 	// real backend.
 	buildBackend func(ctx context.Context) (provider.Provider, error)
+
+	// scheduleIdleCheck replaces the host scheduler registration when set.
+	// Registration writes into the user's home directory and runs launchctl or
+	// schtasks against their real session, so a flow test that creates an
+	// environment must never reach it: one once left a launchd agent pointing
+	// at a deleted test binary on a developer's Mac. Nil means the real one.
+	scheduleIdleCheck func(app *App)
 }
 
 // newApp returns an App writing to the real streams.

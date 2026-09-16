@@ -245,7 +245,11 @@ func recordMachine(app *App, target resolve.ResolvedTarget, mount types.MountSpe
 	// A new machine is the point at which idle stopping starts to matter, so
 	// the periodic idle-check is scheduled here. What that means differs by
 	// host and is ensureIdleScheduler's business, not this caller's.
-	ensureIdleScheduler(app)
+	if app.scheduleIdleCheck != nil {
+		app.scheduleIdleCheck(app)
+	} else {
+		ensureIdleScheduler(app)
+	}
 	return nil
 }
 

@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -97,5 +99,119 @@ func TestIdleCheck_NeverTouchesAnEnvironmentWithALiveSession_PROP_11(t *testing.
 	}
 	if n := f.Count(fake.OpStop); n != 0 {
 		t.Errorf("idle check stopped an environment with a live session: %v", f.Calls())
+	}
+}
+
+// launchctlCalls records what installLaunchdAgent asked launchctl to do, and
+// answers `launchctl list <label>` as loaded or not.
+type launchctlCalls struct {
+	loaded bool
+	calls  []string
+}
+
+func (l *launchctlCalls) run(args ...string) error {
+	l.calls = append(l.calls, strings.Join(args, " "))
+	if len(args) > 0 && args[0] == "list" && !l.loaded {
+		return errors.New("Could not find service")
+	}
+	return nil
+}
+
+func writePlist(t *testing.T, dir, bin string) string {
+	t.Helper()
+	path := filepath.Join(dir, launchdPlist)
+	if err := os.WriteFile(path, []byte(launchdPlistContent(bin)), 0o644); err != nil {
+		t.Fatalf("writing a plist: %v", err)
+	}
+	return path
+}
+
+func readPlist(t *testing.T, path string) string {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the plist: %v", err)
+	}
+	return string(got)
+}
+
+// REQ-5.5: an agent that points at a binary which is no longer this one, left
+// by an upgrade that moved avr or by anything else, is rewritten and reloaded.
+// Before this, an existing plist was trusted whatever it said, so an agent
+// pointing at a deleted binary failed every ten minutes for good and idle
+// auto-stop silently never ran again.
+func TestLaunchdAgent_RepairsAnAgentPointingAtAnotherBinary_REQ_5_5(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	dir := t.TempDir()
+	path := writePlist(t, dir, "/private/var/folders/go-build123/b001/cmd.test")
+	lc := &launchctlCalls{loaded: true}
+
+	installLaunchdAgent(app.App, dir, "/opt/homebrew/bin/avr", lc.run)
+
+	if got := readPlist(t, path); got != launchdPlistContent("/opt/homebrew/bin/avr") {
+		t.Errorf("the plist still points elsewhere:\n%s", got)
+	}
+	want := []string{"list " + launchdLabel, "unload " + path, "load " + path}
+	if strings.Join(lc.calls, "|") != strings.Join(want, "|") {
+		t.Errorf("launchctl calls = %q, want %q", lc.calls, want)
+	}
+	if strings.Contains(app.err.String(), "installed a background idle-check") {
+		t.Error("repairing an agent announced it again, as though it were new")
+	}
+}
+
+// An agent the user unloaded is left unloaded when it is repaired: the file is
+// corrected so a later login runs the right binary, but avar does not turn back
+// on something the user turned off.
+func TestLaunchdAgent_RepairsWithoutReloadingAnAgentTheUserUnloaded_REQ_5_5(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	dir := t.TempDir()
+	path := writePlist(t, dir, "/opt/homebrew/Caskroom/avar/0.2.1/avr")
+	lc := &launchctlCalls{loaded: false}
+
+	installLaunchdAgent(app.App, dir, "/opt/homebrew/Caskroom/avar/0.8.0/avr", lc.run)
+
+	if got := readPlist(t, path); got != launchdPlistContent("/opt/homebrew/Caskroom/avar/0.8.0/avr") {
+		t.Errorf("the plist was not corrected:\n%s", got)
+	}
+	for _, call := range lc.calls {
+		if strings.HasPrefix(call, "load") {
+			t.Errorf("reloaded an agent the user had unloaded: %q", lc.calls)
+		}
+	}
+}
+
+// REQ-17.1: this runs on every `avr`, warm or cold, so an agent that is already
+// right costs one read and no launchctl at all.
+func TestLaunchdAgent_LeavesACurrentAgentAlone_REQ_17_1(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	dir := t.TempDir()
+	writePlist(t, dir, "/opt/homebrew/bin/avr")
+	lc := &launchctlCalls{loaded: true}
+
+	installLaunchdAgent(app.App, dir, "/opt/homebrew/bin/avr", lc.run)
+
+	if len(lc.calls) != 0 {
+		t.Errorf("launchctl was run for an agent that was already current: %q", lc.calls)
+	}
+}
+
+// The first installation writes, loads, and says what it did, once.
+func TestLaunchdAgent_InstallsAndAnnouncesTheFirstTime_REQ_5_5(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	dir := filepath.Join(t.TempDir(), "LaunchAgents")
+	lc := &launchctlCalls{}
+
+	installLaunchdAgent(app.App, dir, "/opt/homebrew/bin/avr", lc.run)
+
+	path := filepath.Join(dir, launchdPlist)
+	if got := readPlist(t, path); got != launchdPlistContent("/opt/homebrew/bin/avr") {
+		t.Errorf("the plist is not the expected agent:\n%s", got)
+	}
+	if strings.Join(lc.calls, "|") != "load "+path {
+		t.Errorf("launchctl calls = %q, want only a load", lc.calls)
+	}
+	if !strings.Contains(app.err.String(), "installed a background idle-check") {
+		t.Error("the first installation did not tell the user")
 	}
 }
