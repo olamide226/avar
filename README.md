@@ -51,9 +51,10 @@ winget install olamide226.avar
 ```
 
 winget picks the build for your processor and puts `avr` on your `PATH`; open a
-new terminal afterwards so it is found. A new release reaches winget once
-Microsoft has reviewed and merged it, usually within a day or two of appearing
-on the [releases page](https://github.com/olamide226/avar/releases). To skip
+new terminal afterwards so it is found. winget receives each minor release
+(x.y.0) once Microsoft has reviewed and merged it, usually within a day or two
+of it appearing on the [releases page](https://github.com/olamide226/avar/releases),
+so it can trail the newest patch release. To skip
 the wait, download the `windows_amd64` or `windows_arm64` archive from there,
 unzip it, and put `avr.exe` somewhere on your `PATH`.
 
