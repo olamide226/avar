@@ -47,6 +47,16 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 		return err
 	}
 
+	// Like --env-file, --native-fs on a backend that has no native workspace
+	// is refused before any machine work: it is a flag with nothing to do, and
+	// saying so after a boot or a first provision would make the user wait
+	// minutes for the answer.
+	if inv.NativeFS {
+		if _, err := nativeWorkspacer(p); err != nil {
+			return err
+		}
+	}
+
 	// Provisioning is the one slow thing a user waits through, and the only
 	// part of this path that may be interrupted. An interactive session must
 	// not be: once the guest holds the terminal, Ctrl-C belongs to it

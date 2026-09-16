@@ -304,7 +304,6 @@ Nothing in this section exists. Each item is specified or sketched; none of it i
 implemented, and there are no dates.
 
 - `.avr.toml` and `avr init`, `avr ports` and `avr open`, and more editors.
-- Further backends behind the provider interface.
 
 ## Development
 

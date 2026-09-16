@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/olamide226/avar/internal/cli"
+	"github.com/olamide226/avar/internal/provider"
 	"github.com/olamide226/avar/internal/provider/fake"
 	"github.com/olamide226/avar/internal/types"
 )
@@ -281,6 +282,33 @@ func TestSync_SaysWhenThereIsNoWorkspaceYet_REQ_14_1(t *testing.T) {
 	}
 	if f.Count(fake.OpApplyNativeWorkspace) != 0 {
 		t.Error("`avr sync` created a native copy the user did not ask for")
+	}
+}
+
+// directProvider is a backend that reaches the project directly and so has no
+// Linux-native workspace: the Fake with its NativeWorkspacer methods hidden, the
+// way the Lima backend presents itself to the command layer.
+type directProvider struct{ provider.Provider }
+
+// REQ-14.4: on a backend that reaches the project without crossing a filesystem
+// boundary, `avr --native-fs` says the flag is unnecessary before doing any
+// machine work. Refusing after a boot, or worse a first provision, would make
+// the user wait minutes to be told there was nothing to do.
+func TestNativeFS_RefusesBeforeMachineWorkWhereUnnecessary_REQ_14_4(t *testing.T) {
+	f := fake.New()
+	app := newTestApp(t, directProvider{f})
+
+	err := runGuest(context.Background(), app.App, nativeInvocation("true"))
+	if err == nil {
+		t.Fatal("`avr --native-fs true` succeeded on a backend with no native workspace")
+	}
+	if !strings.Contains(err.Error(), "without --native-fs") {
+		t.Errorf("the error does not say the flag is unnecessary: %v", err)
+	}
+	for _, op := range []fake.Op{fake.OpEnsureMachine, fake.OpSetMounts, fake.OpShell, fake.OpApplyNativeWorkspace} {
+		if n := f.Count(op); n != 0 {
+			t.Errorf("%s was called %d time(s) before the refusal, want none", op, n)
+		}
 	}
 }
 

@@ -285,6 +285,8 @@ unaffected and works on every environment.
 
 14.3 IF host and guest copies have conflicting changes THEN THE system SHALL surface the conflict and never silently overwrite either side.
 
+14.4 WHERE the selected environment reaches the project without crossing a filesystem boundary (a Lima machine's VirtioFS share does) THE CLI SHALL NOT keep a Linux-native copy: `avr --native-fs` and `avr sync` SHALL say that the environment already reaches the project directly and that the flag is unnecessary, and SHALL do so before starting, provisioning, or changing any environment.
+
 ### Requirement 15: Optional Project Configuration and Detection — *Post-MVP*
 
 **User Story:** As a team member, I want an optional tiny config file and an `avr init` that proposes an environment from my project's manifests, so that teams get reproducibility without avar ever requiring configuration.

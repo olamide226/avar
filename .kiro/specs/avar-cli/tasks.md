@@ -203,7 +203,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
 
 ## Phase 3 — Post-MVP
 
-- [ ] 21. Linux-native workspace mode (`--native-fs`)
+- [x] 21. Linux-native workspace mode (`--native-fs`)  _(21.1 shipped; 21.2 retired)_
   - Project sync into guest `~/workspaces/<project>` (Lima `--sync` substrate), reviewable sync-back, conflict surfacing without silent overwrite
   - _Requirements: 14.1, 14.2, 14.3_
   - _writes: internal/workspace/native.go, cmd/root.go, e2e/nativefs_test.go_
@@ -217,10 +217,12 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
     - _Properties: 22_
     - _writes: internal/workspace/native.go, internal/types/workspace.go, internal/provider/provider.go, internal/provider/wsl2/native.go, internal/provider/fake/native.go, cmd/native.go, cmd/root.go, internal/cli/grammar.go, internal/workspace/advise.go, e2e/nativefs_test.go, .kiro/specs/avar-cli/design.md_
 
-  - [ ] 21.2 The Lima implementation
-    - Only the three `NativeWorkspacer` methods; nothing above the Provider boundary changes, which is the claim 21.1's shape was built to make good on. Lima's `--sync` is the substrate the original task description names.
-    - _Requirements: 14.1, 14.2, 14.3_
-    - _writes: internal/provider/lima/native.go, + tests_
+  - 21.2 The Lima implementation: **retired, not built** (2026-09-16)
+    - Native workspace mode fixes a cost that Lima does not have. WSL reaches a Windows directory through a translation layer, so a dependency-heavy command pays on every file operation; a Lima machine shares the project over VirtioFS at native speed. A second copy on Lima would bring the divergence Requirement 14 exists to manage and none of the speed that justifies it.
+    - What replaces it is REQ-14.4: on a backend that reaches the project directly, `--native-fs` says the flag is unnecessary, and says so **before any machine work**. Checking what that path did turned up a defect. `avr --native-fs` booted, or even provisioned, the environment before refusing, so a user could wait minutes for the answer. The shell path now refuses first. `avr --native-fs code` still has the old ordering and is fixed once task 24's rewrite of `cmd/code.go` lands, to avoid conflicting with it. `avr sync` already refused first.
+    - The shape 21.1 was built for still holds: a future backend with a filesystem boundary implements the three `NativeWorkspacer` methods and nothing above the Provider boundary changes.
+    - _Requirements: 14.4_
+    - _writes: cmd/shell.go, cmd/native_test.go_
 
 - [ ] 22. `.avr.toml` support and `avr init` detection
   - Config schema (distro/arch/cpus/memory/packages/forward_env) applied at resolve time; manifest scanners (package.json, pyproject.toml, go.mod, Cargo.toml, Dockerfile, docker-compose.yml, .tool-versions, mise.toml); confirm-before-write proposal UX; zero-config path unchanged
@@ -236,12 +238,15 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 13.x pattern_
   - _writes: internal/editor/cursor.go, internal/editor/zed.go, cmd/code.go_
 
-- [ ] 25. Second provider (OrbStack or SSH) behind the Provider interface
+- [x] 25. Second provider (OrbStack or SSH) behind the Provider interface  _(retired: satisfied by the WSL2Provider, Phase 4)_
   - Proves 17.3: no command-layer changes permitted by the task's definition of done
+  - **Retired 2026-09-16 rather than built.** The second backend exists: Phase 4's WSL2Provider. It shows what this task set out to show, with one honest qualification. Phase 4 did change `cmd/`, but for Windows host concerns (the Task Scheduler branch in `cmd/internal_idle.go`) and for new capabilities (`avr sync`), not to branch on a backend. The one backend branch that did creep in (`cmd/shell.go` testing `ProviderWSL2`) was removed in task 38b. After that, `cmd/app.go`, the composition root, is the only file in `cmd/` that names a backend. Task 39 turns that from a reviewer's observation into a test.
+  - OrbStack, SSH, and cloud providers are unplanned, not rejected. Any of them needs its own requirement first.
   - _Requirements: 17.3_
-  - _writes: internal/provider/orbstack/*_
+  - _writes: none_
 
-- [ ] 26. VS Code extension: terminal profile picker invoking `avr`
+- 26. VS Code extension: terminal profile picker invoking `avr`: **deferred to the backlog** (2026-09-16)
+  - It has no EARS requirement, and publishing it needs a VS Code Marketplace publisher account. Write the requirement before planning any work. Until then it is not on the roadmap and not part of finishing this spec.
   - _Requirements: (product backlog — no EARS requirement yet; spec before build)_
   - _writes: editors/vscode-extension/*_
 
