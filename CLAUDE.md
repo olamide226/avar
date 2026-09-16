@@ -1,9 +1,9 @@
 # CLAUDE.md — working agreement for the avar repository
 
 avar is a zero-configuration, directory-centric Linux shell environment switcher for
-macOS, shipped as a single Go binary named `avr`. It is a thin UX layer over
-[Lima](https://lima-vm.io); it is **not** a Docker wrapper, a Dev Container
-implementation, or a VM manager.
+macOS and Windows, shipped as a single Go binary named `avr`. It is a thin UX layer
+over [Lima](https://lima-vm.io) on macOS and WSL 2 on Windows; it is **not** a Docker
+wrapper, a Dev Container implementation, or a VM manager.
 
 The product rule every decision answers to:
 
@@ -64,8 +64,8 @@ repeating it would cost real time or ship a real defect.
 
 **Design.** Follow the interfaces in `design.md` §3. The `Provider` interface is a
 hard boundary: nothing in `cmd/` or `internal/resolve` may reference Lima, `limactl`,
-or any backend concept (REQ-17.3) — a second backend must be addable without touching
-command-layer code. Dependencies point inward toward `internal/types`, which holds
+WSL, or any backend concept (REQ-17.3) — another backend must be addable without
+touching command-layer code. Dependencies point inward toward `internal/types`, which holds
 shared vocabulary and never imports another avar package.
 
 **Separation of concerns.** `cmd/` owns every byte of user-facing output; packages
@@ -113,8 +113,9 @@ Three layers, per `design.md` §7:
 - **Unit** — pure logic, table-driven, no VMs. Runs in CI on every push.
 - **Integration** — command flows against the in-process `FakeProvider`, asserting the
   sequence of provider calls. No VMs. Runs in CI.
-- **E2E** — real Lima, behind the `e2e` build tag and `make e2e`. Requires macOS with
-  virtualization and `limactl` installed. Not part of default CI.
+- **E2E** — the host's real backend, behind the `e2e` build tag and `make e2e`: Lima on
+  macOS (virtualization and `limactl` required, not in CI), WSL 2 on Windows (nightly
+  and on-demand in CI).
 
 Write the test that proves the acceptance criterion, not the test that mirrors the
 implementation. Every bug fix starts with a failing test.
@@ -123,7 +124,7 @@ implementation. Every bug fix starts with a failing test.
 make build    # compile avr
 make test     # unit + integration
 make lint     # gofmt check + go vet
-make e2e      # real-Lima end-to-end (macOS + Lima required)
+make e2e      # end-to-end against Lima (macOS) or WSL 2 (Windows)
 ```
 
 ## Git and pull requests
@@ -179,11 +180,13 @@ internal/types/             Shared vocabulary: selectors, records, progress cont
 internal/cli/               Argv grammar: selector flags vs subcommand vs guest command
 internal/state/             ~/.avr state store: atomic writes, locking, reconciliation
 internal/resolve/           (cwd, flags, state) -> target machine; the distro/arch matrix
-internal/deps/              Lima detection, version gate, brew install offer
+internal/deps/              Lima and WSL detection, version gates, install offers
 internal/provider/          Provider interface (backend-agnostic)
 internal/provider/fake/     Test double recording provider calls
-internal/provider/lima/     LimaProvider: the only real backend
+internal/provider/lima/     LimaProvider: the macOS backend
+internal/provider/wsl2/     WSL2Provider: the Windows backend
+internal/workspace/         Linux-native workspace copies and sync
 internal/envpolicy/         What crosses into the guest environment
-e2e/                        Real-Lima tests, build tag `e2e`
+e2e/                        Real-backend tests (Lima, WSL 2), build tag `e2e`
 .kiro/specs/avar-cli/       The spec
 ```
