@@ -68,21 +68,27 @@ func runIdleCheck(ctx context.Context, app *App) error {
 	if err != nil {
 		return err
 	}
-	running := make(map[string]bool, len(statuses))
+	// A stopped environment is asked to stop as well. Stop converges on
+	// stopped rather than performing a shutdown, and a backend can leave
+	// processes running after the machine itself has stopped: converging is
+	// what releases them, and without it only an explicit `avr stop` ever
+	// would. A machine coming up, broken, or in a state avar has no word for is
+	// left alone, as `avr stop --all` leaves it.
+	stoppable := make(map[string]bool, len(statuses))
 	for _, s := range statuses {
-		if s.State == types.StateRunning {
-			running[s.Name] = true
+		if s.State == types.StateRunning || s.State == types.StateStopped {
+			stoppable[s.Name] = true
 		}
 	}
 
 	for _, name := range idle {
-		if !running[name] {
+		if !stoppable[name] {
 			continue
 		}
 		// Stop is best-effort: a failure leaves the machine running, and
 		// the next idle-check will try again. A machine that disappeared
 		// between the listing and the stop is the state we wanted.
-		if err := p.Stop(ctx, name, types.DiscardProgress); err != nil {
+		if err := p.Stop(ctx, name, stopProgress(app.Err)); err != nil {
 			// Logging this would require a logger; the next check
 			// retries, and `avr status` shows the running machine.
 			continue

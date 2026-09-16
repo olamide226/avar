@@ -168,6 +168,9 @@ type machine struct {
 	// foreign marks a machine avar does not own, seeded only by
 	// AddForeignMachine.
 	foreign bool
+	// stopWarning, when set, is reported as a warning every time the machine
+	// is asked to stop, running or not. See SetStopWarning.
+	stopWarning string
 }
 
 // snapshotEpoch is the base for synthesised snapshot timestamps. Snapshots are
@@ -311,6 +314,19 @@ func (f *Fake) SetMachineState(name string, state types.MachineState) {
 		panic(fmt.Sprintf("fake.SetMachineState: %s was never added", name))
 	}
 	m.state = state
+}
+
+// SetStopWarning makes Stop report a warning for a machine whether or not it
+// was running, standing in for a backend that has to clean something up on the
+// way to stopped and says so. It panics if the machine was never added.
+func (f *Fake) SetStopWarning(name, message string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.machines[name]
+	if !ok {
+		panic(fmt.Sprintf("fake.SetStopWarning: %s was never added", name))
+	}
+	m.stopWarning = message
 }
 
 // SetSnapshots programs the snapshots a machine holds. It panics if the machine
@@ -667,6 +683,9 @@ func (f *Fake) stop(ctx context.Context, name string, progress types.ProgressSin
 	m, err := f.owned(name)
 	if err != nil {
 		return err
+	}
+	if m.stopWarning != "" {
+		f.emit(progress, types.ProgressEvent{Kind: types.ProgressWarning, Machine: name, Message: m.stopWarning})
 	}
 	if m.state != types.StateRunning {
 		return nil
