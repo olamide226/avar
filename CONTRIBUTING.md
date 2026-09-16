@@ -79,13 +79,16 @@ its task's manifest, that is allowed — say so in the PR body.
 
 You need:
 
-- **macOS.** It is the only supported host platform today (Windows via WSL 2 is
-  Requirement 18 and not started). Unit and integration tests run on macOS in CI.
+- **macOS or Windows.** Both are supported hosts: macOS through Lima, Windows 11
+  through WSL 2 (Requirement 18). Unit and integration tests run on both in CI.
+  The Makefile is a POSIX shell script, so on Windows either run it from a shell
+  that has `make`, or call the Go tool directly as the Windows CI job does.
 - **Go**, at the version in [`go.mod`](go.mod) — currently 1.23. CI pins itself to
   that file, so the toolchain you build with matches the one that reviews you.
-- **[Lima](https://lima-vm.io) 2.0.0 or newer**, but only for end-to-end tests and for
-  running `avr` against real machines. `make test` needs no VM and no Lima. The
-  minimum version lives in one place, `internal/deps.MinLimaVersion`.
+- **The host's backend**, but only for end-to-end tests and for running `avr` against
+  real environments: [Lima](https://lima-vm.io) 2.0.0 or newer on macOS, WSL 2.0.0 or
+  newer on Windows. `make test` needs neither. The minimum versions live in one place
+  each, `internal/deps.MinLimaVersion` and `internal/deps.MinWSLVersion`.
 
 Then, once per clone:
 
@@ -107,13 +110,15 @@ make test         # unit + integration, with -race
 make lint         # gofmt -s check plus go vet
 make tidy-check   # go mod tidy -diff — fails if go.mod/go.sum are stale
 make cover        # test with a coverage profile, prints the total
-make e2e          # real-Lima end-to-end tests (see below)
+make e2e          # end-to-end tests against the real backend (see below)
 make hooks        # install the pre-push hook
 make clean        # remove bin/ and coverage.out
 ```
 
-CI runs `make lint`, `make tidy-check`, `make build`, and `make test` on macOS. It
-does not run `make e2e`.
+CI runs `make lint`, `make tidy-check`, `make build`, and `make test` on macOS, and
+the equivalent format check, vet, build, and test on Windows. The Lima end-to-end
+suite is not in CI; the WSL one runs nightly and on demand (`workflow_dispatch`),
+never per push.
 
 ## Testing
 
@@ -129,9 +134,15 @@ layer is deliberately free of I/O so it can be exhaustive and fast.
 First run, mount-add, `stop --all`, isolation being remembered, reset scoping. No VMs
 here either, so these run in CI on every push.
 
-**End-to-end** — real Lima, behind the `e2e` build tag, run with `make e2e`. These
-provision actual virtual machines: they need macOS with virtualization and `limactl`
-installed, they are **not** part of default CI, and a full run takes on the order of
+**End-to-end** — the real backend for the host, behind the `e2e` build tag, run with
+`make e2e`. On Windows they exercise WSL 2: they need WSL installed (and skip with a
+reason if it is not), take a minute or two locally, and run in CI nightly. Touching
+the WSL provider, path mapping, or the Windows shell path means running them, or
+triggering the CI job, before submitting.
+
+On macOS they exercise Lima and
+provision actual virtual machines: they need virtualization and `limactl`
+installed, they are **not** part of CI, and a full run takes on the order of
 twelve minutes (individual tests allow up to fifteen minutes for a cold provision, and
 the target's overall timeout is thirty). Run them before submitting anything that
 touches the Lima provider, mounting, ports, or the shell path. If you cannot run them,
@@ -253,11 +264,11 @@ Open a GitHub issue with:
 - **`avr status` output.** This is the single most useful thing in a report: it shows
   which environments exist, what they cost, and what is forwarded.
 - **`avr --version`**, or the commit you built from.
-- **Your macOS version** (`sw_vers -productVersion`) and **architecture**
+- **Your host.** On macOS, the version (`sw_vers -productVersion`) and architecture
   (`uname -m`) — Apple Silicon and Intel take different paths, as do native and
-  emulated environments.
-- **Your Lima version** (`limactl --version`). Several past defects were version
-  behaviour, not avar behaviour.
+  emulated environments. On Windows, the build (`winver`) and architecture.
+- **Your backend version** — `limactl --version` on macOS, `wsl --version` on
+  Windows. Several past defects were version behaviour, not avar behaviour.
 
 If the problem involves a guest environment, say which selector it was: distro, arch,
 and whether it was `--isolate`d.

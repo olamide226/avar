@@ -26,8 +26,9 @@ Semantic Versioning, so it advances `v0.1.0` to `v1.0.0`.
 1. Waits for the existing macOS CI workflow to pass on `main`.
 2. Checks out the exact commit CI tested and calculates the next version.
 3. Creates the release tag, refusing to overwrite an existing tag.
-4. Runs GoReleaser to build the universal macOS archive, publish the GitHub
-   release, and update `olamide226/homebrew-tap/Casks/avar.rb`.
+4. Runs GoReleaser to build the universal macOS archive and the
+   `windows_amd64` and `windows_arm64` archives, publish the GitHub release, and
+   update `olamide226/homebrew-tap/Casks/avar.rb`.
 
 The workflow uses one job for tagging and publishing because a tag pushed with
 GitHub's default workflow token does not start a second workflow.

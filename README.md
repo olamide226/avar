@@ -4,14 +4,14 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.23%2B-00ADD8.svg)](go.mod)
 
-Run your current directory in Linux.
+Run your current directory in Linux, from macOS or Windows.
 
 ```bash
 cd ~/code/my-project
 
 avr                  # interactive Linux shell, same directory
 avr npm test         # run one command in Linux
-avr --arch amd64     # the same project on x86_64
+avr --arch amd64     # the same project on x86_64 (macOS)
 avr --distro fedora  # the same project on Fedora
 ```
 
@@ -22,6 +22,10 @@ environment you pick.** No machine to name, no mounts to configure, no
 Inside Linux you get the same absolute path you were standing in, your files live
 and writable in both directions, real passwordless `sudo`, packages that persist
 between sessions, and any port you listen on reachable at `localhost` on the host.
+
+The same commands work on both hosts. On macOS the environments are
+[Lima](https://lima-vm.io) virtual machines; on Windows they are WSL 2
+distributions. Which one you are on is avar's problem, not yours.
 
 ## Install
 
@@ -37,14 +41,14 @@ This installs the latest stable release and Lima. Or download the archive for
 your Mac from the [releases page](https://github.com/olamide226/avar/releases)
 and put `avr` somewhere on your `PATH`.
 
+Homebrew installs both `avr` and its `avar` alias; they run the same command.
+The shorter `avr` name remains canonical and is used throughout this guide.
+
 **Windows.** Download the `windows_amd64` or `windows_arm64` archive from the
 [releases page](https://github.com/olamide226/avar/releases), unzip it, and put
 `avr.exe` somewhere on your `PATH`. avar checks for WSL 2 on first run and
 offers to set it up. The binaries are unsigned, so SmartScreen may warn the
 first time.
-
-Homebrew installs both `avr` and its `avar` alias; they run the same command.
-The shorter `avr` name remains canonical and is used throughout this guide.
 
 ## Sixty seconds to a Linux shell
 
@@ -58,12 +62,14 @@ nothing to configure before it and nothing to clean up after it.
 
 What to expect:
 
-- **The first run of a new environment** downloads an OS image and provisions a
-  virtual machine. This is the slow one — minutes, mostly download — and it
-  happens once per distribution and architecture, not once per project.
+- **The first run of a new environment** downloads an OS image and provisions it:
+  a virtual machine on macOS, a WSL distribution on Windows. This is the slow
+  one — minutes, mostly download — and it happens once per distribution and
+  architecture, not once per project.
 - **The first visit to a new project directory** shares that directory into the
-  environment, which needs a one-time restart of about ten seconds. Returning to
-  the project later costs nothing.
+  environment. On macOS that needs a one-time restart of about ten seconds; on
+  Windows it is a mount and costs milliseconds. Returning to the project later
+  costs nothing.
 - **Starting a stopped environment** takes roughly ten to fifteen seconds
   (11.2 s and 12.7 s measured on an M-series Mac, Lima 2.2.0).
 - **Every invocation after that** attaches to the running environment in about
@@ -197,10 +203,19 @@ Nothing else: `avr` is a single self-contained Go binary.
 
 ## How it works
 
-avar is a thin, opinionated layer over [Lima](https://lima-vm.io) (Apache-2.0,
-CNCF incubating), which supplies the virtual machines, VirtioFS file sharing, and
-automatic port forwarding. avar's contribution is the mental model: it maps your
-current directory and a chosen environment onto a machine, a mount, and a working
+avar is a thin, opinionated layer over the Linux environment each host already
+knows how to run:
+
+- **macOS:** [Lima](https://lima-vm.io) (Apache-2.0, CNCF incubating), which
+  supplies the virtual machines, VirtioFS file sharing, and automatic port
+  forwarding.
+- **Windows:** WSL 2, where each environment is a distribution avar registers
+  and owns, projects are DrvFS mounts, and ports reach the host through WSL's
+  localhost forwarding.
+
+Both sit behind one provider interface, so the command layer never knows which
+it is talking to. avar's contribution is the mental model: it maps your current
+directory and a chosen environment onto a machine, a mount, and a working
 directory, so that you never have to name any of the three.
 
 ## Limitations
@@ -278,11 +293,8 @@ scope.
 Nothing in this section exists. Each item is specified or sketched; none of it is
 implemented, and there are no dates.
 
-- A Linux-native workspace mode, so a project can live on the Linux filesystem
-  and be synchronised rather than shared. On Windows this is what the
-  cross-filesystem notice points at once it is built.
-- `.avr.toml` and `avr init`, `avr ports` and `avr open`, more editors, and a
-  second backend behind the provider interface.
+- `.avr.toml` and `avr init`, `avr ports` and `avr open`, and more editors.
+- Further backends behind the provider interface.
 
 ## Development
 
@@ -290,8 +302,12 @@ implemented, and there are no dates.
 make build   # compile ./bin/avr
 make test    # unit and integration tests
 make lint    # gofmt -s and go vet
-make e2e     # real-Lima end-to-end tests (needs macOS and limactl)
+make e2e     # end-to-end tests against the host's real backend
 ```
+
+`make e2e` runs against Lima on macOS (needs `limactl` and virtualization) and
+against WSL 2 on Windows. CI runs lint, build, and tests on both hosts, and the
+WSL end-to-end suite nightly.
 
 avar is built spec-first. The requirements, design, and phased plan live in
 [`.kiro/specs/avar-cli/`](.kiro/specs/avar-cli/) and are the source of truth;

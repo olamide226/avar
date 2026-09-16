@@ -2,7 +2,7 @@
 
 ## Introduction
 
-avar is a zero-configuration, directory-centric shell environment switcher. The MVP targets macOS; post-MVP Windows support uses WSL 2 as a native provider rather than introducing another virtualization runtime. It lets a developer stand in any project directory and drop into a complete Linux environment — same project context, real `sudo`, persistent packages, automatic port forwarding — as easily as opening another shell tab:
+avar is a zero-configuration, directory-centric shell environment switcher. It runs on macOS and Windows; Windows support uses WSL 2 as a native provider rather than introducing another virtualization runtime. It lets a developer stand in any project directory and drop into a complete Linux environment — same project context, real `sudo`, persistent packages, automatic port forwarding — as easily as opening another shell tab:
 
 ```bash
 cd ~/code/my-project
@@ -12,17 +12,17 @@ avr --arch amd64     # same, but x86_64
 avr --distro fedora  # same, but Fedora
 ```
 
-On macOS, avar is a thin product/UX layer over [Lima](https://lima-vm.io) (Apache 2.0, CNCF incubating). On Windows, the post-MVP WSL2Provider supplies the same product contract over WSL 2. avar deliberately hides each backend's machine- or distribution-centric model: the user never needs to name a VM or WSL distribution, write a mount stanza, edit backend configuration, or configure SSH. The **current directory plus the selected operating environment** is the entire mental model.
+On macOS, avar is a thin product/UX layer over [Lima](https://lima-vm.io) (Apache 2.0, CNCF incubating). On Windows, the WSL2Provider supplies the same product contract over WSL 2. avar deliberately hides each backend's machine- or distribution-centric model: the user never needs to name a VM or WSL distribution, write a mount stanza, edit backend configuration, or configure SSH. The **current directory plus the selected operating environment** is the entire mental model.
 
 avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or a VM manager. It competes on the mental model, not on virtualization.
 
-**Scope phases** (traceability for tasks): Requirements 1–9 are **MVP Phase 1**, Requirements 10–13 are **MVP Phase 2**, Requirements 14–16 and 18 are **Post-MVP**. Requirement 17 (non-functional) applies to all phases.
+**Scope phases** (traceability for tasks): Requirements 1–9 are **MVP Phase 1**, Requirements 10–13 are **MVP Phase 2**, Requirements 14–16 and 18 are **Post-MVP**. Requirement 17 (non-functional) applies to all phases. These labels record delivery order, not current support: the MVP has shipped, and so has Windows host support (Requirement 18).
 
 ## Glossary
 
 - **avar**: The product name.
 - **avr**: The CLI binary name (`avr --help`).
-- **Host**: The user's supported macOS or Windows system. MVP host requirements remain macOS-only.
+- **Host**: The user's supported macOS or Windows system (Requirement 17.6).
 - **Windows_Host**: A supported Windows system running WSL 2.
 - **Guest**: A Linux environment managed by avar.
 - **Machine**: A Lima VM instance managed by avar. avar names, creates, and selects machines internally; machine identity is never required in the default UX.
@@ -33,7 +33,7 @@ avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or 
 - **Project_Identity**: A stable identifier for a project, derived from the SHA-256 hash of the project's resolved absolute path (symlinks resolved).
 - **Live_Mount**: The default file-sharing mode — the host project directory is mounted writable inside the guest at the identical absolute path on macOS, or exposed at its canonical WSL path on Windows.
 - **Environment_Selector**: The (distro, arch, isolation) triple that determines which machine a command targets.
-- **Provider**: The backend that implements environment lifecycle and execution operations. The only MVP provider is Lima; WSL2Provider is a post-MVP Windows provider.
+- **Provider**: The backend that implements environment lifecycle and execution operations. LimaProvider serves macOS hosts and WSL2Provider serves Windows hosts.
 - **State_Dir**: avar's private metadata directory on the host (`~/.avr/` on macOS; a platform-appropriate per-user application-data directory on Windows) containing project records, environment registry, generated connection configuration, and logs.
 - **Idle_Timeout**: The period with no active avar sessions after which a machine is automatically stopped.
 
@@ -321,7 +321,7 @@ unaffected and works on every environment.
 
 17.5 **Crash consistency**: IF avar is killed mid-operation THEN a subsequent invocation SHALL detect and recover or clean up partial state (no wedged "unknown" machines requiring manual Lima surgery).
 
-17.6 **Host platform**: MVP SHALL support macOS 13+ on Apple Silicon and Intel. Linux hosts, Windows, GUIs, cloud/remote environments, team policies, and Kubernetes are explicitly out of scope for MVP.
+17.6 **Host platform**: avar SHALL support macOS 13+ on Apple Silicon and Intel through Lima, and Windows 11 22H2+ on x64 and Arm64 through WSL 2 (Requirement 18). Linux hosts, Windows 10, Windows Server, GUIs, cloud/remote environments, team policies, and Kubernetes are explicitly out of scope.
 
 ### Requirement 18: Windows Host Support via WSL 2 — *Post-MVP*
 
