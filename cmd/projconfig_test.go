@@ -18,9 +18,8 @@ import (
 // Flow tests for a project's .avr.toml: the real command code, run from inside
 // a real project directory, against the in-process FakeProvider.
 
-// projectTest is a command run from its own project directory, with a Fake, an
-// App wired to it, and a home directory of its own so that creating an
-// environment never installs the idle-check agent into the real session.
+// projectTest is a command run from its own project directory, with a Fake and
+// an App wired to it.
 type projectTest struct {
 	*testApp
 	f   *fake.Fake
@@ -30,19 +29,9 @@ type projectTest struct {
 func newProjectTest(t *testing.T, avrToml string) *projectTest {
 	t.Helper()
 	f := fake.New()
+	// newTestApp already keeps environment creation off the host's scheduler.
 	app := newTestApp(t, f)
 	app.Stdin = strings.NewReader("")
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	agents := filepath.Join(home, "Library", "LaunchAgents")
-	if err := os.MkdirAll(agents, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(agents, launchdPlist), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
