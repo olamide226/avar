@@ -209,6 +209,28 @@ Each distinct environment gets its own machine, and projects share it unless you
 ask otherwise. `avr` and `avr --distro fedora` in the same directory are two
 environments over the same files.
 
+### Pinning a project's environment
+
+avar needs no configuration, and a project without any behaves exactly as
+described above. A team that wants everyone on the same environment can commit
+a `.avr.toml` to the project directory:
+
+```toml
+distro = "fedora"   # ubuntu, debian or fedora, optionally "fedora:43"
+arch = "amd64"      # arm64 or amd64
+```
+
+Both keys are optional and mean exactly what `--distro` and `--arch` mean. Every
+command that picks "this environment" (`avr`, `stop`, `reset`, `code`, and the
+rest) uses the file. A flag you type still wins, and so does anything avar
+already remembers for the project on your machine.
+
+avar reads the file only from the project directory itself, the directory you
+first ran `avr` in (or that directory's project, if you are in a subdirectory),
+and never from a parent. The reader is strict: a key it does not know, or TOML it
+does not support, stops the command with the line and the reason, rather than
+applying half the file.
+
 ## Requirements
 
 One of:
@@ -338,7 +360,8 @@ scope.
 Nothing in this section exists. Each item is specified or sketched; none of it is
 implemented, and there are no dates.
 
-- `.avr.toml` and `avr init`.
+- The rest of `.avr.toml` (`cpus`, `memory`, `packages`, `forward_env`) and
+  `avr init`.
 
 ## Development
 

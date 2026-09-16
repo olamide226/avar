@@ -12,6 +12,7 @@ import (
 	"github.com/olamide226/avar/internal/browser"
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/deps"
+	"github.com/olamide226/avar/internal/projconfig"
 	"github.com/olamide226/avar/internal/provider"
 	"github.com/olamide226/avar/internal/provider/lima"
 	"github.com/olamide226/avar/internal/provider/wsl2"
@@ -228,8 +229,10 @@ func (a *App) backend(ctx context.Context) (provider.Provider, error) {
 	}
 }
 
-// Resolve maps the current directory and the invocation's selector flags onto
-// the machine this invocation targets.
+// Resolve maps the current directory, the invocation's selector flags, and the
+// project's .avr.toml if it has one, onto the machine this invocation targets.
+// Every command that acts on "this environment" comes through here, which is
+// what makes the file apply to all of them alike (design §3.11).
 func (a *App) Resolve(inv cli.Invocation) (resolve.ResolvedTarget, error) {
 	id, err := provider.HostProviderID()
 	if err != nil {
@@ -246,5 +249,5 @@ func (a *App) Resolve(inv cli.Invocation) (resolve.ResolvedTarget, error) {
 		return resolve.ResolvedTarget{}, err
 	}
 
-	return resolve.Resolve(id, cwd, inv.Selector, store, resolve.Options{})
+	return resolve.Resolve(id, cwd, inv.Selector, store, resolve.Options{ProjectConfig: projconfig.Load})
 }
