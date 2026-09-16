@@ -35,6 +35,20 @@ Semantic Versioning, so it advances `v0.1.0` to `v1.0.0`.
 The workflow uses one job for tagging and publishing because a tag pushed with
 GitHub's default workflow token does not start a second workflow.
 
+## After a release: check the Release run, not the release page
+
+GoReleaser publishes the GitHub release first and the package managers after
+it. When a package manager step fails, the release page, the tag and the
+archives all look finished while the Release workflow is red. From v0.3.0 to
+v0.9.0 every Release run failed that way: the Homebrew tap token returned 401,
+so `brew install` served v0.2.1 for over two weeks. Nothing surfaced it,
+because the CI badge reports CI, not Release.
+
+After a `feat:` or `fix:` merge, open the Release run and confirm it is green.
+If it failed after "release published", do not re-tag. Fix the cause (usually
+a token), and the next release publishes to every channel. The GitHub release
+that already exists is fine as it is.
+
 ## winget
 
 Every stable release pushes manifests for `olamide226.avar` to a branch

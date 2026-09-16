@@ -218,7 +218,13 @@ winget:
       owner: olamide226
       name: winget-pkgs
       branch: "avar-{{ .Version }}"
-      token: '{{ envOrDefault "WINGET_TOKEN" "" }}'
+      # The same form as the Homebrew token, and for a measured reason: a
+      # repository token is templated with fewer functions than other fields.
+      # `envOrDefault` works in skip_upload but failed here on GoReleaser
+      # 2.18.1 ("function not defined"), after the GitHub release had already
+      # been published. The workflow always passes WINGET_TOKEN, empty when the
+      # secret is unset, so the key is always present.
+      token: "{{ .Env.WINGET_TOKEN }}"
       pull_request:
         enabled: true
         base:

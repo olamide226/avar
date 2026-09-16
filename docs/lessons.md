@@ -163,6 +163,23 @@ vacuously. Make that case a failure, as `fmt-check` now does. Prove a new gate
 by feeding it something it must reject, as `cmd/purity_test.go` does with its
 violating fixture, not only by watching it pass on clean code.
 
+### A release that fails after publishing looks like a release
+
+The Release workflow publishes the GitHub release before it updates Homebrew
+and winget. From 1 September the Homebrew tap token returned `401 Bad
+credentials`, so every Release run failed at its last step. The tag,
+the release page and the archives all appeared, so each release looked
+shipped. For over two weeks `brew install --cask olamide226/tap/avar`, the
+README's recommended install, served v0.2.1, including to the maintainer. The
+run that introduced winget failed the same way for a second reason, a template
+function GoReleaser does not offer in token fields. The local snapshot build
+had passed, because a snapshot never evaluates publishing tokens.
+
+A pipeline whose visible output appears before its failure point needs its
+result checked, not its artifacts. And a dry run that skips publishing
+cannot verify anything only publishing evaluates: say so in the PR, as #71
+did, then actually look at the first real run.
+
 ## Specification
 
 ### The spec can be wrong in ways only implementation reveals
