@@ -2,14 +2,14 @@
 #
 # avar ships as a single self-contained binary per host (REQ-17.2, REQ-18.14):
 # a macOS universal binary installable with Homebrew, and an avr.exe archive for
-# each Windows architecture.
+# each Windows architecture, installable with winget (REQ-18.15).
 #
-# The two are packaged differently because their dependency stories are
-# different. Lima is a package Homebrew can install, so the cask declares it and
-# a macOS user never reaches avar's own install prompt (REQ-8.5). WSL is part of
-# Windows and is set up with `wsl --install`, which no package manager can be
-# asked to do on avar's behalf, so the Windows archive carries the binary and
-# avar handles the dependency itself at first run (REQ-18.3).
+# The two declare their backend differently because their dependency stories
+# are different. Lima is a package Homebrew can install, so the cask declares it
+# and a macOS user never reaches avar's own install prompt (REQ-8.5). WSL is part
+# of Windows and is set up with `wsl --install`, which can need elevation and a
+# restart that avar must explain before acting, so the winget package declares
+# no dependency and avar handles WSL itself at first run (REQ-18.3).
 version: 2
 
 project_name: avar
@@ -167,6 +167,65 @@ homebrew_casks:
             system "xattr", "-d", "-r", "com.apple.quarantine", "#{staged_path}/avr"
           end
 
+# The Windows Package Manager. `winget install olamide226.avar` installs the
+# same zip archives the release publishes, as a portable package: winget unpacks
+# the archive for the host's architecture and puts `avr` on the user's PATH.
+#
+# Unlike the Homebrew tap, the repository winget reads is not ours. GoReleaser
+# pushes the manifests to a fork of microsoft/winget-pkgs and opens a pull
+# request against it, so a version reaches `winget install` only once
+# Microsoft's validation has merged that pull request, which takes hours or days
+# rather than seconds.
+#
+# No WSL dependency is declared, though winget carries a Microsoft.WSL package.
+# Installing it needs elevation and would prompt for it mid-install with no
+# explanation, and it does not do everything `wsl --install` does. avar's own
+# first-run check already identifies what is missing and says what it is about
+# to do before doing it (REQ-18.3); a package dependency would bypass exactly
+# that.
+winget:
+  - name: avar
+    package_identifier: olamide226.avar
+    package_name: avar
+    publisher: olamide226
+    publisher_url: https://github.com/olamide226
+    publisher_support_url: https://github.com/olamide226/avar/issues
+    author: Ola Adebayo
+    ids:
+      - avr-windows
+    homepage: https://github.com/olamide226/avar
+    short_description: Run your current directory in Linux
+    description: |
+      avar runs the directory you are standing in inside Linux, with nothing to
+      configure: `avr` opens a Linux shell there, and `avr <command>` runs one
+      command. On Windows each environment is a WSL 2 distribution avar creates
+      and manages; the same commands work on macOS through Lima.
+    license: Apache-2.0
+    license_url: https://github.com/olamide226/avar/blob/main/LICENSE
+    release_notes_url: "https://github.com/olamide226/avar/releases/tag/{{ .Tag }}"
+    installation_notes: avar needs WSL 2. The first time you run `avr` it checks for WSL and offers to set it up, saying before it acts whether that needs administrator approval or a restart.
+    tags:
+      - cli
+      - linux
+      - wsl
+      - developer-tools
+    commit_msg_template: "New version: {{ .PackageIdentifier }} {{ .Version }}"
+    # Until the WINGET_TOKEN secret exists, write the manifests to dist/ and
+    # publish nothing, so a release never fails for want of it. Once it exists,
+    # `auto` still keeps prereleases out of winget.
+    skip_upload: '{{ if isEnvSet "WINGET_TOKEN" }}auto{{ else }}true{{ end }}'
+    repository:
+      owner: olamide226
+      name: winget-pkgs
+      branch: "avar-{{ .Version }}"
+      token: '{{ envOrDefault "WINGET_TOKEN" "" }}'
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
 release:
   github:
     owner: olamide226
@@ -186,8 +245,13 @@ release:
 
     **Windows**
 
-    Download the `windows_amd64` or `windows_arm64` archive below, unzip it, and
-    put `avr.exe` somewhere on your PATH. avar needs WSL 2 and offers to set it
-    up the first time you run it.
+    ```powershell
+    winget install olamide226.avar
+    ```
+
+    A new version reaches winget once Microsoft merges its manifest, which can
+    lag this release by a day or two. Or download the `windows_amd64` or
+    `windows_arm64` archive below, unzip it, and put `avr.exe` somewhere on your
+    PATH. avar needs WSL 2 and offers to set it up the first time you run it.
 
     Binaries are unsigned. Windows SmartScreen may warn on first run.

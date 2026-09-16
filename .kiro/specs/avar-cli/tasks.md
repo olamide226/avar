@@ -353,6 +353,15 @@ here so the phase's history matches what is on `main`.
   - _Properties: 6_
   - _writes: .github/workflows/ci.yml, e2e/wsl_shell_test.go_
 
+- [ ] 42. Publish the Windows build to winget
+  - `winget install olamide226.avar` installs the release's own zip archives as a portable package. GoReleaser's `winget` publisher generates the manifests on every release, pushes them to `olamide226/winget-pkgs` (a fork), and opens a pull request against `microsoft/winget-pkgs`.
+  - **Publishing does not end when the workflow does.** A version reaches `winget install` only after Microsoft's validation merges that pull request, and the first submission also gets a human review. The README says so rather than implying the Homebrew tap's immediacy.
+  - **No `Microsoft.WSL` dependency, though winget carries that package.** Installing it needs elevation and would prompt for it mid-install with nothing explaining why, and it does not do all that `wsl --install` does. REQ-18.3 requires avar to describe elevation or restart before acting, and a package dependency would act first.
+  - **Releases must not fail for want of the token.** `skip_upload` is templated on `WINGET_TOKEN` being set: without it the manifests are written to `dist/winget/` and nothing is submitted. With it, `auto` still keeps prereleases out.
+  - Outside the repository, and required before a submission happens: the `olamide226/winget-pkgs` fork, and a `WINGET_TOKEN` secret (classic PAT, `public_repo`). Done when a stable release's pull request has merged upstream and `winget install olamide226.avar` installs a working `avr`.
+  - _Requirements: 18.15, 18.3, 18.14_
+  - _writes: .goreleaser.yaml, .github/workflows/release.yml, README.md, docs/releasing.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

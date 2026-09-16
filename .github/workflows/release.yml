@@ -79,3 +79,8 @@ jobs:
           # A PAT with contents:write on the tap repository. The default
           # GITHUB_TOKEN cannot push to another repository.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # A classic PAT with public_repo, able to push to olamide226/winget-pkgs
+          # (a fork) and open a pull request on microsoft/winget-pkgs. Optional:
+          # while it is unset, GoReleaser writes the winget manifests to dist/
+          # and publishes nothing, so the release still succeeds.
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
