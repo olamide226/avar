@@ -136,6 +136,7 @@ Linux — whose own flags avar never reads.
 | `avr ports` | The ports the current environment forwards to this computer, and the Linux process listening on each |
 | `avr ports --all` | The same, for every running environment |
 | `avr open <port>` | Open `http://localhost:<port>` in your browser, or say why that port is not forwarded |
+| `avr init` | Propose a `.avr.toml` from the project's manifests, and write it only if you confirm. Installs nothing |
 | `avr version`, `avr help` | Also spelled `--version` and `--help` |
 
 Use `avr help <command>` or `avr <command> --help` for the exact arguments and
@@ -150,7 +151,7 @@ command to run in Linux. So these names belong to avar and will not reach the
 guest:
 
 <!-- reserved-names:begin — checked against cli.Subcommands() by a test; keep both markers -->
-`code` `cursor` `destroy` `help` `internal` `isolate` `open` `ports` `reset` `restore` `snapshot` `status` `stop` `sync` `version` `zed`
+`code` `cursor` `destroy` `help` `init` `internal` `isolate` `open` `ports` `reset` `restore` `snapshot` `status` `stop` `sync` `version` `zed`
 <!-- reserved-names:end -->
 
 (`internal` carries avar's own scheduled idle check and is not a command you run.)
@@ -163,6 +164,7 @@ avr -- sync          # runs the guest's sync(1), or your project's ./sync
 avr -- open file.txt # runs the guest's own open, not avar's
 avr -- status        # runs the guest's own status, not avar's
 avr -- zed           # runs a zed installed inside Linux, not avar's editor command
+avr -- init          # runs a program called init inside Linux, not avr init
 ```
 
 `sync` and `open` are the ones worth knowing about. `sync` is a standard Unix
@@ -181,9 +183,10 @@ Snapshots do not work in every environment — see [Limitations](#limitations).
 Environment-selection flags come before the guest command or management command
 they select. They affect `avr`, one-shot guest commands, `stop`, `snapshot`,
 `restore`, `reset`, `destroy` (without `--all` or `--orphaned`), `code`, `cursor`,
-`zed`, `ports` (without `--all`), and `open`. `avr status`, `avr stop --all`,
-`avr ports --all`, and the global `destroy` scopes operate across environments
-instead. `avr isolate` changes the current project's remembered
+`zed`, `ports` (without `--all`), and `open`, and they choose what `avr init`
+proposes for. `avr status`, `avr stop --all`, `avr ports --all`, and the global
+`destroy` scopes operate across environments instead. `avr isolate` changes the
+current project's remembered
 default rather than selecting an environment.
 
 | Flag | Meaning |
@@ -247,6 +250,14 @@ The rest are held to the same rule as everything else that crosses into Linux:
   because a file changed. When a size cannot apply, avar says so once. On
   Windows every WSL distribution shares one allocation, so the size cannot be
   set per environment at all.
+
+You do not have to write the file by hand. `avr init` reads the project's
+`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `Dockerfile`,
+`docker-compose.yml`, `.tool-versions` and `mise.toml`, shows you the stack they
+describe and the exact file it would write, and writes it only when you say yes.
+It proposes a distribution and its packages, never a size or a variable to
+forward, and it never replaces an existing `.avr.toml`. Writing the file is not
+an approval: the next `avr` still asks before installing anything.
 
 avar reads the file only from the project directory itself, the directory you
 first ran `avr` in (or that directory's project, if you are in a subdirectory),
@@ -377,13 +388,6 @@ Two things to know:
 
 Linux hosts, cloud and remote environments, and GUI applications are out of
 scope.
-
-### Roadmap
-
-Nothing in this section exists. Each item is specified or sketched; none of it is
-implemented, and there are no dates.
-
-- `avr init`.
 
 ## Development
 
