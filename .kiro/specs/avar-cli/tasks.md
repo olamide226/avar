@@ -189,7 +189,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
     - _Requirements: 17.2_
     - _writes: docs/**, .github/workflows/pages.yml, _config.yml_
 
-- [ ] 41. Harden host-agent reaping, and make `avr stop` say what it did
+- [x] 41. Harden host-agent reaping, and make `avr stop` say what it did  _(PR #78; the QEMU question moves to task 43)_
   - PR #50 made `avr stop` reap the orphaned Lima host agents that a stopped instance can leave behind. The detector is right and was earned from a real leak; the parts around it have three defects, found by review of the merged code rather than by a failure.
   - **A kill race turns a successful stop into a reported failure.** `signalPID` treats `/bin/kill`'s exit status as the verdict (`internal/provider/lima/hostagent.go:82`), and `/bin/kill -TERM <exited pid>` exits 1 with "No such process" — verified. `reapHostAgents` returns that error (`:25`, `:47`) and `stopMachine` wraps it into a failed stop (`internal/provider/lima/lima.go:377`). The window is not narrow: the escalation pass at `:47` sends KILL to pids that received TERM 200 ms earlier, which are exactly the ones most likely to have exited in between, and `avr stop --all` records one `failures` entry per machine it happens to. **The signal's exit status is not the verdict — tolerate "no such process" and let a re-scan decide.**
   - **The constraint on that fix, which is easy to walk into:** `internal/provider/lima` compiles on Windows and must keep doing so (task 38). `hostagent.go` carries no build tag, and `syscall.Kill` does not exist there — the package confines it to `signals_unix.go` for exactly this reason. Either keep `/bin/kill` and ignore its exit status, or split the file on a build tag. Reaching for `syscall.Kill` reintroduces the breakage task 38 fixed.
@@ -231,13 +231,13 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 15.1, 15.2, 15.3, 15.4_
   - _writes: internal/projconfig/config.go, internal/projconfig/detect.go, cmd/init.go, internal/projconfig/detect_test.go_
 
-- [ ] 23. `avr ports` and `avr open`
+- [x] 23. `avr ports` and `avr open`  _(PR #79; Lima e2e run and passing; Windows behaviour in task 43)_
   - Forwarded-port listing with guest process attribution where determinable; `avr open <port>` browser launch with not-forwarded message
   - _Requirements: 16.1, 16.2_
   - _writes: cmd/ports.go, internal/provider/lima/portdiag.go_
   - _also wrote: cmd/{app,root,ports_test}.go, internal/cli/grammar{,_test}.go, internal/provider/provider.go, internal/provider/listeners/* (guest listener script and parser shared by both backends), internal/provider/wsl2/portdiag{,_test}.go, internal/provider/wsl2/wsl2_test.go, internal/provider/lima/{portdiag,runner}_test.go, internal/browser/*, e2e/ports_test.go, README.md, .kiro/specs/avar-cli/design.md_
 
-- [ ] 24. Additional editors (`avr cursor`, `avr zed`) reusing the SSH plumbing
+- [x] 24. Additional editors (`avr cursor`, `avr zed`) reusing the SSH plumbing  _(PR #76, #77; launching the real editors in task 43)_
   - _Requirements: 13.5, 13.6, 13.7, 13.8, 13.9 (criteria added with this task; 13.x pattern)_
   - _writes: internal/editor/cursor.go, internal/editor/zed.go, cmd/code.go_
 
@@ -342,7 +342,7 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 18.3, 18.5, 18.6, 9.3, 1.2, 1.4, 2.5, 5.1, 6.4, 10.3, 17.1_
   - _writes: e2e/{harness,wsl_shell,wsl_prereq,cleanup_darwin}_test.go, e2e/*_test.go (build tags), Makefile, README.md, docs/lessons.md, internal/provider/wsl2/*, internal/deps/wsl.go_
 
-- [ ] 39. Enforce Property 21's provider-purity rule with an actual static check
+- [x] 39. Enforce Property 21's provider-purity rule with an actual static check  _(PR #73)_
   - Property 21 says *"static dependency checks SHALL find no WSL-specific imports outside the WSL provider, Windows dependency checker, platform adapter, scheduler adapter, or Windows-only terminal files"*, and design §7 lists it among the tests. **No such check exists** — grepping for one returns nothing, and the property is enforced today only by a reviewer noticing.
   - That is the shape `docs/lessons.md` already records for `Reconcile`: a thing the spec says happens, that nothing makes happen. It is not hypothetical here — Phase 4 broke this boundary (`cmd/shell.go` branching on `types.ProviderWSL2`), it survived into a merged PR, and task 38b restored it only because a human read the diff.
   - A test in `cmd/` that walks its own package's imports with `go/parser` or `golang.org/x/tools/go/packages` and fails on any `internal/provider/<backend>` import outside the exempt set is enough, and needs no new dependency if the standard library form is used. The exempt set is Property 21's own list; `cmd/app.go` is the composition root and is exempt by design.
@@ -369,6 +369,16 @@ here so the phase's history matches what is on `main`.
   - Outside the repository, and required before a submission happens: the `olamide226/winget-pkgs` fork, and a `WINGET_TOKEN` secret (classic PAT, `public_repo`). Done when a stable release's pull request has merged upstream and `winget install olamide226.avar` installs a working `avr`.
   - _Requirements: 18.15, 18.3, 18.14_
   - _writes: .goreleaser.yaml, .github/workflows/release.yml, README.md, docs/releasing.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md_
+
+- [ ] 43. Verify on real hosts what CI and this Mac could not
+  - These are the unverified items the tasks above left behind, gathered in one place. Their code is merged and unit- or fake-tested. Each item needs a specific host or tool that CI and the development Mac lack, so it goes here rather than keeping a task open.
+  - **Cursor and Zed launching (task 24, REQ-13.5/13.6).** On macOS, check that Cursor ≥ 1.6.26 opens over Remote-SSH at the project path, and that Zed connects over SSH, including a project path containing a space. Also find out whether `zed` returns straight away or waits for the connection. On Windows, check that Cursor opens the Editor Window (not Agent Window) on `wsl+<distro>`, and that `zed --wsl <distro>` connects, including whether Zed's remote-server upload works in avar's distributions with automount disabled. An old Zed without `--wsl` should show its own error to the user. `--wsl` is not in Zed's public CLI reference, so a Zed release could break it.
+  - **`avr open` on Windows (task 23, REQ-16.2).** `ShellExecuteW` has never run on a real Windows host.
+  - **WSL loopback probing (task 23, REQ-18.9).** Listeners bound only to guest loopback are now probed on the strength of Microsoft's `localhostForwarding` documentation, and that has not been measured on real WSL. Add a WSL e2e test for `avr ports` while doing it.
+  - **Emulated Lima machines and the host agent (task 41).** Find out whether killing `limactl hostagent` also ends `qemu-system-*` on an `--arch amd64` machine. It needs a host with QEMU installed. Task 41's own text says how to settle it, and a second detector predicate is only warranted if the process survives.
+  - Tick each item as it is checked, with the host and versions used. A failure found here becomes its own fix task.
+  - _Requirements: 13.5, 13.6, 16.2, 18.9, 5.2_
+  - _writes: e2e/** (tests that capture what was verified), this file_
 
 ## Notes
 
