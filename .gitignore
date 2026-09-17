@@ -3,6 +3,12 @@
 /dist/
 avr
 
+# Documentation site build output and local Ruby bundle
+/site/_site/
+/site/.jekyll-cache/
+/site/.bundle/
+/site/vendor/
+
 # Test and coverage artifacts
 coverage.out
 *.test

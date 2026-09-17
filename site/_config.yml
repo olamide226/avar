@@ -1,0 +1,40 @@
+# Jekyll configuration for the avar documentation site.
+#
+# Built and deployed by .github/workflows/pages.yml, never by GitHub Pages'
+# own branch builder, so the theme is a gem pinned in the Gemfile rather than
+# a remote_theme.
+
+title: avar
+description: Run your current directory in Linux, from macOS or Windows.
+url: https://olamide226.github.io
+# The site is served from the project path, not a custom domain. The workflow
+# builds with this value on pull requests as well as on main, so a pull request
+# renders exactly the links the deployed site will have.
+baseurl: /avar
+
+theme: just-the-docs
+color_scheme: light
+search_enabled: true
+heading_anchors: true
+
+aux_links:
+  avar on GitHub: https://github.com/olamide226/avar
+aux_links_new_tab: false
+
+# The theme's stylesheets use Sass features that Dart Sass now reports as
+# deprecated. Those warnings are about the theme gem, not this site, and would
+# otherwise bury any warning that is.
+sass:
+  quiet_deps: true
+  silence_deprecations:
+    - import
+    - global-builtin
+    - color-functions
+
+# Build tooling and local bundler state are not pages.
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - .bundle
+  - .jekyll-cache

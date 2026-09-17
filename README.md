@@ -27,6 +27,9 @@ The same commands work on both hosts. On macOS the environments are
 [Lima](https://lima-vm.io) virtual machines; on Windows they are WSL 2
 distributions. Which one you are on is avar's problem, not yours.
 
+The [documentation site](https://olamide226.github.io/avar/) has the full
+command reference, configuration, troubleshooting, and environment matrix.
+
 ## Install
 
 **macOS.** Homebrew is the recommended route: the cask installs Lima as a

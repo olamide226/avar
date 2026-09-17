@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/olamide226/avar/internal/resolve"
 	"github.com/olamide226/avar/internal/types"
 )
 
@@ -61,6 +62,22 @@ func TestImages_EverySupportedEnvironmentCoversBothArchitectures(t *testing.T) {
 			if _, ok := images[imageKey{key.distro, key.version, arch}]; !ok {
 				t.Errorf("%s %s has no pinned image for %s", key.distro, key.version, arch)
 			}
+		}
+	}
+}
+
+// Every environment the resolver accepts has an image here. The documentation
+// site's environment matrix is generated from the resolver and states that
+// every row is available on macOS on both architectures; this is what keeps
+// that sentence true.
+func TestImages_CoverEveryEnvironmentTheResolverAccepts_REQ_4_4(t *testing.T) {
+	environments := resolve.SupportedEnvironments()
+	if len(environments) == 0 {
+		t.Fatal("the resolver reports no supported environments, so this test would check nothing")
+	}
+	for _, sel := range environments {
+		if _, err := imageFor(sel); err != nil {
+			t.Errorf("%s: %v", sel.Label(), err)
 		}
 	}
 }
