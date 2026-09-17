@@ -615,9 +615,11 @@ func TestHostCapacity_ReadsTheRealSysctl_REQ_15_5(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HostCapacity on this Mac: %v", err)
 	}
-	// Every Mac avar supports has at least 8 GiB, installed in whole MiB.
-	if got.MemoryBytes < 8<<30 || got.MemoryBytes%(1<<20) != 0 {
-		t.Errorf("memory = %d bytes, which is not a Mac's physical memory", got.MemoryBytes)
+	// Only that sysctl's answer parsed to a size. How much memory a Mac has is
+	// not this test's business: the first version assumed at least 8 GiB, and
+	// the macOS CI runner, a VM, reported 7 GiB.
+	if got.MemoryBytes <= 0 || got.CPUs <= 0 {
+		t.Errorf("HostCapacity on this Mac = %+v, want a positive CPU count and memory size", got)
 	}
 }
 
