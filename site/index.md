@@ -35,10 +35,11 @@ This site holds what does not fit on that page.
 
 | Page | What it covers |
 | --- | --- |
-| [Command reference]({% link commands.md %}) | Every command's help text, generated from `avr help` |
-| [Configuration]({% link configuration.md %}) | How the environment is chosen, `.avr.toml` and its approval model, and `config.toml` |
+| [Commands]({% link commands/index.md %}) | A page per command: its help, examples, exit statuses and errors |
+| [Syntax]({% link syntax/index.md %}) | The command line, `.avr.toml`, `config.toml`, and how they combine |
 | [Environments]({% link environments.md %}) | The distributions, releases and architectures avar runs, on each host |
 | [Platform notes]({% link platforms.md %}) | What Linux can see, the Windows filesystem boundary, `--native-fs` and `avr sync` |
+| [Design decisions]({% link design.md %}) | Why avar works the way it does, and what each choice costs |
 | [Troubleshooting]({% link troubleshooting.md %}) | Common errors, what they mean, and what to do |
 
 ## Contributing

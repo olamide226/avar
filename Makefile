@@ -67,12 +67,13 @@ fmt-check:
 		echo "gofmt -s needed:"; echo "$$unformatted"; exit 1; \
 	fi
 
-# Rewrite the documentation site's generated sections — the command reference
-# and the environment matrix — from avar's help text and the resolver's matrix.
+# Rewrite the documentation site's generated sections (each command's help,
+# the command index, the reserved names, the environment matrix, and what
+# `avr init` reads and proposes) from the code that defines them.
 # `make test` fails when they drift; this is the fix it names.
 .PHONY: docs
 docs:
-	go test ./cmd -run '^TestDocsite_' -count=1 -update
+	go test ./cmd ./internal/projconfig -run '^TestDocsite_' -count=1 -update
 
 .PHONY: tidy-check
 tidy-check:

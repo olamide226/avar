@@ -22,7 +22,7 @@ On both hosts, an environment sees only the project directories you have run
 `avr` in. avar shares each one as you use it, and nothing else: not your home
 directory, not the rest of the disk. Linux gets no host environment variables
 beyond `TERM`, `LANG` and `LC_*`, no credentials, and no SSH agent, unless you
-grant them ([Configuration]({% link configuration.md %}#environment-variables-in-the-guest)).
+grant them ([what crosses into Linux]({% link syntax/index.md %}#what-crosses-into-linux)).
 
 This limits what Linux can read. It is not a sandbox. Treat code you run in
 avar as you would code you run on your own machine.

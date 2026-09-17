@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-nav_order: 6
+nav_order: 7
 ---
 
 # Troubleshooting
@@ -106,7 +106,7 @@ avr: /Users/you/code/app/.avr.toml line 3: unknown key "packges": .avr.toml unde
 
 The reader is strict, and a file it cannot read completely stops the command
 before any machine work. avar never applies part of a file. Fix the line
-the message names; the [reader's rules]({% link configuration.md %}#what-the-reader-accepts)
+the message names; the [reader's rules]({% link syntax/avr-toml.md %}#what-the-reader-accepts)
 list what it accepts.
 
 ### "… which needs your approval first"
@@ -119,7 +119,7 @@ avr: <path>/.avr.toml asks to <install packages or forward variables>, which nee
 The project's file lists `packages` or `forward_env` you have not approved,
 and avar was run without a terminal, so it could not ask. It carried on
 without them. Run `avr` in that directory from a terminal to review and
-approve them. See [the approval model]({% link configuration.md %}#the-approval-model).
+approve them. See [the approval model]({% link syntax/avr-toml.md %}#approval).
 
 ### My cpus or memory setting did nothing
 
@@ -212,7 +212,7 @@ an emulated environment if you need snapshots.
 Environments with no live session stop after two hours, so an environment you
 forgot costs nothing. The next `avr` starts it again. Change the timeout, or
 turn idle stopping off with `"0"`, through `idle_timeout` in
-[config.toml]({% link configuration.md %}#configtoml).
+[config.toml]({% link syntax/config-toml.md %}#idle_timeout).
 
 ## Ports and editors
 

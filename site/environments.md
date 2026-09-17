@@ -9,7 +9,7 @@ nav_order: 4
 An environment is a distribution, a release of it, and a CPU architecture.
 `--distro` and `--arch` choose one for a single invocation, and `distro` and
 `arch` in a project's `.avr.toml` choose one for a project
-([Configuration]({% link configuration.md %})).
+([.avr.toml]({% link syntax/avr-toml.md %})).
 
 1. TOC
 {:toc}
