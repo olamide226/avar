@@ -92,6 +92,9 @@ func runSync(ctx context.Context, app *App, inv cli.Invocation) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseOversizedProjectSize(ctx, app, p, target); err != nil {
+		return err
+	}
 
 	// The same path an ordinary session takes: the environment is brought up
 	// and the project is shared into it, because the share is how the two

@@ -49,9 +49,27 @@ var (
 	_ provider.MachineSizer         = (*Fake)(nil)
 )
 
-// SizesMachines marks provider.MachineSizer: the Fake records each machine's
-// size as the spec gave it and reports it back through Status.
-func (f *Fake) SizesMachines() {}
+// DefaultHostCapacity is the computer a Fake reports until SetHostCapacity says
+// otherwise: a 10-core, 32 GiB Mac, large enough for every size a test asks
+// for without meaning to test the ceiling.
+var DefaultHostCapacity = types.HostCapacity{CPUs: 10, MemoryBytes: 32 << 30}
+
+// HostCapacity implements provider.MachineSizer: the Fake records each
+// machine's size as the spec gave it, reports it back through Status, and
+// reports the programmed host capacity here. It is recorded, so a test can
+// prove a flow asked nothing else before refusing.
+func (f *Fake) HostCapacity(ctx context.Context) (types.HostCapacity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	call := Call{Op: OpHostCapacity}
+	call.Err = f.gate(ctx, OpHostCapacity, "")
+	f.calls = append(f.calls, call)
+	if call.Err != nil {
+		return types.HostCapacity{}, call.Err
+	}
+	return f.hostCapacity, nil
+}
 
 // ProviderID is the backend id the Fake reports. It is its own id rather than a
 // real backend's: a flow test that records a machine records it against the
@@ -88,6 +106,7 @@ const (
 	OpListSnapshots   Op = "ListSnapshots"
 	OpEditorTarget    Op = "EditorTarget"
 	OpPortDiagnostics Op = "PortDiagnostics"
+	OpHostCapacity    Op = "HostCapacity"
 
 	OpScanNativeWorkspace  Op = "ScanNativeWorkspace"
 	OpApplyNativeWorkspace Op = "ApplyNativeWorkspace"
@@ -143,7 +162,7 @@ func (c Call) String() string {
 	case OpApplyNativeWorkspace:
 		fmt.Fprintf(&b, "%s, %s, %s, copy=%v, delete=%v",
 			c.Machine, c.Workspace.Path, c.Sync.Direction, c.Sync.Copy, c.Sync.Delete)
-	case OpStatus:
+	case OpStatus, OpHostCapacity:
 	default:
 		b.WriteString(c.Machine)
 	}
@@ -217,6 +236,10 @@ type Fake struct {
 	workspaces map[string]*nativeWorkspace
 
 	snapshotSeq int
+
+	// hostCapacity is the computer the Fake's machines are sized against. It
+	// describes the host rather than an outcome, so Reset keeps it.
+	hostCapacity types.HostCapacity
 }
 
 // New returns a Fake that owns no machines and fails nothing.
@@ -228,6 +251,7 @@ func New() *Fake {
 		editorTargets: make(map[string]provider.EditorTarget),
 		portDiags:     make(map[string][]provider.PortDiagnostic),
 		workspaces:    make(map[string]*nativeWorkspace),
+		hostCapacity:  DefaultHostCapacity,
 	}
 }
 
@@ -360,6 +384,13 @@ func (f *Fake) SetPortDiagnostics(name string, diags []provider.PortDiagnostic) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.portDiags[name] = append([]provider.PortDiagnostic(nil), diags...)
+}
+
+// SetHostCapacity programs the computer HostCapacity reports.
+func (f *Fake) SetHostCapacity(capacity types.HostCapacity) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hostCapacity = capacity
 }
 
 // --- inspection -----------------------------------------------------------

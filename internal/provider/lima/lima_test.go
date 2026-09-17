@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -563,6 +564,60 @@ func TestHostResources_FallsBackWhenTheProbeFails(t *testing.T) {
 	// what REQ-17.4 exists to prevent.
 	if host := p.hostResources(context.Background()); host.MemoryGB != fallbackHostMemoryGB {
 		t.Errorf("host memory = %v GiB, want the conservative fallback %v", host.MemoryGB, fallbackHostMemoryGB)
+	}
+}
+
+// The capacity a size is checked against is the Mac's own, read exactly.
+func TestHostCapacity_ReadsTheHost_REQ_15_5(t *testing.T) {
+	runner := newFakeRunner()
+	runner.memsize = "17179869184" // 16 GiB
+	p := newTestProvider(t, runner, newFakeRecords())
+	p.host = HostResources{}
+
+	got, err := p.HostCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("HostCapacity: %v", err)
+	}
+	if got.MemoryBytes != 16<<30 {
+		t.Errorf("memory = %d bytes, want %d", got.MemoryBytes, int64(16<<30))
+	}
+	if got.CPUs != runtime.NumCPU() {
+		t.Errorf("CPUs = %d, want the logical CPU count %d", got.CPUs, runtime.NumCPU())
+	}
+}
+
+// Unlike default sizing, which may guess low, a capacity avar cannot read is
+// an error: refusing a file against the fallback would refuse one that fits.
+func TestHostCapacity_DoesNotGuessWhenTheProbeFails_REQ_15_5(t *testing.T) {
+	runner := newFakeRunner()
+	runner.sysctlErr = errors.New("sysctl: unknown oid 'hw.memsize'")
+	p := newTestProvider(t, runner, newFakeRecords())
+	p.host = HostResources{}
+
+	if _, err := p.HostCapacity(context.Background()); err == nil || !strings.Contains(err.Error(), "hw.memsize") {
+		t.Fatalf("HostCapacity = %v, want an error naming the probe", err)
+	}
+}
+
+// Parsing sysctl's answer is the value of the probe, so it meets the real
+// sysctl once (docs/lessons.md, "A test double that shares the code's
+// assumption confirms the assumption"). One short subprocess, and the answer
+// depends only on the Mac running the test.
+func TestHostCapacity_ReadsTheRealSysctl_REQ_15_5(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("hw.memsize is a macOS sysctl")
+	}
+	p, err := New(Options{Lima: deps.Lima{Path: "/opt/homebrew/bin/limactl"}, Runner: deps.NewRunner(), LogsDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, err := p.HostCapacity(context.Background())
+	if err != nil {
+		t.Fatalf("HostCapacity on this Mac: %v", err)
+	}
+	// Every Mac avar supports has at least 8 GiB, installed in whole MiB.
+	if got.MemoryBytes < 8<<30 || got.MemoryBytes%(1<<20) != 0 {
+		t.Errorf("memory = %d bytes, which is not a Mac's physical memory", got.MemoryBytes)
 	}
 }
 

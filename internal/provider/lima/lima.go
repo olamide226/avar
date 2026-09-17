@@ -44,9 +44,6 @@ var _ provider.Provider = (*Provider)(nil)
 // Every Lima instance has its own cpus and memory, on vz and qemu alike.
 var _ provider.MachineSizer = (*Provider)(nil)
 
-// SizesMachines marks provider.MachineSizer.
-func (p *Provider) SizesMachines() {}
-
 // cleanupTimeout bounds the cleanup of a partially created machine. It runs on a
 // context detached from the caller's, because the usual reason cleanup is needed
 // is that the caller's context was cancelled — and a Ctrl-C that leaves a wedged

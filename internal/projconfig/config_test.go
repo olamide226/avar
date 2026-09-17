@@ -59,12 +59,12 @@ func TestParse_Schema_REQ_15_1(t *testing.T) {
 		{
 			name: "cpus and memory in GiB",
 			body: "cpus = 8\nmemory = \"16GiB\"",
-			want: Config{Path: testPath, CPUs: 8, MemoryMiB: 16 * 1024},
+			want: Config{Path: testPath, CPUs: 8, MemoryMiB: 16 * 1024, CPUsLine: 1, MemoryLine: 2},
 		},
 		{
 			name: "memory in MiB",
 			body: `memory = "1536MiB"`,
-			want: Config{Path: testPath, MemoryMiB: 1536},
+			want: Config{Path: testPath, MemoryMiB: 1536, MemoryLine: 1},
 		},
 		{
 			name: "packages on one line, with the distro they belong to",
@@ -74,7 +74,7 @@ func TestParse_Schema_REQ_15_1(t *testing.T) {
 		{
 			name: "a list over several lines with comments and a trailing comma",
 			body: "distro = \"fedora\"\npackages = [\n  \"gcc-c++\",  # compilers\n\n  \"python3-PyYAML\", # capitals are real Fedora names\n]\ncpus = 2",
-			want: Config{Path: testPath, Distro: types.DistroFedora, Packages: []string{"gcc-c++", "python3-PyYAML"}, CPUs: 2},
+			want: Config{Path: testPath, Distro: types.DistroFedora, Packages: []string{"gcc-c++", "python3-PyYAML"}, CPUs: 2, CPUsLine: 7},
 		},
 		{
 			name: "an empty list asks for nothing, and needs no distro",

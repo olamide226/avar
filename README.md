@@ -251,6 +251,12 @@ The rest are held to the same rule as everything else that crosses into Linux:
   because a file changed. When a size cannot apply, avar says so once. On
   Windows every WSL distribution shares one allocation, so the size cannot be
   set per environment at all.
+- A size larger than your computer has (more `cpus` than it has logical CPUs,
+  or more `memory` than it has RAM) is refused before avar creates the
+  project's own environment, naming the file, the line, and what your computer
+  has. Lower the value, or remove it to let avar choose the size. A size equal
+  to your computer's is allowed. Where the size would not apply anyway, it does
+  not stop you, and the notice above also says it is too large.
 
 You do not have to write the file by hand. `avr init` reads the project's
 `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `Dockerfile`,

@@ -28,6 +28,15 @@ func HostArch() Arch {
 	return ArchARM64
 }
 
+// HostCapacity is what the computer avar runs on has to give a machine: the
+// ceiling a size a project asks for is checked against (design §3.11).
+type HostCapacity struct {
+	// CPUs is the number of logical CPUs.
+	CPUs int
+	// MemoryBytes is the total physical memory.
+	MemoryBytes int64
+}
+
 // Native reports whether a guest of this architecture can run without CPU
 // emulation on the current host.
 func (a Arch) Native() bool { return a == HostArch() }

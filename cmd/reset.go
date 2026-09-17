@@ -78,6 +78,13 @@ func runReset(ctx context.Context, app *App, inv cli.Invocation) error {
 		return nil
 	}
 
+	// Reset recreates the environment, so the project's file sizes it as a
+	// first use would. A size this computer cannot give is refused now,
+	// before anything is asked or destroyed, rather than after the delete.
+	if err := checkProjectSizeFits(ctx, p, target); err != nil {
+		return err
+	}
+
 	// Print an explicit destruction summary: what will be destroyed and what
 	// will survive, so the user cannot confirm without knowing (REQ-10.3).
 	writeResetSummary(app, machine, label)
