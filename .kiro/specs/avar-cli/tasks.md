@@ -245,6 +245,14 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
     - _Requirements: 15.2, 15.3, 2.6_
     - _Properties: 24 (second clause)_
     - _writes: internal/projconfig/detect.go, internal/projconfig/detect_test.go, internal/projconfig/render.go, cmd/init.go, cmd/init_test.go, cmd/app.go, cmd/root.go, internal/cli/grammar.go, README.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
+  - [ ] 22.4 Refuse cpus and memory larger than the host
+    - Maintainer decision (2026-09-17): a `.avr.toml` whose `cpus` exceed the host's logical CPUs or whose `memory` exceeds its physical memory is refused where the size would apply (creating the project's isolated environment on a `MachineSizer`), before any machine work, in one message naming the file, lines, values and what the host has. Where the size cannot apply (shared environment, existing isolated environment, WSL) it blocks nothing, and the existing one-time notice says it also exceeds the host.
+    - `provider.MachineSizer` reports `HostCapacity` instead of being a bare marker; LimaProvider reuses its `sysctl hw.memsize` probe without the fallback; `types.HostCapacity`; `projconfig.Config.ExceedsHost` and the line each size was set on; the check wired into the shell, editor, `sync` and `reset` paths. Callers: `runGuest`, `openInEditor`, `runSync`, `runReset`.
+    - Also recorded in design §3.11: the maintainer's confirmation that project configuration is read only from the Project's own `.avr.toml` and the global `config.toml`, with no parent search.
+    - Not verified on real Lima in this task: a refused file is proven against the fake, and the probe against the real `sysctl`.
+    - _Requirements: 15.5, 15.1, 17.4_
+    - _Properties: 25_
+    - _writes: internal/types/env.go, internal/provider/provider.go, internal/provider/lima/host.go, internal/provider/lima/lima.go, internal/provider/lima/lima_test.go, internal/provider/fake/fake.go, internal/projconfig/config.go, internal/projconfig/render.go, internal/projconfig/config_test.go, internal/projconfig/detect_test.go, internal/projconfig/capacity_test.go, cmd/projconfig.go, cmd/shell.go, cmd/code.go, cmd/native.go, cmd/reset.go, cmd/projsize_test.go, README.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
 - [x] 23. `avr ports` and `avr open`  _(PR #79; Lima e2e run and passing; Windows behaviour in task 43)_
   - Forwarded-port listing with guest process attribution where determinable; `avr open <port>` browser launch with not-forwarded message

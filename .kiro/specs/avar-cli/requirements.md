@@ -311,6 +311,8 @@ unaffected and works on every environment.
 
 15.4 THE absence of `.avr.toml` SHALL never degrade any avar behavior — zero-config remains the primary path.
 
+15.5 IF a `.avr.toml` sets `cpus` greater than the host's logical CPU count, or `memory` greater than the host's physical memory, AND the invocation would create the project's isolated environment at that size on a backend that sizes environments individually, THEN THE CLI SHALL refuse the invocation before creating, starting, cloning or deleting any environment, exit with status 1 as for any other invalid `.avr.toml` value, and in one message name the file's full path and, for every oversized key, its line, the requested value and what the host has in human units, and say what to do (lower the value, or remove the key so avar chooses the size). A value equal to the host's SHALL be accepted, and no stricter threshold SHALL apply. WHERE the size cannot apply — the shared environment, an isolated environment that already exists, or a backend that cannot size environments individually — an oversized value SHALL NOT block the invocation, and the notice that the size does not apply SHALL also say that it exceeds the host whenever the backend can report the host's capacity. *(Added 2026-09-17, maintainer decision.)*
+
 ### Requirement 16: Port Inspection Commands — *Post-MVP*
 
 **User Story:** As a developer, I want to list forwarded ports and open one in my browser, so that I can find my running servers without remembering ports.
