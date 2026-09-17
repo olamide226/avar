@@ -110,6 +110,19 @@ the message names; the [reader's rules]({% link syntax/avr-toml.md %}#what-the-r
 list what it accepts. A key that is not a near miss of a known one says instead
 that a key from a newer avar needs a newer `avr`.
 
+### An error naming config.toml and a line
+
+```text
+avr: /Users/you/.avr/config.toml line 2: unknown key "idle_timout": did you mean idle_timeout? config.toml understands idle_timeout, forward_env
+     Nothing was started or changed. Fix the file and run the command again; until then idle auto-stop is paused, and `avr status`, `avr stop` and `avr destroy` still work
+```
+
+Your own settings file is read as strictly as `.avr.toml`. Fix the line the
+message names; [config.toml]({% link syntax/config-toml.md %}#how-the-file-is-read)
+lists what each key accepts. Until you do, most commands stop before doing
+anything, `avr status`, `avr stop` and `avr destroy` still work, and
+environments are not stopped for being idle.
+
 ### "… which needs your approval first"
 
 ```text

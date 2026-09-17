@@ -295,7 +295,7 @@ The file is read as strictly as `.avr.toml`. A misspelt key, a value of the
 wrong kind, or TOML avar does not support stops the command before anything is
 started, with the file, the line, and what to write instead:
 
-```
+```text
 avr: /Users/you/.avr/config.toml line 2: unknown key "idle_timout": did you mean idle_timeout? config.toml understands idle_timeout, forward_env
      Nothing was started or changed. Fix the file and run the command again; until then idle auto-stop is paused, and `avr status`, `avr stop` and `avr destroy` still work
 ```
@@ -303,12 +303,11 @@ avr: /Users/you/.avr/config.toml line 2: unknown key "idle_timout": did you mean
 While the file is broken, `avr status`, `avr stop`, `avr destroy`, `avr help`
 and `avr version` still work, and the background idle check stops nothing.
 `distro`, `arch`, `cpus`, `memory` and `packages` are not settings here yet; set
-them per project in `.avr.toml`, or per command with a flag.
-
-Earlier versions of avar read this file leniently, and ignored some mistakes in
-it without a word. If a command now stops on a file that seemed to work, the
-message names the line and what to write. Often the setting on that line was
-never applied; otherwise it needs quotes or a unit, as in `idle_timeout = "4h"`.
+them per project in `.avr.toml`, or per command with a flag. Earlier versions
+read this file leniently and ignored some mistakes in it, so a file that seemed
+to work may now be refused: the
+[config.toml page](https://olamide226.github.io/avar/syntax/config-toml.html#how-the-file-is-read) lists
+what changed and what to write.
 
 ## Requirements
 
