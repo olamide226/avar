@@ -186,8 +186,12 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
     - The README stays canonical for install and quickstart; the site carries what outgrows one page — command reference, configuration, troubleshooting, the environment matrix.
     - **On a custom subdomain:** Pages serves `<owner>.github.io/avar` free, and a `CNAME` subdomain is free to configure — but only against a domain that is already owned and paid for. If there is no domain, the `github.io` URL costs nothing and needs no decision.
     - Deferred until after v0.1.0 deliberately: a docs site that forks from the README before the README is settled produces two sources of truth.
+    - **Source in `site/`, not `docs/`** (decided while building it). `docs/` holds developer documents (`lessons.md`, `releasing.md`) that README, CLAUDE.md and CONTRIBUTING.md link to. Serving the site from there would publish any future file added beside them unless an exclude list remembered it; a separate directory publishes only what was written for the site, and moves nothing.
+    - **No second source of truth.** The command reference and the environment matrix sit between markers that `cmd/docsite_test.go` owns: it renders `avr help` and `avr help <command>` through the functions `Execute` calls, and the resolver's matrix, and fails when a page differs; `make docs` rewrites them. The per-host availability the matrix page states is held by a test in each backend that the resolver's every environment has an image (Lima) or a registry entry (WSL).
+    - Built and deployed by `.github/workflows/pages.yml`: pull requests build without deploying, and only `main` deploys. Pages must be enabled with GitHub Actions as its source before the first deploy.
     - _Requirements: 17.2_
-    - _writes: docs/**, .github/workflows/pages.yml, _config.yml_
+    - _writes: site/**, .github/workflows/pages.yml, cmd/docsite_test.go_
+    - _also wrote: README.md (one line linking the site), Makefile (`make docs`), .gitignore (the site's build output and local bundle), internal/provider/lima/images_test.go and internal/provider/wsl2/images_test.go (backend coverage of the resolver's matrix, which the site's per-host claims rest on)_
 
 - [x] 41. Harden host-agent reaping, and make `avr stop` say what it did  _(PR #78; the QEMU question moves to task 43)_
   - PR #50 made `avr stop` reap the orphaned Lima host agents that a stopped instance can leave behind. The detector is right and was earned from a real leak; the parts around it have three defects, found by review of the merged code rather than by a failure.
