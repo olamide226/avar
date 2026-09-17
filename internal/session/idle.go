@@ -2,8 +2,6 @@ package session
 
 import (
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/olamide226/avar/internal/state"
@@ -13,46 +11,19 @@ import (
 // DefaultIdleTimeout is the timeout when config.toml does not set one.
 const DefaultIdleTimeout = 2 * time.Hour
 
-const configKey = "idle_timeout"
-
-// IdleTimeout reads config.toml's idle_timeout from the store's state
-// directory and returns the parsed duration and a boolean that reports
-// whether auto-stop is disabled.
+// IdleTimeout is the idle timeout cfg sets, or DefaultIdleTimeout when it sets
+// none. Zero means auto-stop is disabled (REQ-5.5), which IdleMachines enforces
+// by returning nothing.
 //
-// The config value is a Go duration string (e.g. "2h", "30m"). "0" means
-// disabled — the caller should never stop machines. A missing or unreadable
-// config returns the default (2h). Parsing is intentionally simple rather
-// than pulling in a TOML parser: idle_timeout is the only key we own right
-// now, and a purpose-built line reader is both correct and smaller.
-// A zero return means auto-stop is disabled (REQ-5.5). There is no separate
-// "disabled" flag and no error: every failure to read or parse falls back to
-// the default rather than refusing to check idle state at all, and a caller
-// that has the duration already knows disabled means "do not stop anything" —
-// IdleMachines enforces exactly that.
-func IdleTimeout(store *state.Store) time.Duration {
-	return idleTimeoutAt(store.ConfigPath())
-}
-
-func idleTimeoutAt(configPath string) time.Duration {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
+// There is deliberately no fallback here for a file that could not be read: a
+// caller holding an error from state.Store.Config has no timeout to pass, and
+// guessing the default would stop environments for a user who may have written
+// "0".
+func IdleTimeout(cfg state.Config) time.Duration {
+	if !cfg.IdleTimeoutSet {
 		return DefaultIdleTimeout
 	}
-
-	val := stripQuotes(parseTOMLKey(string(data), configKey))
-	if val == "" {
-		return DefaultIdleTimeout
-	}
-
-	// A non-positive duration — "0", "0s", "-1h" — disables auto-stop.
-	d, err := time.ParseDuration(val)
-	if err != nil {
-		return DefaultIdleTimeout
-	}
-	if d <= 0 {
-		return 0
-	}
-	return d
+	return cfg.IdleTimeout
 }
 
 // IdleMachines returns the names of the avar-managed machines that have been
@@ -127,38 +98,4 @@ func IdleMachines(store *state.Store, timeout time.Duration) ([]string, error) {
 		}
 	}
 	return idle, nil
-}
-
-// --- manual TOML parsing ---------------------------------------------------
-// Parsing only the one key avar owns means we do not need a full TOML parser
-// or a dependency on one. The format is simple: `key = "value"` or `key =
-// value`, one per line, with optional whitespace. Comments are not handled
-// because config.toml is machine-written by avar's own future `avr config`
-// (task 22); neither are dotted keys, inline tables, or arrays, which
-// config.toml does not use.
-
-// parseTOMLKey finds the value for key in a simple TOML-like document.
-// Returns "" when the key is absent.
-func parseTOMLKey(doc, key string) string {
-	prefix := key + " = "
-	for _, line := range strings.Split(doc, "\n") {
-		line = strings.TrimSpace(line)
-		// Skip blank lines and table headers.
-		if line == "" || strings.HasPrefix(line, "[") || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !strings.HasPrefix(line, prefix) {
-			continue
-		}
-		return strings.TrimSpace(line[len(prefix):])
-	}
-	return ""
-}
-
-// stripQuotes removes a single pair of matching double or single quotes.
-func stripQuotes(s string) string {
-	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[0] == s[len(s)-1] {
-		s = s[1 : len(s)-1]
-	}
-	return s
 }

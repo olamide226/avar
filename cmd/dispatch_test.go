@@ -3,11 +3,28 @@ package cmd
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/olamide226/avar/internal/cli"
+	"github.com/olamide226/avar/internal/state"
 )
+
+// bareApp is an App with nothing but a temporary state directory, which
+// dispatch needs in order to read config.toml before routing. Without one it
+// would read the developer's own ~/.avr.
+func bareApp(t *testing.T) *App {
+	t.Helper()
+	store, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("opening a temporary state directory: %v", err)
+	}
+	app := &App{Out: io.Discard, Err: io.Discard}
+	app.store = store
+	app.once.store.Do(func() {})
+	return app
+}
 
 // Every name the argv grammar will route must have a registered handler.
 // Without this, adding a subcommand to the grammar and forgetting to handle it
@@ -49,7 +66,7 @@ func TestDispatch_RoutesSubcommandsToTheirHandler(t *testing.T) {
 	}
 
 	inv := cli.Invocation{Mode: cli.ModeSubcommand, Subcommand: name}
-	if err := dispatch(context.Background(), &App{}, inv); err != nil {
+	if err := dispatch(context.Background(), bareApp(t), inv); err != nil {
 		t.Fatalf("dispatch returned an unexpected error: %v", err)
 	}
 	if !called {
@@ -66,7 +83,7 @@ func TestDispatch_PropagatesHandlerErrorsUnchanged_PROP_3(t *testing.T) {
 	want := Exit(42, nil)
 	guestHandler = func(context.Context, *App, cli.Invocation) error { return want }
 
-	err := dispatch(context.Background(), &App{}, cli.Invocation{Mode: cli.ModeGuestCommand, Guest: []string{"false"}})
+	err := dispatch(context.Background(), bareApp(t), cli.Invocation{Mode: cli.ModeGuestCommand, Guest: []string{"false"}})
 
 	var exit *ExitCodeError
 	if !errors.As(err, &exit) {
@@ -82,7 +99,7 @@ func TestDispatch_UnregisteredSubcommandNamesItsTask(t *testing.T) {
 		t.Skip("snapshot now has a handler; this case no longer applies")
 	}
 
-	err := dispatch(context.Background(), &App{}, cli.Invocation{Mode: cli.ModeSubcommand, Subcommand: "snapshot"})
+	err := dispatch(context.Background(), bareApp(t), cli.Invocation{Mode: cli.ModeSubcommand, Subcommand: "snapshot"})
 	if err == nil {
 		t.Fatal("dispatch returned nil for an unimplemented subcommand, want an error")
 	}

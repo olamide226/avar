@@ -285,6 +285,29 @@ implemented forwarding, which the Lima backend now does.
 When a feature crosses a layer, the test that proves it belongs at the far side: assert
 the backend *acts*, not that the caller *asked*.
 
+### A lenient reader turns every mistake into a setting that silently does not apply
+
+`config.toml` was read by two small readers, one per key, both lenient by design:
+a typo in the user's own file must never stop a shell. Each was unit-tested and
+green. Between them, `idle_timout = "0"` was ignored, `idle_timeout="0"` was
+ignored because one reader matched the literal prefix `idle_timeout = ` while
+the other accepted `forward_env=[...]` without spaces, and `["A,B"]` granted two
+variables. One test even asserted the fallback: `idle_timeout = 4` meant the
+default, silently.
+
+Nothing failed, so nothing was reported. A user who wrote `idle_timeout="0"`
+would watch their environments keep stopping, having written the setting that
+should prevent it, with no way to learn that avar never read it. Leniency did
+not remove the failure; it moved it
+from the moment the file was read, where a message could name the line, to
+hours later, where nothing connects the symptom to the file.
+
+When avar reads a file a person wrote, one reader owns the file, its schema is
+closed, and what it cannot read exactly is an error naming the line. Decide
+separately which commands must still run when the file is broken, so strictness
+never locks the user out of fixing things. Do not decide it by making the reader
+forgive.
+
 ### A file manifest bounds what a task writes, not what it finishes
 
 `internal/state.Reconcile` was built and tested to 91% coverage, and nothing called

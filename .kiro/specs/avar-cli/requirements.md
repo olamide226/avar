@@ -337,6 +337,8 @@ unaffected and works on every environment.
 
 17.6 **Host platform**: avar SHALL support macOS 13+ on Apple Silicon and Intel through Lima, and Windows 11 22H2+ on x64 and Arm64 through WSL 2 (Requirement 18). Linux hosts, Windows 10, Windows Server, GUIs, cloud/remote environments, team policies, and Kubernetes are explicitly out of scope.
 
+17.7 **Global configuration is read exactly**: THE CLI SHALL read the user's `config.toml` in the State_Dir with the same strict TOML subset it reads `.avr.toml` with, and an absent file SHALL mean avar's defaults. IF the file contains a key avar does not know, a value of the wrong type or one the key does not accept, or TOML outside that subset, THEN THE CLI SHALL say so naming the file's full path, the line and the key, what to write instead, and for a likely misspelling the nearest known key; and SHALL refuse the invocation with a non-zero exit before resolving, creating, starting or changing any environment. `help` and `version` SHALL still run; `status`, `stop` and `destroy` SHALL still run after stating the problem; and the scheduled idle check SHALL stop no environment and exit non-zero. A file that earlier versions read with the meaning its author intended SHALL keep that meaning. *(Added 2026-09-17, maintainer decision: the file was previously read leniently, so a misspelt key, `idle_timeout="0"` without spaces, and a comma inside a quoted `forward_env` name were each misread without a word.)*
+
 ### Requirement 18: Windows Host Support via WSL 2 — *Post-MVP*
 
 **User Story:** As a Windows developer, I want the same `avr` project-centred Linux shell experience backed by WSL 2, so that I can use avar consistently without installing or managing a second VM runtime.

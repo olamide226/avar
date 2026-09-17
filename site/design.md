@@ -162,23 +162,25 @@ that subdirectory is the project, and a `.avr.toml` at the repository root is
 not read from there. `avr init` shows the full path it will write, so you can
 see which directory is the project.
 
-## Strict .avr.toml, lenient config.toml
+## Configuration files are read strictly
 
-**The choice.** avar reads `.avr.toml` strictly: an unknown key, a value of
-the wrong type, or TOML it does not support stops the command, and nothing in
-the file applies. It reads `config.toml` leniently, ignoring what it cannot
-read.
+**The choice.** avar reads both `.avr.toml` and `config.toml` strictly: an
+unknown key, a value of the wrong type, or TOML it does not support stops the
+command before any machine work, names the line and what to write, and
+nothing in the file applies.
 
-<!-- pending: config.toml is moving to the strict reader; when that merges, rewrite this decision -->
+**Why.** A setting that silently does not apply is worse than a command that
+stops, because you believe it is in force. A project file is shared by a team,
+and a misspelt key quietly ignored would leave environments different between
+machines. `config.toml` was once read leniently, on the reasoning that a typo in
+your own settings should not cost you a shell. In practice that meant
+`idle_timeout="0"` without spaces left environments stopping, and a misspelt
+key did nothing at all, with no message to say so. It changed on 2026-09-17.
 
-**Why.** A project file is shared by a team. A misspelt key that was quietly
-ignored would leave environments silently different between machines, which
-is the one thing the file exists to prevent. `config.toml` is yours alone,
-and a typo in it has not been worth refusing you a shell.
-
-**The trade-off.** A `.avr.toml` that uses a key from a newer avar fails on an
-older one, and the error suggests upgrading. A typo in `config.toml` is not
-reported.
+**The trade-off.** A file that uses a key from a newer avar fails on an older
+one, and the error suggests upgrading. A broken `config.toml` stops most
+commands until it is fixed, so `avr status`, `avr stop` and `avr destroy` still
+run, and the background idle check stops nothing rather than guessing.
 
 ## Linux-native workspaces exist only on Windows
 

@@ -343,72 +343,27 @@ func TestIdleMachines_MultipleMachinesMixed(t *testing.T) {
 	}
 }
 
-// --- Config parsing --------------------------------------------------------
+// --- Idle timeout ----------------------------------------------------------
 
-func TestIdleTimeout_ReadsTheConfiguredValue_REQ_5_5(t *testing.T) {
+// Reading config.toml is state.ParseConfig's, and tested there. What is left
+// here is the default, and that a timeout the file sets to zero stays zero
+// rather than becoming the default.
+func TestIdleTimeout_DefaultsOnlyWhenTheFileSetsNone_REQ_5_5(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		// config is the file contents; empty means no config file at all.
-		config string
-		want   time.Duration
+		cfg  state.Config
+		want time.Duration
 	}{
-		{"no config file", "", DefaultIdleTimeout},
-		{"quoted duration", `idle_timeout = "30m"`, 30 * time.Minute},
-		{"bare duration", "idle_timeout = 4h", 4 * time.Hour},
-		{"quoted zero disables", `idle_timeout = "0"`, 0},
-		{"bare zero disables", "idle_timeout = 0", 0},
-		{"negative disables", `idle_timeout = "-1h"`, 0},
-		{"unparseable falls back to the default", `idle_timeout = "garbage"`, DefaultIdleTimeout},
-		// A bare integer is not a Go duration, so it is not accepted. This is
-		// asserted rather than left implicit because an earlier unreached
-		// helper claimed to read it as hours: `idle_timeout = 4` means the
-		// default, not four hours.
-		{"bare integer is not a duration", "idle_timeout = 4", DefaultIdleTimeout},
+		{"no config.toml", state.Config{}, DefaultIdleTimeout},
+		{"config.toml without idle_timeout", state.Config{Path: "config.toml", ForwardEnv: []string{"A"}}, DefaultIdleTimeout},
+		{"a configured timeout", state.Config{IdleTimeout: 30 * time.Minute, IdleTimeoutSet: true}, 30 * time.Minute},
+		{"disabled", state.Config{IdleTimeout: 0, IdleTimeoutSet: true}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.toml")
-			if tc.config != "" {
-				if err := os.WriteFile(path, []byte(tc.config+"\n"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if got := idleTimeoutAt(path); got != tc.want {
-				t.Errorf("idleTimeoutAt(%q) = %v, want %v", tc.config, got, tc.want)
+			if got := IdleTimeout(tc.cfg); got != tc.want {
+				t.Errorf("IdleTimeout(%+v) = %v, want %v", tc.cfg, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestParseTOMLKey_FindsValue(t *testing.T) {
-	doc := `# Comment
-[table]
-idle_timeout = "2h"
-other = "thing"
-`
-	if got := parseTOMLKey(doc, "idle_timeout"); got != `"2h"` {
-		t.Errorf("got %q, want %q", got, `"2h"`)
-	}
-}
-
-func TestParseTOMLKey_EmptyWhenMissing(t *testing.T) {
-	if got := parseTOMLKey("other = 1\n", "idle_timeout"); got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-}
-
-func TestStripQuotes(t *testing.T) {
-	tests := []struct{ in, want string }{
-		{`"hello"`, "hello"},
-		{`'hello'`, "hello"},
-		{"hello", "hello"},
-		{`"`, `"`},
-		{"", ""},
-	}
-	for _, tc := range tests {
-		got := stripQuotes(tc.in)
-		if got != tc.want {
-			t.Errorf("stripQuotes(%q) = %q, want %q", tc.in, got, tc.want)
-		}
 	}
 }
 

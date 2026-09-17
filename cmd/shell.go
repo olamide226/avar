@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -29,6 +30,14 @@ func init() { registerGuest(runGuest) }
 // project visible inside it, and attaching. Splitting them would mean two
 // chances for the shell and the one-shot path to drift apart.
 func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
+	// config.toml carries the standing forward_env grant (REQ-12.4). Dispatch
+	// has already refused a file it cannot read, and the App returns that same
+	// read, so the error here is never a second opinion.
+	userConfig, err := app.Config()
+	if err != nil {
+		return err
+	}
+
 	target, err := app.Resolve(inv)
 	if err != nil {
 		return err
@@ -107,7 +116,7 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 			// project's variables the user approved on this host. A name the
 			// project's file declares and the user never approved is in
 			// neither (PROP-23).
-			Allowlist: append(forwardEnv(app), approvedForwardEnv(target)...),
+			Allowlist: append(slices.Clone(userConfig.ForwardEnv), approvedForwardEnv(target)...),
 		}),
 		TTY:             stdinIsTerminal(),
 		ForwardSSHAgent: inv.SSHAgent,
@@ -404,27 +413,6 @@ func pluralize(count int, singular, plural string) string {
 // jobs run avar (PROP-8).
 func stdinIsTerminal() bool {
 	return isTerminal(os.Stdin)
-}
-
-// forwardEnv reads the standing forward_env grant from avar's configuration
-// (REQ-12.4).
-//
-// It returns nothing rather than failing when the configuration cannot be
-// read: forward_env is an optional convenience, and refusing to open a shell
-// because a hand-edited file has a typo in it would be a poor trade. The
-// consequence — a variable the user expected not arriving — is visible in the
-// guest, whereas a shell that will not start is not obviously about this at
-// all.
-func forwardEnv(app *App) []string {
-	store, err := app.Store()
-	if err != nil {
-		return nil
-	}
-	names, err := store.ConfigList("forward_env")
-	if err != nil {
-		return nil
-	}
-	return names
 }
 
 // loadEnvFile opens the file at path and parses it as envpolicy.ParseDotEnv

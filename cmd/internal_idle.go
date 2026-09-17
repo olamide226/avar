@@ -45,13 +45,24 @@ func runInternal(ctx context.Context, app *App, inv cli.Invocation) error {
 // every 10 minutes and is designed to be safe to run at any frequency:
 // machines with live sessions are never stopped (Property 11), and an idle
 // clock only starts when the last session detaches.
+//
+// A config.toml it cannot read stops nothing. Nobody is watching a scheduled
+// check, so it cannot ask, and there is no safe guess: the default timeout
+// would stop the environments of a user whose broken line was idle_timeout =
+// "0". It exits non-zero, which the host scheduler records as the last result,
+// and the next interactive `avr` names the line (REQ-17.7). Auto-stop resumes
+// on the first check after the file is fixed.
 func runIdleCheck(ctx context.Context, app *App) error {
 	store, err := app.Store()
 	if err != nil {
 		return err
 	}
+	cfg, err := app.Config()
+	if err != nil {
+		return fmt.Errorf("idle check stopped nothing, because avar's configuration cannot be read: %w", err)
+	}
 
-	idle, err := session.IdleMachines(store, session.IdleTimeout(store))
+	idle, err := session.IdleMachines(store, session.IdleTimeout(cfg))
 	if err != nil {
 		return err
 	}

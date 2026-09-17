@@ -38,7 +38,7 @@ idle_timeout = "4h"
 | Key | Type | Allowed values | Default when absent |
 | --- | --- | --- | --- |
 | `forward_env` | list of strings | Environment variable names, on one line or across several | Nothing forwarded |
-| `idle_timeout` | string | A duration such as `"30m"`, `"2h"` or `"1h30m"`. `"0"`, or any duration that is not positive, turns idle stopping off | `"2h"` |
+| `idle_timeout` | string | A quoted duration with a unit, such as `"30m"`, `"2h"` or `"1h30m"`. `"0"` (or the number `0`, or a negative duration) turns idle stopping off | `"2h"` |
 
 ### forward_env
 
@@ -64,15 +64,40 @@ makes it stop nothing.
 
 ## How the file is read
 
-<!-- pending: config.toml is moving to the strict reader .avr.toml uses; when that merges, replace this section: typos become errors instead of being ignored -->
+The file is read by the same strict reader as `.avr.toml`, and accepts the
+same [subset of TOML]({% link syntax/avr-toml.md %}#what-the-reader-accepts).
+Its keys are the two above and nothing else. A key avar does not know, a value
+of the wrong kind, or TOML the reader does not support is an error, never a
+setting quietly ignored:
 
-Today this file is read leniently, on the reasoning that a typo in your own
-settings should not cost you a shell. A value avar cannot read is ignored
-rather than reported:
+```text
+avr: /Users/you/.avr/config.toml line 2: unknown key "idle_timout": did you mean idle_timeout? config.toml understands idle_timeout, forward_env
+     Nothing was started or changed. Fix the file and run the command again; until then idle auto-stop is paused, and `avr status`, `avr stop` and `avr destroy` still work
+```
 
-- An `idle_timeout` that is not a duration means the two-hour default.
-- A `forward_env` that is not a list forwards nothing.
-- A key avar does not know is ignored.
+The message names the file, the line and the key, and says what to write
+instead. Some examples of what it refuses:
 
-If a variable you granted does not arrive in Linux, or environments stop
-sooner than you set, check this file first.
+| Line | Why, and what to write |
+| --- | --- |
+| `idle_timout = "0"` | A misspelt key: `idle_timeout = "0"` |
+| `idle_timeout = 4h` | A duration needs quotes: `idle_timeout = "4h"` |
+| `idle_timeout = 4` | A number has no unit: `idle_timeout = "4h"` or `"4m"` |
+| `forward_env = "AWS_PROFILE"` | A single name is not a list: `forward_env = ["AWS_PROFILE"]` |
+| `forward_env = ["AWS_PROFILE,GITHUB_TOKEN"]` | One quoted string per name: `forward_env = ["AWS_PROFILE", "GITHUB_TOKEN"]` |
+| `distro = "fedora"` | Not a setting here yet: use a project's `.avr.toml` or `--distro` |
+| `[defaults]` | Tables are not supported: every key is top-level |
+
+While the file cannot be read:
+
+- every command stops before it starts, creates or changes anything, and exits 1;
+- `avr status`, `avr stop` and `avr destroy` print the same error and still
+  run, so you can always see and release what is running;
+- `avr help` and `avr version` work as usual;
+- the background idle check stops nothing. It cannot tell what you meant, and
+  guessing the two-hour default would stop environments you may have asked it
+  to leave alone. It resumes once the file is fixed.
+
+Earlier versions of avar read this file leniently and ignored what they could
+not read. If a file that seemed to work is now refused, the line the message
+names was either not being applied, or needs quotes or a unit.

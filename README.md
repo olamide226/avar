@@ -209,8 +209,8 @@ they do not forward environment values or an SSH agent.
 
 Nothing crosses into the guest that you did not ask for: no host environment
 beyond a small terminal allowlist, no home directory, no credentials, no agent.
-`~/.avr/config.toml` accepts `forward_env = ["AWS_PROFILE", …]` for a standing
-grant, and `idle_timeout` to change when idle environments stop themselves.
+A standing grant goes in your own settings file, described
+[below](#your-own-settings-configtoml).
 
 Each distinct environment gets its own machine, and projects share it unless you
 ask otherwise. `avr` and `avr --distro fedora` in the same directory are two
@@ -274,6 +274,40 @@ first ran `avr` in (or that directory's project, if you are in a subdirectory),
 and never from a parent. The reader is strict: a key it does not know, or TOML it
 does not support, stops the command with the line and the reason, rather than
 applying half the file.
+
+### Your own settings: `config.toml`
+
+Settings that are yours rather than a project's live in `config.toml` in avar's
+state directory: `~/.avr/config.toml` on macOS, `%LocalAppData%\avar\config.toml`
+on Windows. The file is optional, and avar never writes it.
+
+```toml
+idle_timeout = "2h"                          # stop an environment unused this long; "0" never stops one
+forward_env = ["AWS_PROFILE", "GITHUB_TOKEN"] # host variables passed into every session
+```
+
+- `idle_timeout` is a quoted duration with a unit: `"30m"`, `"2h"`, `"90m"`.
+  The default is two hours, and `"0"` turns automatic stopping off.
+- `forward_env` lists host variable names, each one its own quoted string.
+  Unlike a project's `forward_env`, this is your own grant, so nothing asks.
+
+The file is read as strictly as `.avr.toml`. A misspelt key, a value of the
+wrong kind, or TOML avar does not support stops the command before anything is
+started, with the file, the line, and what to write instead:
+
+```text
+avr: /Users/you/.avr/config.toml line 2: unknown key "idle_timout": did you mean idle_timeout? config.toml understands idle_timeout, forward_env
+     Nothing was started or changed. Fix the file and run the command again; until then idle auto-stop is paused, and `avr status`, `avr stop` and `avr destroy` still work
+```
+
+While the file is broken, `avr status`, `avr stop`, `avr destroy`, `avr help`
+and `avr version` still work, and the background idle check stops nothing.
+`distro`, `arch`, `cpus`, `memory` and `packages` are not settings here yet; set
+them per project in `.avr.toml`, or per command with a flag. Earlier versions
+read this file leniently and ignored some mistakes in it, so a file that seemed
+to work may now be refused: the
+[config.toml page](https://olamide226.github.io/avar/syntax/config-toml.html#how-the-file-is-read) lists
+what changed and what to write.
 
 ## Requirements
 

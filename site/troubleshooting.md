@@ -101,13 +101,27 @@ avr -- open file.txt
 ### An error naming .avr.toml and a line
 
 ```text
-avr: /Users/you/code/app/.avr.toml line 3: unknown key "packges": .avr.toml understands <keys> (a key from a newer avar needs a newer avr)
+avr: /Users/you/code/app/.avr.toml line 3: unknown key "packges": did you mean packages? .avr.toml understands <keys>
 ```
 
 The reader is strict, and a file it cannot read completely stops the command
 before any machine work. avar never applies part of a file. Fix the line
 the message names; the [reader's rules]({% link syntax/avr-toml.md %}#what-the-reader-accepts)
-list what it accepts.
+list what it accepts. A key that is not a near miss of a known one says instead
+that a key from a newer avar needs a newer `avr`.
+
+### An error naming config.toml and a line
+
+```text
+avr: /Users/you/.avr/config.toml line 2: unknown key "idle_timout": did you mean idle_timeout? config.toml understands idle_timeout, forward_env
+     Nothing was started or changed. Fix the file and run the command again; until then idle auto-stop is paused, and `avr status`, `avr stop` and `avr destroy` still work
+```
+
+Your own settings file is read as strictly as `.avr.toml`. Fix the line the
+message names; [config.toml]({% link syntax/config-toml.md %}#how-the-file-is-read)
+lists what each key accepts. Until you do, most commands stop before doing
+anything, `avr status`, `avr stop` and `avr destroy` still work, and
+environments are not stopped for being idle.
 
 ### "… which needs your approval first"
 

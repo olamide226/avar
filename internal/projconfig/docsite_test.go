@@ -36,8 +36,8 @@ func TestDocsite_KeyTableListsEveryKeyInSchemaOrder_REQ_15_1(t *testing.T) {
 		documented = append(documented, m[1])
 	}
 	var accepted []string
-	for _, k := range schema {
-		accepted = append(accepted, k.name)
+	for _, k := range schema.Keys {
+		accepted = append(accepted, k.Name)
 	}
 	if !slices.Equal(documented, accepted) {
 		t.Errorf("%s documents the keys %q; the reader accepts %q. Update the table so a key is neither missing nor invented",
