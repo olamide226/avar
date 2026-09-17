@@ -1,0 +1,15 @@
+# Build dependencies for the documentation site at
+# https://olamide226.github.io/avar/, and the only Ruby in this repository.
+#
+# Both versions are pinned exactly, and Gemfile.lock pins the rest, so that a
+# pull request's site build and the deploy from main render with the same
+# theme. .github/workflows/pages.yml builds with these; nothing else reads this
+# file. To preview locally, from this directory:
+#
+#   bundle config set --local path vendor/bundle
+#   bundle install
+#   bundle exec jekyll serve     # http://127.0.0.1:4000/avar/
+source "https://rubygems.org"
+
+gem "jekyll", "4.4.1"
+gem "just-the-docs", "0.12.0"
