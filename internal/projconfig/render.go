@@ -55,7 +55,10 @@ func Render(c Config) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("write %s: the file would not read back: %w", FileName, err)
 	}
+	// Where a setting lands in the rendered file is Render's choice, not part
+	// of what the Config asks for.
 	want := c
+	want.CPUsLine, want.MemoryLine = back.CPUsLine, back.MemoryLine
 	if len(want.Packages) == 0 {
 		want.Packages = nil
 	}

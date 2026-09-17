@@ -278,8 +278,11 @@ type PortDiagnostic struct {
 // MachineSizer marks a backend that gives each machine its own CPU and memory
 // allocation, so MachineSpec.CPUs/MemoryGB mean something there (§3.11).
 // WSL 2 runs every distribution in one globally sized VM and does not implement it.
+// A backend that sizes machines also reports what it sizes them against, so an
+// oversized request is refused before any machine work (Req 15.5, Property 25).
+// The capacity is never estimated: an unreadable one is an error.
 type MachineSizer interface {
-    SizesMachines()
+    HostCapacity(ctx context.Context) (types.HostCapacity, error) // logical CPUs, physical memory in bytes
 }
 
 type MachineSpec struct {
@@ -494,6 +497,8 @@ A dependency (`BurntSushi/toml`, `pelletier/go-toml`) was considered and rejecte
 
 The consequence is stated rather than hidden: if the first `avr` in a repository was run in a subdirectory, that subdirectory is the project, and a `.avr.toml` at the repository root is not read from there. `avr init` shows the full path it will write before asking.
 
+**Maintainer decision, confirmed 2026-09-17.** For now, project configuration counts in exactly two places: the Project's own `.avr.toml`, and the user's global `~/.avr/config.toml` (the State_Dir's `config.toml`). Nothing else is read, and in particular there is no search of parent directories: when the Project is a subdirectory of a repository, a `.avr.toml` at the repository root is not read. (A subdirectory of a directory avar already records as a Project resolves to that recorded Project, and reads that Project's file; that is the Project's own directory, not a parent search.) The code was checked against this when it was recorded, with no change needed: `projconfig.Load` opens `<projectDir>/.avr.toml` and nothing else, `Resolve` passes it `ProjectRecord.Path` only, and `TestResolve_ProjectConfigIsReadFromTheProjectDirectoryOnly_REQ_15_1` proves that a file in a parent is not read. One difference from the precedence table below was found and is reported rather than changed here: the command layer does not yet fill `resolve.Options.Config`, so today the global `config.toml` supplies `forward_env` (Req 12.4) and `idle_timeout` but no distro or architecture defaults.
+
 The injected reader keeps the resolver pure. `resolve.Options` gains `ProjectConfig func(projectDir string) (projconfig.Config, error)`; the command layer supplies `projconfig.Load`, which reads that one file, and tests supply a function. `Resolve` calls it after identifying the project and returns the result in `ResolvedTarget.Config`, so every later step reads the same parse. A missing file is the zero `Config` and no error.
 
 Precedence, highest first:
@@ -525,6 +530,30 @@ So `cpus` and `memory` apply **only to the project's Isolated_Environment, and o
 The last case is WSL 2, where every distribution runs in one utility VM sized globally by `.wslconfig`. Silently passing a size a backend ignores is the `--ssh-agent` defect again (docs/lessons.md), and naming the backend in `cmd/` is forbidden, so this is a capability: `provider.MachineSizer`, implemented by backends that give each machine its own allocation. LimaProvider implements it; WSL2Provider does not. Implementing it for Lima surfaced two defects that had been harmless only because no caller passed a size: the clone path (Req 11.1) inherited the base machine's size and ignored the spec, and the base machine was created with whatever size the first isolated spec carried, which every later clone would then have inherited. The clone now applies the size in the same `limactl edit` that adds its mounts, and the base is always created at the defaults.
 
 Checking whether an existing environment matches costs one `Provider.Status` call, made only while the declaration is unadvised, never on an ordinary warm invocation.
+
+#### Sizes larger than the host: refused where they would apply
+
+*(Added 2026-09-17, maintainer decision; Req 15.5, Property 25.)* A file that asks for more than the computer has — `cpus` above its logical CPU count, or `memory` above its physical memory — is refused. The threshold is the host itself: a value equal to it is accepted, and no headroom rule is applied. Whether a machine given all of a host's memory is wise is a different question from whether the host has it, and the maintainer chose to answer only the second.
+
+**Where.** Only where the size would actually be applied: an invocation that creates the project's Isolated_Environment on a `MachineSizer`. That is `avr`, `avr <command>`, the editor commands and `avr sync` when avar has no `MachineRecord` for the target, and `avr reset` for an isolated target, which recreates it. The existence check reads avar's own record, not the backend: `App.Provider` has already reconciled records with the backend in this invocation, and a record read is local, so a warm invocation asks the backend nothing. Where the size cannot apply — the shared environment, an isolated environment that already exists, or a backend that is not a `MachineSizer` — the file changes nothing, so an oversized value there blocks nothing. The one-time notice described above gains a sentence saying the value also exceeds this computer, so that following its advice (`avr --isolate`, `avr reset`) is not a surprise. On a backend that is not a `MachineSizer` (WSL 2) there is no capacity to compare against and the sentence is omitted: the size does nothing there either way.
+
+**When.** Before any machine work: after resolving and building the backend, before the grants review, and in `reset` before the destruction summary and confirmation. Nobody waits through a provision, or confirms a destroy, to be told the file cannot be satisfied.
+
+**Capacity.** `provider.MachineSizer` reports it (`HostCapacity`), so `cmd/` stays backend-neutral (Property 21) and the capability that makes a size meaningful is the one that says what it is measured against. LimaProvider reads CPUs with `runtime.NumCPU` and memory with the same `sysctl -n hw.memsize` probe its default sizing already uses. Unlike default sizing, which falls back to a conservative guess when the probe fails, `HostCapacity` returns the error: refusing a file against a guess would refuse one that fits. An unreadable capacity therefore fails the invocation, naming the cause and saying to remove `cpus` and `memory` to proceed. `projconfig.Config.ExceedsHost` does the comparison purely, in MiB against bytes, and `Config` carries the line each size was set on so the refusal can name it after parsing.
+
+**The message** names the file's full path, then for each oversized key its line, the setting and what this computer has, in the unit the file used; then the limit and the way forward. Both keys are reported in one message. There is no command-line flag that overrides a size for one invocation, so none is suggested. The exit status is 1, as for any other invalid value in the file.
+
+```
+avr: /Users/dev/app/.avr.toml line 2: memory = "64GiB", but this computer has 16 GiB of memory
+     Lower memory to at most 16 GiB, or remove that line to let avar choose the size, then try again. Nothing was changed.
+
+avr: /Users/dev/app/.avr.toml asks for more than this computer has:
+       line 1: cpus = 32, but this computer has 10 CPUs
+       line 2: memory = "64GiB", but this computer has 16 GiB of memory
+     Lower cpus to at most 10 and memory to at most 16 GiB, or remove those lines to let avar choose the size, then try again. Nothing was changed.
+```
+
+`avr init` never proposes `cpus` or `memory` (see below), so it cannot write a file this check refuses.
 
 #### packages and forward_env: nothing without approval
 
@@ -576,9 +605,13 @@ type Config struct {
     Arch       types.Arch
     CPUs       int          // 0 when not set
     MemoryMiB  int          // 0 when not set
+    CPUsLine   int          // the line that set CPUs, for messages after parsing; 0 when not set
+    MemoryLine int          // likewise for MemoryMiB
     Packages   []string
     ForwardEnv []string
 }
+
+func (c Config) ExceedsHost(host types.HostCapacity) []HostExcess // cpus, then memory; equal to the host is not an excess
 
 func Parse(path string, body []byte) (Config, error) // strict; errors name path and line
 func Load(projectDir string) (Config, error)          // reads <projectDir>/.avr.toml; absent → zero Config
@@ -752,6 +785,12 @@ _For any_ invocation in a project with no `.avr.toml`, `Resolve` SHALL return th
 
 *Added with Requirement 15.* Property 24's second clause belongs with the first because both are about the file never arriving or acting unasked: a project gains configuration only by a person writing it, and loses nothing by not having it.
 
+### Property 25: Host-bounded project sizing
+_For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host's logical CPUs or `memory` exceeds its physical memory, an invocation that would create the project's Isolated_Environment on a `MachineSizer` SHALL fail before the backend is asked to create, start, clone or delete any machine, and SHALL name every oversized key in that one failure. _For any_ value at or below the host's capacity, the check SHALL NOT refuse. _For any_ invocation in which the size does not apply — the shared environment, an isolated environment that already exists, or a backend that is not a `MachineSizer` — an oversized value SHALL NOT change whether the invocation succeeds.
+**Validates: 15.5, 15.1, 17.4**
+
+*Added with Requirement 15.5.* The third clause is not decoration. A property stating only "oversized sizes are refused before machine work" is satisfied by refusing everywhere, which would lock a user out of an environment that exists, or out of WSL, over a setting that does nothing there (docs/lessons.md, "A property that quantifies over part of the design gives false confidence").
+
 ## 6. Error Handling
 
 **Principles**: every failure names (what avar was doing) + (underlying cause, with the tail of the relevant log) + (one suggested next step). Guest command failures are *not* avar errors — stderr and exit code pass through untouched.
@@ -792,7 +831,9 @@ _For any_ invocation in a project with no `.avr.toml`, `Resolve` SHALL return th
 | `.avr.toml` declares packages or forward_env the user has not approved | approved sets in `ProjectRecord` | Interactive: list each pending name and where it applies, ask; no → continue with what was approved before. No terminal: one stderr line naming what is pending and to run `avr` from a terminal; continue. Never approve implicitly (Req 15.3, Property 23). |
 | Approved package install fails | package manager exit status via `Provider.Shell` | Warn with the command and status; record nothing so the next invocation retries; the session still starts (Req 15.1). |
 | `.avr.toml` packages are for a different distro than the one resolved | declared vs resolved distro | Say the packages were not installed and why; install nothing (Req 15.1). |
-| `.avr.toml` cpus/memory cannot apply: shared environment, existing isolated environment of another size, or a backend that is not a `MachineSizer` | resolved kind, one `Provider.Status`, capability assertion | Say so once per declaration, with the next step (`avr --isolate`, `avr reset`, or that this host sizes environments together). Never resize or restart (Req 15.1, 17.4). |
+| `.avr.toml` cpus/memory cannot apply: shared environment, existing isolated environment of another size, or a backend that is not a `MachineSizer` | resolved kind, one `Provider.Status`, capability assertion | Say so once per declaration, with the next step (`avr --isolate`, `avr reset`, or that this host sizes environments together). If a `MachineSizer` reports that the size also exceeds the host, add a sentence saying so. Never resize or restart, and never refuse (Req 15.1, 15.5, 17.4). |
+| `.avr.toml` cpus or memory exceeds the host's logical CPUs or physical memory, and the invocation would create the project's isolated environment on a `MachineSizer` | `MachineSizer.HostCapacity` compared by `Config.ExceedsHost`, after `App.Provider` and a local `MachineRecord` lookup; `reset` checks after finding the environment | Exit 1 before any machine work (and in `reset`, before the summary and confirmation), in one message: the file's full path; for each oversized key its line, setting and what this computer has, in the file's unit; the most the host allows; and to lower the value or remove the line so avar chooses the size. "Nothing was changed." No override flag exists, so none is suggested. A value equal to the host is accepted (Req 15.5, Property 25). |
+| Host capacity cannot be read while checking a declared size | `MachineSizer.HostCapacity` returns an error | Exit 1 before any machine work naming the cause, and say to remove `cpus` and `memory` from the file to proceed. Never compare against a guessed capacity (Req 15.5). |
 | `avr init` finds an existing `.avr.toml` | stat before proposing | Exit 1 saying the file exists and nothing was changed (Req 15.2). |
 | `avr init` without a terminal, or the user does not confirm | TTY check / answer | Print the proposal; write nothing. Exit 1 without a terminal, saying to run `avr init` from one; exit 0 when declined (Req 15.2, Property 24). |
 | Ctrl-C during provisioning | context cancellation | Stop the provider subprocess, reconcile/clean only the journaled partial target, and exit 130. |
@@ -817,7 +858,7 @@ _For any_ invocation in a project with no `.avr.toml`, `Resolve` SHALL return th
 
 **Integration tests — FakeProvider/FakeRunner**:
 
-- Full provider-neutral command flows (`avr` first-run, mount-add flow, `stop --all`, isolation remembering, reset scoping, editor launch) assert call sequences without a VM. Project-configuration flows assert that unapproved packages and variables never reach `Shell`, that approval is never recorded without a terminal, and that sizes reach `EnsureMachine` only for an isolated environment on a `MachineSizer` (Property 23). Editor flows put the test binary on PATH under the editor's name and assert the argv it was actually executed with.
+- Full provider-neutral command flows (`avr` first-run, mount-add flow, `stop --all`, isolation remembering, reset scoping, editor launch) assert call sequences without a VM. Project-configuration flows assert that unapproved packages and variables never reach `Shell`, that approval is never recorded without a terminal, and that sizes reach `EnsureMachine` only for an isolated environment on a `MachineSizer` (Property 23); that a size over the host's capacity is refused with no provider operation but `HostCapacity` in the shell and editor flows, and with no delete or create in `reset`, and blocks nothing where it cannot apply (Property 25). Editor flows put the test binary on PATH under the editor's name and assert the argv it was actually executed with.
 - WSL2Provider tests run on ordinary Windows CI against a fake `wsl.exe` runner and temporary State_Dir, asserting exact argv arrays for import, selective mounts, shell, terminate, export/import and unregister. Tests reject any use of `wsl --shutdown` and any operation against a non-recorded distro.
 - Static import/lint rules fail if WSL-specific packages appear in `cmd/` or `internal/resolve` (Property 21).
 

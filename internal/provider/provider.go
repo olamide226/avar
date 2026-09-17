@@ -447,11 +447,18 @@ type PortDiagnoser interface {
 // and tells the user when it is absent, rather than passing a size the backend
 // would silently ignore (design §3.11; docs/lessons.md, "`--ssh-agent` was
 // accepted, plumbed, and did nothing").
+//
+// A backend that sizes machines also says what it sizes them against, so that
+// a size no machine on this computer could have is refused before anything is
+// created rather than handed to the backend to fail, or to be granted, minutes
+// later (design §3.11).
 type MachineSizer interface {
-	// SizesMachines marks the capability. It does nothing: whether a backend
-	// sizes machines individually is a fact about the backend, not an
-	// operation on one.
-	SizesMachines()
+	// HostCapacity reports the logical CPUs and physical memory of the
+	// computer the backend creates machines on. It is a read-only query.
+	//
+	// It never estimates: a caller refuses a size on the strength of this
+	// answer, so a capacity that cannot be read is an error, not a guess.
+	HostCapacity(ctx context.Context) (types.HostCapacity, error)
 }
 
 // MachineSpec fully describes the machine a caller wants to exist. It is the

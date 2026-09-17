@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/olamide226/avar/internal/envpolicy"
@@ -230,13 +231,148 @@ func installProjectPackages(ctx context.Context, app *App, p provider.Provider, 
 // file's cpus and memory for a project's own environment on a backend that
 // sizes machines individually, and the backend's defaults otherwise.
 func machineSize(p provider.Provider, target resolve.ResolvedTarget) (cpus int, memoryGB float64) {
-	if target.Kind != types.KindIsolated {
-		return 0, 0
-	}
-	if _, ok := p.(provider.MachineSizer); !ok {
+	if _, ok := projectSizer(p, target); !ok {
 		return 0, 0
 	}
 	return target.Config.CPUs, target.Config.MemoryGB()
+}
+
+// projectSizer returns the backend as a MachineSizer when the file's cpus and
+// memory would size the target's machine on creation: the file sets one of
+// them, the target is the project's own environment, and the backend sizes
+// machines individually.
+func projectSizer(p provider.Provider, target resolve.ResolvedTarget) (provider.MachineSizer, bool) {
+	if target.Config.ResourceDeclaration() == "" || target.Kind != types.KindIsolated {
+		return nil, false
+	}
+	sizer, ok := p.(provider.MachineSizer)
+	return sizer, ok
+}
+
+// refuseOversizedProjectSize refuses a file that asks for more CPUs or memory
+// than this computer has, when this invocation would create the project's own
+// environment at that size.
+//
+// It runs before any machine work, so nobody waits through a provision to be
+// told the file cannot be satisfied. An environment avar already has a record
+// of is not created again, so its size does not apply and nothing is refused:
+// adviseProjectResources says what the file would change instead. The record
+// is avar's own and read locally, so a warm invocation asks the backend
+// nothing.
+func refuseOversizedProjectSize(ctx context.Context, app *App, p provider.Provider, target resolve.ResolvedTarget) error {
+	if _, ok := projectSizer(p, target); !ok {
+		return nil
+	}
+	store, err := app.Store()
+	if err != nil {
+		return err
+	}
+	if _, exists, err := store.Machine(target.MachineName); err != nil || exists {
+		return err
+	}
+	return checkProjectSizeFits(ctx, p, target)
+}
+
+// checkProjectSizeFits refuses the file's cpus and memory if they exceed this
+// computer and would size the target's machine. `avr reset` calls it directly,
+// because it recreates an environment that exists.
+func checkProjectSizeFits(ctx context.Context, p provider.Provider, target resolve.ResolvedTarget) error {
+	sizer, ok := projectSizer(p, target)
+	if !ok {
+		return nil
+	}
+	cfg := target.Config
+	host, err := sizer.HostCapacity(ctx)
+	if err != nil {
+		return fmt.Errorf("check the cpus and memory %s asks for against this computer: %w\n"+
+			"     Remove cpus and memory from the file to let avar choose the size, then try again.", cfg.Path, err)
+	}
+	excess := cfg.ExceedsHost(host)
+	if len(excess) == 0 {
+		return nil
+	}
+	return oversizedProjectSizeError(cfg, host, excess)
+}
+
+// oversizedProjectSizeError says which sizes in the file this computer cannot
+// give, what it has, and what to do: lower them, or remove them and let avar
+// choose. There is no flag that overrides a size for one invocation, so none
+// is suggested.
+func oversizedProjectSizeError(cfg projconfig.Config, host types.HostCapacity, excess []projconfig.HostExcess) error {
+	var limits []string
+	for _, e := range excess {
+		limits = append(limits, fmt.Sprintf("%s to at most %s", e.Key, hostLimit(e, cfg, host)))
+	}
+	remedy := fmt.Sprintf("     Lower %s, or remove %s to let avar choose the size, then try again. Nothing was changed.",
+		strings.Join(limits, " and "), pluralize(len(excess), "that line", "those lines"))
+
+	if len(excess) == 1 {
+		return fmt.Errorf("%s line %d: %s\n%s", cfg.Path, excess[0].Line, excessPhrase(excess[0], cfg, host), remedy)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s asks for more than this computer has:\n", cfg.Path)
+	for _, e := range excess {
+		fmt.Fprintf(&b, "       line %d: %s\n", e.Line, excessPhrase(e, cfg, host))
+	}
+	b.WriteString(remedy)
+	return errors.New(b.String())
+}
+
+// hostExcessNote is a sentence for the advice given when the file's size cannot
+// apply, saying that it would also exceed this computer, or "" when it would
+// not or when the backend cannot say. Like the advice, it never fails.
+func hostExcessNote(ctx context.Context, p provider.Provider, cfg projconfig.Config) string {
+	sizer, ok := p.(provider.MachineSizer)
+	if !ok {
+		return ""
+	}
+	host, err := sizer.HostCapacity(ctx)
+	if err != nil {
+		return ""
+	}
+	excess := cfg.ExceedsHost(host)
+	if len(excess) == 0 {
+		return ""
+	}
+	phrases := make([]string, len(excess))
+	for i, e := range excess {
+		phrases[i] = excessPhrase(e, cfg, host)
+	}
+	return fmt.Sprintf("     It also asks for more than this computer has (%s), so avr would refuse to create an environment of that size until it is lowered.\n",
+		strings.Join(phrases, "; "))
+}
+
+// excessPhrase renders one excess with what the computer has, e.g.
+// `memory = "64GiB", but this computer has 16 GiB of memory`.
+func excessPhrase(e projconfig.HostExcess, cfg projconfig.Config, host types.HostCapacity) string {
+	if e.Key == "cpus" {
+		return fmt.Sprintf("%s, but this computer has %s", e.Setting, countLabel(host.CPUs, "CPU", "CPUs"))
+	}
+	return fmt.Sprintf("%s, but this computer has %s of memory", e.Setting, hostMemory(cfg, host))
+}
+
+// hostLimit is the largest value of the excess's key the file could hold on
+// this computer, in the unit the file used.
+func hostLimit(e projconfig.HostExcess, cfg projconfig.Config, host types.HostCapacity) string {
+	if e.Key == "cpus" {
+		return strconv.Itoa(host.CPUs)
+	}
+	if cfg.MemoryMiB%1024 != 0 {
+		return fmt.Sprintf("%d MiB", host.MemoryBytes>>20)
+	}
+	return fmt.Sprintf("%d GiB", host.MemoryBytes>>30)
+}
+
+// hostMemory renders the computer's memory in the unit the file used, so the
+// two numbers in a message can be compared at a glance. Gibibytes are shown
+// to a tenth, rounded down, so a host just short of a request never reads as
+// equal to it.
+func hostMemory(cfg projconfig.Config, host types.HostCapacity) string {
+	if cfg.MemoryMiB%1024 != 0 {
+		return fmt.Sprintf("%d MiB", host.MemoryBytes>>20)
+	}
+	tenths := (host.MemoryBytes * 10) >> 30
+	return formatGB(float64(tenths)/10) + " GiB"
 }
 
 // adviseProjectResources tells the user, once for each declaration, when the
@@ -274,6 +410,9 @@ func adviseProjectResources(ctx context.Context, app *App, p provider.Provider, 
 				"     Run `avr reset` to recreate it at the declared size; everything installed inside it is lost.\n",
 				cfg.Path, describeDeclared(cfg), describeSize(machine.CPUs, machine.MemoryGB))
 		}
+	}
+	if advice != "" {
+		advice += hostExcessNote(ctx, p, cfg)
 	}
 
 	store, err := app.Store()

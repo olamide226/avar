@@ -235,6 +235,7 @@ func TestRender_RoundTrips(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Parse(Render(%+v)): %v\n%s", c, err, body)
 		}
+		back.CPUsLine, back.MemoryLine = 0, 0
 		if !reflect.DeepEqual(back, c) {
 			t.Fatalf("Parse(Render(c)) = %+v, want %+v\n%s", back, c, body)
 		}

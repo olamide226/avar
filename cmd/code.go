@@ -133,6 +133,10 @@ func openInEditor(ctx context.Context, app *App, inv cli.Invocation, ed editor.E
 		}
 	}
 
+	if err := refuseOversizedProjectSize(ctx, app, p, target); err != nil {
+		return err
+	}
+
 	// The project's file is reviewed here as on the shell path, before any
 	// machine work, so that the environment an editor opens has the packages
 	// the user approved.

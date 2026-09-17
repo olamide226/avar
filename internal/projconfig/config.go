@@ -58,6 +58,12 @@ type Config struct {
 	CPUs      int
 	MemoryMiB int
 
+	// CPUsLine and MemoryLine are the lines of Path that set CPUs and
+	// MemoryMiB, zero when unset, so that a size refused after parsing can
+	// still say where the file asked for it.
+	CPUsLine   int
+	MemoryLine int
+
 	// Packages are names in Distro's own repositories, installed only after
 	// the user approves them. A file that lists packages always names Distro.
 	Packages []string
@@ -79,6 +85,33 @@ func (c Config) PackagesApplyTo(d types.Distro) bool {
 
 // MemoryGB is MemoryMiB in the gibibytes provider.MachineSpec takes.
 func (c Config) MemoryGB() float64 { return float64(c.MemoryMiB) / 1024 }
+
+// A HostExcess is one size the file asks for that is larger than the computer
+// it would be created on.
+type HostExcess struct {
+	// Key is the setting, "cpus" or "memory".
+	Key string
+	// Line is the line of the file that sets it.
+	Line int
+	// Setting is the setting as the file expresses it, e.g. memory = "64GiB".
+	Setting string
+}
+
+// ExceedsHost reports each size the file asks for that host does not have: cpus
+// above its logical CPUs, or memory above its physical memory. A size equal to
+// the host's is not an excess, and neither is a setting the file leaves out.
+// The result lists cpus before memory, as the schema does, and is empty when
+// everything fits.
+func (c Config) ExceedsHost(host types.HostCapacity) []HostExcess {
+	var out []HostExcess
+	if c.CPUs > host.CPUs {
+		out = append(out, HostExcess{Key: "cpus", Line: c.CPUsLine, Setting: fmt.Sprintf("cpus = %d", c.CPUs)})
+	}
+	if int64(c.MemoryMiB)<<20 > host.MemoryBytes {
+		out = append(out, HostExcess{Key: "memory", Line: c.MemoryLine, Setting: fmt.Sprintf("memory = %q", formatMemory(c.MemoryMiB))})
+	}
+	return out
+}
 
 // ResourceDeclaration renders what the file asks for in cpus and memory as a
 // stable string, or "" when it asks for neither. It identifies a declaration,
@@ -217,6 +250,12 @@ func Parse(path string, body []byte) (Config, error) {
 		}
 		if err := k.apply(&cfg, v); err != nil {
 			return Config{}, fail(line, "%s: %v", name, err)
+		}
+		switch name {
+		case "cpus":
+			cfg.CPUsLine = line
+		case "memory":
+			cfg.MemoryLine = line
 		}
 		i += consumed
 	}

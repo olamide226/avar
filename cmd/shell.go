@@ -57,6 +57,12 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 		}
 	}
 
+	// A size the project's file asks for that this computer does not have is
+	// refused here, before the grants review and before any machine work.
+	if err := refuseOversizedProjectSize(ctx, app, p, target); err != nil {
+		return err
+	}
+
 	// A project's .avr.toml may ask to install packages and forward variables.
 	// Neither happens without the user's approval, and the question comes
 	// before any machine work so nobody waits through a boot to be asked.
