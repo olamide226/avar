@@ -8,35 +8,28 @@
 // prints nothing and decides nothing about machines; the resolver consumes the
 // selection a Config carries, and the command layer everything else.
 //
-// The reader is strict where avar's global config.toml readers are lenient, and
-// deliberately so. A typo in the user's own global file must not stop a shell.
-// A project file travels with a repository, and misreading it applies an
-// environment its author did not write, so anything it cannot read exactly is
-// refused with the line and the reason.
+// The file is read by internal/tomlsubset, the strict reader avar's global
+// config.toml shares, and anything it cannot read exactly is refused with the
+// line and the reason: a project file travels with a repository, and misreading
+// it applies an environment its author did not write. This package owns only
+// what each key means.
 package projconfig
 
 import (
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/olamide226/avar/internal/tomlsubset"
 	"github.com/olamide226/avar/internal/types"
 )
 
 // FileName is the project configuration file avar reads from a project's
 // directory.
 const FileName = ".avr.toml"
-
-// maxFileSize bounds what Load will read. The schema fits in a few hundred
-// bytes; anything this large is not a configuration file avar should parse.
-const maxFileSize = 64 << 10
 
 // Config is what a project's .avr.toml asks for. A zero field means the file
 // has no opinion, and the zero Config is a project with no file at all.
@@ -132,337 +125,89 @@ func (c Config) ResourceDeclaration() string {
 // case and must change nothing (REQ-15.4).
 func Load(projectDir string) (Config, error) {
 	path := filepath.Join(projectDir, FileName)
-
-	f, err := os.Open(path)
-	if errors.Is(err, fs.ErrNotExist) {
+	body, found, err := tomlsubset.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("read the project configuration %s: %w", path, err)
+	}
+	if !found {
 		return Config{}, nil
 	}
-	if err != nil {
-		return Config{}, fmt.Errorf("read the project configuration %s: %w", path, err)
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
-	if err != nil {
-		return Config{}, fmt.Errorf("read the project configuration %s: %w", path, err)
-	}
-	if info.IsDir() {
-		return Config{}, fmt.Errorf("read the project configuration %s: it is a directory; avar expects a file there, or nothing", path)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
-	if err != nil {
-		return Config{}, fmt.Errorf("read the project configuration %s: %w", path, err)
-	}
-	if len(body) > maxFileSize {
-		return Config{}, fmt.Errorf("read the project configuration %s: it is larger than %d KiB, which no .avr.toml needs to be", path, maxFileSize>>10)
-	}
 	return Parse(path, body)
-}
-
-// key is one setting the schema knows.
-type key struct {
-	name  string
-	apply func(c *Config, v value) error
 }
 
 // schema is the whole of what .avr.toml may contain, in the order messages list
 // it. The schema is closed: a key that is not here is refused, because a
 // misspelt key that was quietly ignored would leave a team's environments
 // silently different.
-var schema = []key{
-	{name: "distro", apply: applyDistro},
-	{name: "arch", apply: applyArch},
-	{name: "cpus", apply: applyCPUs},
-	{name: "memory", apply: applyMemory},
-	{name: "packages", apply: applyPackages},
-	{name: "forward_env", apply: applyForwardEnv},
+var schema = tomlsubset.Schema{
+	File: FileName,
+	Keys: []tomlsubset.Key{
+		{Name: "distro", Kind: tomlsubset.String},
+		{Name: "arch", Kind: tomlsubset.String},
+		{Name: "cpus", Kind: tomlsubset.Integer},
+		{Name: "memory", Kind: tomlsubset.String},
+		{Name: "packages", Kind: tomlsubset.StringList},
+		{Name: "forward_env", Kind: tomlsubset.StringList},
+	},
 }
 
-// knownKeys renders the schema's key names for an error message.
-func knownKeys() string {
-	names := make([]string, 0, len(schema))
-	for _, k := range schema {
-		names = append(names, k.name)
-	}
-	return strings.Join(names, ", ")
-}
-
-func lookupKey(name string) (key, bool) {
-	for _, k := range schema {
-		if k.name == name {
-			return k, true
-		}
-	}
-	return key{}, false
+// appliers gives each key in schema its meaning.
+var appliers = map[string]func(c *Config, v tomlsubset.Value) error{
+	"distro":      applyDistro,
+	"arch":        applyArch,
+	"cpus":        applyCPUs,
+	"memory":      applyMemory,
+	"packages":    applyPackages,
+	"forward_env": applyForwardEnv,
 }
 
 // Parse reads the contents of a .avr.toml. path is used only in messages and
 // recorded as Config.Path.
 //
-// The accepted language is a strict subset of TOML, chosen so that every file
-// Parse accepts means the same to any conforming TOML parser: comments, bare
-// keys, quoted strings with no escape sequences, unsigned decimal integers, and
-// arrays of strings on one line or several. Every other construct TOML allows
-// is refused with the line it is on.
+// The accepted language is tomlsubset's strict subset of TOML, so every file
+// Parse accepts means the same to any conforming TOML parser, and every other
+// construct TOML allows is refused with the line it is on.
 func Parse(path string, body []byte) (Config, error) {
-	if !utf8.Valid(body) {
-		return Config{}, fmt.Errorf("%s: not valid UTF-8, which TOML requires", path)
-	}
 	cfg := Config{Path: path}
-	seen := map[string]int{}
-	lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
-
-	for i := 0; i < len(lines); i++ {
-		line := i + 1
-		fail := func(at int, format string, args ...any) error {
-			return fmt.Errorf("%s line %d: %s", path, at, fmt.Sprintf(format, args...))
+	packagesLine := 0
+	err := tomlsubset.Parse(path, body, schema, func(s tomlsubset.Setting) error {
+		if err := appliers[s.Key](&cfg, s.Value); err != nil {
+			return err
 		}
-
-		text := strings.TrimSpace(lines[i])
-		if text == "" || strings.HasPrefix(text, "#") {
-			continue
-		}
-		if strings.HasPrefix(text, "[") {
-			return Config{}, fail(line, "tables are not supported: every setting in %s is a top-level key (%s)", FileName, knownKeys())
-		}
-
-		name, rest, ok := strings.Cut(text, "=")
-		if !ok {
-			return Config{}, fail(line, "expected key = value, got %q", text)
-		}
-		name = strings.TrimSpace(name)
-		if err := checkKeyName(name); err != nil {
-			return Config{}, fail(line, "%v", err)
-		}
-		k, known := lookupKey(name)
-		if !known {
-			return Config{}, fail(line, "unknown key %q: %s understands %s (a key from a newer avar needs a newer avr)", name, FileName, knownKeys())
-		}
-		if first, dup := seen[name]; dup {
-			return Config{}, fail(line, "%q is already set on line %d; a key may appear only once", name, first)
-		}
-		seen[name] = line
-
-		v, consumed, err := parseValue(rest, lines[i+1:])
-		if err != nil {
-			return Config{}, fail(line+consumed, "%s: %v", name, err)
-		}
-		if err := k.apply(&cfg, v); err != nil {
-			return Config{}, fail(line, "%s: %v", name, err)
-		}
-		switch name {
+		switch s.Key {
 		case "cpus":
-			cfg.CPUsLine = line
+			cfg.CPUsLine = s.Line
 		case "memory":
-			cfg.MemoryLine = line
+			cfg.MemoryLine = s.Line
+		case "packages":
+			packagesLine = s.Line
 		}
-		i += consumed
+		return nil
+	})
+	if err != nil {
+		return Config{}, err
 	}
 
 	if len(cfg.Packages) > 0 && cfg.Distro == "" {
-		return Config{}, lineError(path, seen["packages"], `packages needs distro: package names belong to one distribution, so name it, for example distro = "ubuntu"`)
+		return Config{}, tomlsubset.LineError(path, packagesLine, `packages needs distro: package names belong to one distribution, so name it, for example distro = "ubuntu"`)
 	}
 	return cfg, nil
-}
-
-func lineError(path string, line int, msg string) error {
-	return fmt.Errorf("%s line %d: %s", path, line, msg)
-}
-
-// bareKey is TOML's bare-key alphabet.
-var bareKey = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-
-// checkKeyName refuses the key forms TOML has and this reader does not, so that
-// they fail as what they are rather than as an unknown key.
-func checkKeyName(name string) error {
-	switch {
-	case name == "":
-		return errors.New("a setting needs a key before the =")
-	case strings.ContainsAny(name, `"'`):
-		return fmt.Errorf("quoted keys are not supported: write the key bare, one of %s", knownKeys())
-	case strings.Contains(name, "."):
-		return fmt.Errorf("dotted keys are not supported: every setting is a top-level key, one of %s", knownKeys())
-	case !bareKey.MatchString(name):
-		return fmt.Errorf("%q is not a key: keys are letters, digits, - and _", name)
-	}
-	return nil
-}
-
-// valueKind is the TOML type of a parsed value.
-type valueKind int
-
-const (
-	kindString valueKind = iota
-	kindInteger
-	kindStrings
-)
-
-// value is one parsed right-hand side.
-type value struct {
-	kind    valueKind
-	str     string
-	integer int
-	strs    []string
-}
-
-// parseValue reads the text after "=": one value, then nothing but an optional
-// comment. An array may continue onto the following lines; consumed reports how
-// many of them it used, and on an error, which one the error is on.
-func parseValue(text string, following []string) (v value, consumed int, err error) {
-	text = strings.TrimSpace(text)
-	if text == "" || text[0] == '#' {
-		return value{}, 0, errors.New("no value after =")
-	}
-
-	var rest string
-	switch c := text[0]; {
-	case c == '"' || c == '\'':
-		v.kind = kindString
-		v.str, rest, err = parseString(text)
-	case c == '[':
-		v.kind = kindStrings
-		v.strs, rest, consumed, err = parseArray(text, following)
-	case c >= '0' && c <= '9':
-		v.kind = kindInteger
-		v.integer, rest, err = parseInteger(text)
-	default:
-		return value{}, 0, fmt.Errorf("%s is not a value this file accepts: write a quoted string, a whole number, or a list of quoted strings", describe(text))
-	}
-	if err != nil {
-		return value{}, consumed, err
-	}
-
-	rest = strings.TrimSpace(rest)
-	if rest != "" && !strings.HasPrefix(rest, "#") {
-		return value{}, consumed, fmt.Errorf("unexpected %q after the value", rest)
-	}
-	return v, consumed, nil
-}
-
-// parseString reads a basic ("...") or literal ('...') string at the start of
-// text and returns it with whatever follows.
-//
-// Escape sequences are refused rather than interpreted: nothing in the schema
-// needs one, and refusing them keeps this reader's meaning identical to TOML's
-// without implementing TOML's escape rules. A literal string has no escapes in
-// TOML either, so a backslash in one is refused only in a basic string.
-func parseString(text string) (string, string, error) {
-	quote := text[0]
-	if strings.HasPrefix(text, strings.Repeat(string(quote), 3)) {
-		return "", "", errors.New("multi-line strings are not supported")
-	}
-	end := strings.IndexByte(text[1:], quote)
-	if end < 0 {
-		return "", "", fmt.Errorf("string %s is not closed", text)
-	}
-	s := text[1 : 1+end]
-	if quote == '"' && strings.Contains(s, `\`) {
-		return "", "", errors.New(`escape sequences are not supported; use a literal string ('...') if a value really needs a backslash`)
-	}
-	for _, r := range s {
-		if (r < 0x20 && r != '\t') || r == 0x7f {
-			return "", "", errors.New("control characters are not allowed in a string")
-		}
-	}
-	return s, text[2+end:], nil
-}
-
-// parseArray reads an array of strings starting at text, continuing onto the
-// following lines until it closes. Comments and a trailing comma are allowed,
-// as TOML allows them; any element that is not a quoted string is refused.
-func parseArray(text string, following []string) (items []string, rest string, consumed int, err error) {
-	cur := text[1:]
-	wantComma := false
-	for {
-		cur = strings.TrimLeft(cur, " \t")
-		switch {
-		case cur == "" || cur[0] == '#':
-			if consumed == len(following) {
-				return nil, "", consumed, errors.New("the list is not closed with ]")
-			}
-			cur = following[consumed]
-			consumed++
-		case cur[0] == ']':
-			return items, cur[1:], consumed, nil
-		case wantComma && cur[0] == ',':
-			cur = cur[1:]
-			wantComma = false
-		case wantComma:
-			return nil, "", consumed, fmt.Errorf("expected , or ] in the list, found %q", cur)
-		case cur[0] == '"' || cur[0] == '\'':
-			var s string
-			s, cur, err = parseString(cur)
-			if err != nil {
-				return nil, "", consumed, err
-			}
-			items = append(items, s)
-			wantComma = true
-		default:
-			return nil, "", consumed, fmt.Errorf("lists in %s hold only quoted strings, and this one has %s", FileName, describe(cur))
-		}
-	}
-}
-
-// decimal is an unsigned TOML integer with no underscores or leading zeros.
-var decimal = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
-
-// parseInteger reads an unsigned decimal integer at the start of text.
-func parseInteger(text string) (int, string, error) {
-	end := strings.IndexAny(text, " \t#")
-	if end < 0 {
-		end = len(text)
-	}
-	token := text[:end]
-	if !decimal.MatchString(token) {
-		return 0, "", fmt.Errorf("%q is not a number this file accepts: write digits only, such as 4, with no underscores, leading zeros, decimals or dates", token)
-	}
-	n, err := strconv.Atoi(token)
-	if err != nil {
-		return 0, "", fmt.Errorf("%s is too large", token)
-	}
-	return n, text[end:], nil
-}
-
-// describe names the TOML construct a value looks like, so a refusal says what
-// was written rather than only what was expected.
-func describe(text string) string {
-	switch {
-	case text[0] == '{':
-		return "an inline table"
-	case text[0] == '[':
-		return "a nested list"
-	case strings.HasPrefix(text, "true") || strings.HasPrefix(text, "false"):
-		return "a boolean"
-	case strings.ContainsAny(text[:1], "+-0123456789") || strings.HasPrefix(text, "inf") || strings.HasPrefix(text, "nan"):
-		return "a signed number"
-	default:
-		return fmt.Sprintf("%q", text)
-	}
-}
-
-// wantKind refuses a value of the wrong type for a key, saying what it takes.
-func wantKind(v value, kind valueKind, example string) error {
-	if v.kind == kind {
-		return nil
-	}
-	return fmt.Errorf("takes %s", example)
 }
 
 // applyDistro reads distro = "name" or "name:version", the --distro syntax.
 // Whether avar supports the name and version is the resolver's question, where
 // it is answered the same way for the file as for the flag.
-func applyDistro(c *Config, v value) error {
-	if err := wantKind(v, kindString, `a quoted name, such as "ubuntu" or "ubuntu:24.04"`); err != nil {
+func applyDistro(c *Config, v tomlsubset.Value) error {
+	if err := v.Expect(tomlsubset.String, `a quoted name, such as "ubuntu" or "ubuntu:24.04"`); err != nil {
 		return err
 	}
-	name, version, hasVersion := strings.Cut(strings.TrimSpace(v.str), ":")
+	name, version, hasVersion := strings.Cut(strings.TrimSpace(v.Str), ":")
 	name, version = strings.TrimSpace(name), strings.TrimSpace(version)
 	if name == "" {
 		return errors.New(`names no distribution: write one such as "ubuntu", optionally with a version as "ubuntu:24.04"`)
 	}
 	if hasVersion && version == "" {
-		return fmt.Errorf("%q names no version after the colon: drop the colon to use %s's pinned version", v.str, name)
+		return fmt.Errorf("%q names no version after the colon: drop the colon to use %s's pinned version", v.Str, name)
 	}
 	c.Distro, c.Version = types.Distro(name), version
 	return nil
@@ -470,11 +215,11 @@ func applyDistro(c *Config, v value) error {
 
 // applyArch reads arch = "arm64" or "amd64". As with distro, support is checked
 // where the flag's is.
-func applyArch(c *Config, v value) error {
-	if err := wantKind(v, kindString, `a quoted architecture, "arm64" or "amd64"`); err != nil {
+func applyArch(c *Config, v tomlsubset.Value) error {
+	if err := v.Expect(tomlsubset.String, `a quoted architecture, "arm64" or "amd64"`); err != nil {
 		return err
 	}
-	arch := strings.TrimSpace(v.str)
+	arch := strings.TrimSpace(v.Str)
 	if arch == "" {
 		return errors.New(`names no architecture: write "arm64" or "amd64"`)
 	}
@@ -483,14 +228,14 @@ func applyArch(c *Config, v value) error {
 }
 
 // applyCPUs reads cpus = N.
-func applyCPUs(c *Config, v value) error {
-	if err := wantKind(v, kindInteger, "a whole number, such as cpus = 4"); err != nil {
+func applyCPUs(c *Config, v tomlsubset.Value) error {
+	if err := v.Expect(tomlsubset.Integer, "a whole number, such as cpus = 4"); err != nil {
 		return err
 	}
-	if v.integer < 1 {
+	if v.Int < 1 {
 		return errors.New("must be at least 1")
 	}
-	c.CPUs = v.integer
+	c.CPUs = v.Int
 	return nil
 }
 
@@ -500,18 +245,18 @@ func applyCPUs(c *Config, v value) error {
 var memorySize = regexp.MustCompile(`^([1-9][0-9]*)(GiB|MiB)$`)
 
 // applyMemory reads memory = "8GiB" or "512MiB".
-func applyMemory(c *Config, v value) error {
+func applyMemory(c *Config, v tomlsubset.Value) error {
 	const example = `a quoted size in GiB or MiB, such as memory = "8GiB"`
-	if err := wantKind(v, kindString, example); err != nil {
+	if err := v.Expect(tomlsubset.String, example); err != nil {
 		return err
 	}
-	m := memorySize.FindStringSubmatch(strings.TrimSpace(v.str))
+	m := memorySize.FindStringSubmatch(strings.TrimSpace(v.Str))
 	if m == nil {
-		return fmt.Errorf("%q is not a size avar reads: write %s", v.str, example)
+		return fmt.Errorf("%q is not a size avar reads: write %s", v.Str, example)
 	}
 	n, err := strconv.Atoi(m[1])
 	if err != nil || n > 1<<20 {
-		return fmt.Errorf("%q is too large", v.str)
+		return fmt.Errorf("%q is too large", v.Str)
 	}
 	if m[2] == "GiB" {
 		n *= 1024
@@ -541,11 +286,11 @@ var packageName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._-]*$`)
 func ValidPackageName(name string) bool { return packageName.MatchString(name) }
 
 // applyPackages reads packages = ["name", ...].
-func applyPackages(c *Config, v value) error {
-	if err := wantKind(v, kindStrings, `a list of quoted package names, such as packages = ["ripgrep", "jq"]`); err != nil {
+func applyPackages(c *Config, v tomlsubset.Value) error {
+	if err := v.Expect(tomlsubset.StringList, `a list of quoted package names, such as packages = ["ripgrep", "jq"]`); err != nil {
 		return err
 	}
-	names, err := distinct(v.strs, "package", func(name string) error {
+	names, err := distinct(v.Strs, "package", func(name string) error {
 		if !ValidPackageName(name) {
 			return fmt.Errorf("%q is not a package name avar will install: names start with a letter or digit and hold only letters, digits and + . _ -", name)
 		}
@@ -558,20 +303,12 @@ func applyPackages(c *Config, v value) error {
 	return nil
 }
 
-// variableName is a portable environment variable name.
-var variableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 // applyForwardEnv reads forward_env = ["NAME", ...].
-func applyForwardEnv(c *Config, v value) error {
-	if err := wantKind(v, kindStrings, `a list of quoted variable names, such as forward_env = ["GITHUB_TOKEN"]`); err != nil {
+func applyForwardEnv(c *Config, v tomlsubset.Value) error {
+	if err := v.Expect(tomlsubset.StringList, `a list of quoted variable names, such as forward_env = ["GITHUB_TOKEN"]`); err != nil {
 		return err
 	}
-	names, err := distinct(v.strs, "variable", func(name string) error {
-		if !variableName.MatchString(name) {
-			return fmt.Errorf("%q is not a variable name: names are letters, digits and _, and do not start with a digit", name)
-		}
-		return nil
-	})
+	names, err := distinct(v.Strs, "variable", types.CheckVariableName)
 	if err != nil {
 		return err
 	}

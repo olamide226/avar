@@ -101,13 +101,14 @@ avr -- open file.txt
 ### An error naming .avr.toml and a line
 
 ```text
-avr: /Users/you/code/app/.avr.toml line 3: unknown key "packges": .avr.toml understands <keys> (a key from a newer avar needs a newer avr)
+avr: /Users/you/code/app/.avr.toml line 3: unknown key "packges": did you mean packages? .avr.toml understands <keys>
 ```
 
 The reader is strict, and a file it cannot read completely stops the command
 before any machine work. avar never applies part of a file. Fix the line
 the message names; the [reader's rules]({% link syntax/avr-toml.md %}#what-the-reader-accepts)
-list what it accepts.
+list what it accepts. A key that is not a near miss of a known one says instead
+that a key from a newer avar needs a newer `avr`.
 
 ### "… which needs your approval first"
 

@@ -1,15 +1,15 @@
 package projconfig
 
 import (
-	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/olamide226/avar/internal/tomlsubset"
+	"github.com/olamide226/avar/internal/tomlsubset/tomltest"
 	"github.com/olamide226/avar/internal/types"
 )
 
@@ -242,7 +242,7 @@ func TestLoad_RefusesADirectoryInPlaceOfTheFile(t *testing.T) {
 
 func TestLoad_RefusesAnOversizedFile(t *testing.T) {
 	dir := t.TempDir()
-	body := "# " + strings.Repeat("x", maxFileSize) + "\n"
+	body := "# " + strings.Repeat("x", tomlsubset.MaxFileSize) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestLoad_ReportsParseErrorsWithThePath(t *testing.T) {
 // host has it. Where it does not, the test says so and skips rather than
 // passing.
 func TestParse_AgreesWithAConformingTOMLParser_REQ_15_1(t *testing.T) {
-	python := conformingTOMLParser(t)
+	tomllib := tomltest.Parser(t)
 
 	for _, body := range acceptedFixtures {
 		t.Run(body, func(t *testing.T) {
@@ -279,17 +279,7 @@ func TestParse_AgreesWithAConformingTOMLParser_REQ_15_1(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Parse(%q): %v", body, err)
 			}
-
-			cmd := exec.Command(python, "-c", "import json, sys, tomllib; print(json.dumps(tomllib.loads(sys.stdin.read())))")
-			cmd.Stdin = strings.NewReader(body)
-			out, err := cmd.Output()
-			if err != nil {
-				t.Fatalf("tomllib refused a file this reader accepts, %q: %v", body, err)
-			}
-			var theirs map[string]any
-			if err := json.Unmarshal(out, &theirs); err != nil {
-				t.Fatalf("reading tomllib's answer %s: %v", out, err)
-			}
+			theirs := tomllib(t, body)
 			if ours := document(cfg); !reflect.DeepEqual(ours, theirs) {
 				t.Errorf("for %q this reader understood %v and tomllib %v", body, ours, theirs)
 			}
@@ -337,34 +327,10 @@ func document(c Config) map[string]any {
 		doc["memory"] = formatMemory(c.MemoryMiB)
 	}
 	if c.Packages != nil {
-		doc["packages"] = strings2any(c.Packages)
+		doc["packages"] = tomltest.Strings(c.Packages)
 	}
 	if c.ForwardEnv != nil {
-		doc["forward_env"] = strings2any(c.ForwardEnv)
+		doc["forward_env"] = tomltest.Strings(c.ForwardEnv)
 	}
 	return doc
-}
-
-func strings2any(in []string) []any {
-	out := make([]any, len(in))
-	for i, s := range in {
-		out[i] = s
-	}
-	return out
-}
-
-// conformingTOMLParser finds a Python with tomllib (3.11 or later), or skips.
-func conformingTOMLParser(t *testing.T) string {
-	t.Helper()
-	for _, name := range []string{"python3", "python"} {
-		path, err := exec.LookPath(name)
-		if err != nil {
-			continue
-		}
-		if exec.Command(path, "-c", "import tomllib").Run() == nil {
-			return path
-		}
-	}
-	t.Skip("no Python with tomllib on PATH, so the reader cannot be compared with a conforming TOML parser here")
-	return ""
 }
