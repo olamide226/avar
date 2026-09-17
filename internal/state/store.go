@@ -148,9 +148,8 @@ func Open(root string, opts ...Option) (*Store, error) {
 // Root is the State_Dir this store owns.
 func (s *Store) Root() string { return s.root }
 
-// ConfigPath is the user-editable global defaults file. The store neither
-// writes nor parses it (task 22 owns that); it only guarantees the directory
-// it lives in.
+// ConfigPath is the user's hand-edited global configuration file, config.toml.
+// The store never writes it; Config reads it.
 func (s *Store) ConfigPath() string { return s.path(configFile) }
 
 // SSHDir holds avar-owned SSH configuration (`avr code`, task 19).

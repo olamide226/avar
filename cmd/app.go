@@ -38,12 +38,15 @@ type App struct {
 
 	once struct {
 		store    sync.Once
+		config   sync.Once
 		provider sync.Once
 	}
-	store    *state.Store
-	storeErr error
-	prov     provider.Provider
-	provErr  error
+	store     *state.Store
+	storeErr  error
+	config    state.Config
+	configErr error
+	prov      provider.Provider
+	provErr   error
 
 	// terminal replaces the check for an interactive terminal when set, so
 	// that flow tests can prove both what avar asks a person and what it
@@ -153,6 +156,21 @@ func (a *App) Store() (*state.Store, error) {
 		a.store = st
 	})
 	return a.store, a.storeErr
+}
+
+// Config reads the user's global config.toml, once per invocation, so that the
+// check dispatch makes before running a command and the command's own use of a
+// setting see the same file.
+func (a *App) Config() (state.Config, error) {
+	a.once.config.Do(func() {
+		store, err := a.Store()
+		if err != nil {
+			a.configErr = err
+			return
+		}
+		a.config, a.configErr = store.Config()
+	})
+	return a.config, a.configErr
 }
 
 // Provider returns the backend for this host, ensuring its dependencies first.

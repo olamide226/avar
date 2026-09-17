@@ -51,8 +51,13 @@ func registerGuest(h Handler) {
 	guestHandler = h
 }
 
-// dispatch routes a parsed invocation to its registered handler.
+// dispatch routes a parsed invocation to its registered handler, once the
+// user's config.toml has been read (see checkUserConfig).
 func dispatch(ctx context.Context, app *App, inv cli.Invocation) error {
+	if err := checkUserConfig(app, inv); err != nil {
+		return err
+	}
+
 	switch inv.Mode {
 	case cli.ModeShell, cli.ModeGuestCommand:
 		if guestHandler == nil {

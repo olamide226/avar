@@ -2,93 +2,140 @@ package state
 
 import (
 	"fmt"
-	"os"
 	"strings"
+	"time"
+
+	"github.com/olamide226/avar/internal/tomlsubset"
+	"github.com/olamide226/avar/internal/types"
 )
 
-// ConfigList reads a list-valued key from the user's config.toml, such as
+// Config is what the user's global config.toml asks for. The zero Config is a
+// State_Dir with no config.toml, and means avar's defaults.
 //
-//	forward_env = ["AWS_PROFILE", "GITHUB_TOKEN"]
+//	idle_timeout = "2h"                # how long an environment may sit unused before it is stopped
+//	forward_env  = ["AWS_PROFILE"]     # host variables forwarded into every session
+type Config struct {
+	// Path is the file the configuration was read from. Empty when there is
+	// no file.
+	Path string
+
+	// IdleTimeout is how long an environment may go without a session before
+	// avar stops it, and IdleTimeoutSet reports whether the file sets it at
+	// all. A set IdleTimeout of zero means never stop anything automatically.
+	IdleTimeout    time.Duration
+	IdleTimeoutSet bool
+
+	// ForwardEnv names host variables the user grants to every guest session,
+	// in the order the file lists them (REQ-12.4).
+	ForwardEnv []string
+}
+
+// configSchema is the whole of what config.toml may contain.
 //
-// A missing file, a missing key, or a value that is not a list all return no
-// entries and no error: config.toml is optional and hand-edited, and a typo in
-// it must not stop the user from getting a shell. The cost of that choice is
-// that a malformed entry is silently ignored, which is why the caller is
-// expected to be able to show what it did read — `avr status` does.
-//
-// The parser is deliberately small rather than a TOML dependency: avar owns two
-// keys, both flat, and the standard-library-first rule in CLAUDE.md makes a
-// parser for the whole format hard to justify. It understands a single-line
-// list and a list spread over several lines, with # comments, which is the
-// whole of what these keys can be.
-func (s *Store) ConfigList(key string) ([]string, error) {
-	data, err := os.ReadFile(s.ConfigPath())
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+// It is closed for the reason .avr.toml's is: a misspelt key quietly ignored
+// leaves the user believing a setting applied that never did. Keys that belong
+// in a project's .avr.toml are refused with a message saying so, rather than as
+// unknown, because writing one here is a reasonable guess that avar does not
+// support yet, not a typo.
+var configSchema = tomlsubset.Schema{
+	File: configFile,
+	Keys: []tomlsubset.Key{
+		{Name: "idle_timeout", Kind: tomlsubset.String},
+		{Name: "forward_env", Kind: tomlsubset.StringList},
+	},
+	Unsupported: map[string]string{
+		"distro":   `distro is not supported in config.toml yet: avar has no global default distribution. Remove this line, and choose one for a project in its .avr.toml, as in distro = "fedora", or for one command with avr --distro fedora`,
+		"arch":     `arch is not supported in config.toml yet: avar has no global default architecture. Remove this line, and choose one for a project in its .avr.toml, as in arch = "amd64", or for one command with avr --arch amd64`,
+		"cpus":     `cpus is not supported in config.toml yet: avar has no global default size. Remove this line; a project can size its own isolated environment in its .avr.toml, as in cpus = 4`,
+		"memory":   `memory is not supported in config.toml yet: avar has no global default size. Remove this line; a project can size its own isolated environment in its .avr.toml, as in memory = "8GiB"`,
+		"packages": `packages is not supported in config.toml: package names belong to one distribution, so they are listed per project. Remove this line, and list them in a project's .avr.toml next to its distro, as in packages = ["jq"]`,
+	},
+}
+
+// Config reads config.toml from the State_Dir. A State_Dir without one yields
+// the zero Config and no error. Anything the strict reader cannot read exactly
+// is an error naming the file, the line, the key and what to write instead:
+// config.toml is only ever edited by hand, and the setting it fails to apply is
+// one the user believes is in force.
+func (s *Store) Config() (Config, error) {
+	path := s.ConfigPath()
+	body, found, err := tomlsubset.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", s.ConfigPath(), err)
+		return Config{}, fmt.Errorf("read avar's configuration %s: %w", path, err)
 	}
-	return parseConfigList(string(data), key), nil
+	if !found {
+		return Config{}, nil
+	}
+	return ParseConfig(path, body)
 }
 
-// parseConfigList extracts key's list value from TOML text. It is separate from
-// ConfigList so that it can be tested without a state directory.
-func parseConfigList(body, key string) []string {
-	var (
-		collecting bool
-		raw        strings.Builder
-	)
-	for _, line := range strings.Split(body, "\n") {
-		line = stripComment(line)
-		if !collecting {
-			name, value, ok := strings.Cut(line, "=")
-			if !ok || strings.TrimSpace(name) != key {
-				continue
-			}
-			value = strings.TrimSpace(value)
-			if !strings.HasPrefix(value, "[") {
-				// A scalar under a list-valued key: not something this
-				// function can answer, and not worth failing a shell over.
-				return nil
-			}
-			raw.WriteString(strings.TrimPrefix(value, "["))
-			if strings.Contains(value, "]") {
-				break
-			}
-			collecting = true
-			continue
+// ParseConfig reads the contents of a config.toml. path is used only in
+// messages and recorded as Config.Path.
+func ParseConfig(path string, body []byte) (Config, error) {
+	cfg := Config{Path: path}
+	err := tomlsubset.Parse(path, body, configSchema, func(s tomlsubset.Setting) error {
+		switch s.Key {
+		case "idle_timeout":
+			return applyIdleTimeout(&cfg, s.Value)
+		case "forward_env":
+			return applyForwardEnv(&cfg, s.Value)
 		}
-
-		if idx := strings.Index(line, "]"); idx >= 0 {
-			raw.WriteString(line[:idx])
-			break
-		}
-		raw.WriteString(line)
+		return fmt.Errorf("internal error: config.toml key %q has no meaning", s.Key)
+	})
+	if err != nil {
+		return Config{}, err
 	}
-
-	var out []string
-	for _, field := range strings.Split(strings.TrimSuffix(raw.String(), "]"), ",") {
-		if item := strings.Trim(strings.TrimSpace(field), `"'`); item != "" {
-			out = append(out, item)
-		}
-	}
-	return out
+	return cfg, nil
 }
 
-// stripComment removes a trailing # comment, respecting quotes so that a "#"
-// inside a value is kept.
-func stripComment(line string) string {
-	inQuote := byte(0)
-	for i := 0; i < len(line); i++ {
-		switch c := line[i]; {
-		case inQuote != 0 && c == inQuote:
-			inQuote = 0
-		case inQuote == 0 && (c == '"' || c == '\''):
-			inQuote = c
-		case inQuote == 0 && c == '#':
-			return line[:i]
+// idleTimeoutFix is what to write, for every idle_timeout avar cannot read.
+const idleTimeoutFix = `write a quoted duration with a unit, such as idle_timeout = "30m" or "2h", or idle_timeout = "0" to never stop environments automatically`
+
+// applyIdleTimeout reads idle_timeout = "2h", a Go duration.
+//
+// Two forms are accepted beyond a positive duration because files written for
+// earlier versions of avar used them and meant exactly this: the bare integer
+// 0, and a negative duration, both of which turn auto-stop off.
+func applyIdleTimeout(c *Config, v tomlsubset.Value) error {
+	switch {
+	case v.Kind == tomlsubset.Integer && v.Int == 0:
+		c.IdleTimeout, c.IdleTimeoutSet = 0, true
+		return nil
+	case v.Kind == tomlsubset.Integer:
+		return fmt.Errorf("%d has no unit, so avar cannot tell minutes from hours: write it quoted with one, as in idle_timeout = \"%dh\" or \"%dm\"", v.Int, v.Int, v.Int)
+	}
+	if err := v.Expect(tomlsubset.String, "a quoted duration, such as idle_timeout = \"2h\""); err != nil {
+		return err
+	}
+
+	d, err := time.ParseDuration(strings.TrimSpace(v.Str))
+	if err != nil {
+		return fmt.Errorf("%q is not a duration: %s", v.Str, idleTimeoutFix)
+	}
+	c.IdleTimeout, c.IdleTimeoutSet = max(d, 0), true
+	return nil
+}
+
+// applyForwardEnv reads forward_env = ["NAME", ...].
+//
+// A name listed twice is kept once rather than refused, as .avr.toml refuses
+// it: this list has only ever been read as a set, so a repeat changes nothing
+// the user meant.
+func applyForwardEnv(c *Config, v tomlsubset.Value) error {
+	if err := v.Expect(tomlsubset.StringList, `a list of quoted variable names, such as forward_env = ["AWS_PROFILE", "GITHUB_TOKEN"]`); err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(v.Strs))
+	var names []string
+	for _, name := range v.Strs {
+		if err := types.CheckVariableName(name); err != nil {
+			return fmt.Errorf("%w; list each variable as its own quoted name, as in forward_env = [\"AWS_PROFILE\", \"GITHUB_TOKEN\"]", err)
+		}
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
 		}
 	}
-	return line
+	c.ForwardEnv = names
+	return nil
 }

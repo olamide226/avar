@@ -415,6 +415,14 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 13.5, 13.6, 15.1, 15.3, 16.2, 18.9, 5.2_
   - _writes: e2e/** (tests that capture what was verified), this file_
 
+- [ ] 44. Read `config.toml` with the strict reader
+  - Maintainer decision (2026-09-17): replace the lenient `state.parseConfigList` and `session.parseTOMLKey` with the strict TOML-subset reader `.avr.toml` uses. Each silently misread a file: a misspelt key was ignored, `idle_timeout="0"` without spaces left auto-stop on, and a comma inside a quoted `forward_env` name split it into two grants. A failing flow test for each was written against the old code first.
+  - Extract `.avr.toml`'s lexical layer into `internal/tomlsubset` (no avar imports; closed `Schema`, near-miss key suggestions, unquoted-string hint, `ReadFile` with the 64 KiB cap) without changing what `.avr.toml` accepts. `config.toml`'s schema (`idle_timeout`, `forward_env`) lives in `internal/state` as `Store.Config`/`ParseConfig`; `distro`, `arch`, `cpus`, `memory` and `packages` are refused as not supported there. `types.CheckVariableName` is shared by both files. The `tomllib` agreement test covers both files through `internal/tomlsubset/tomltest`.
+  - A file that cannot be read exactly refuses every command in `cmd` dispatch before resolving or machine work, except `status`, `stop` and `destroy`, which say so and run; `help` and `version` never read it. The scheduled idle check stops nothing and exits non-zero. Callers: `dispatch` (`checkUserConfig`), `runGuest` (`forward_env`), `runIdleCheck` (`idle_timeout`).
+  - Design §3.11's precedence table listed a global `config.toml` distro/arch layer that the code never filled; the table is corrected to the code and the choice of adding one is left to the maintainer.
+  - _Requirements: 17.7, 5.5, 12.4_
+  - _writes: internal/tomlsubset/**, internal/projconfig/config.go, internal/projconfig/config_test.go, internal/state/config.go, internal/state/config_test.go, internal/state/store.go, internal/session/idle.go, internal/session/session_test.go, internal/types/variable.go, cmd/app.go, cmd/dispatch.go, cmd/dispatch_test.go, cmd/userconfig.go, cmd/userconfig_test.go, cmd/shell.go, cmd/internal_idle.go, README.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

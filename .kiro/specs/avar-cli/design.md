@@ -85,7 +85,7 @@ graph TD
 
 1. **Parse**: `internal/cli.Parse` splits argv — avar's selector flags up to the first non-flag token; everything after is the guest command (Req 2.5). `--` forces the boundary (Req 2.6).
 2. **Select provider**: `internal/platform` maps the host OS to one provider ID (`lima` or `wsl2`). Unsupported hosts fail before state or dependency mutation.
-3. **Resolve**: `Resolver` computes the Environment_Selector from flags → project record → the project's `.avr.toml` → global config → defaults (§3.11) and includes ProviderID in environment identity. Project_Identity hashes the platform-canonical host path (§3.2).
+3. **Resolve**: `Resolver` computes the Environment_Selector from flags → project record → the project's `.avr.toml` → defaults (§3.11) and includes ProviderID in environment identity. Project_Identity hashes the platform-canonical host path (§3.2).
 4. **Ensure deps**: the selected dependency checker validates Lima on macOS or WSL 2 on Windows; no unrelated runtime is checked or installed.
 5. **Plan mapping**: the provider maps `(project root, cwd)` to a `MountSpec` plus GuestCwd. Lima preserves the path; WSL uses a deterministic root beneath `/mnt/avr/projects/`.
 6. **Ensure environment**: Provider creates (first use) or starts the target and reconciles the desired mount set. Slow or restart-requiring work is explained through `ProgressSink`.
@@ -109,6 +109,8 @@ cmd/  ─────────────────┐
   ├── internal/deps    │
   └── internal/provider┘   (provider/lima, provider/wsl2, provider/fake implement it)
 ```
+
+`internal/tomlsubset` is the strict TOML-subset reader both configuration files share (§3.3, §3.11). Like `internal/types` it imports no other avar package; each file's schema stays with the package that owns the file.
 
 `internal/platform` is the only place allowed to branch on `runtime.GOOS`; it returns a provider factory, dependency checker, State_Dir resolver, and background-scheduler adapter. `internal/provider` owns `Provider` and its operation structs because they describe backend operations rather than shared vocabulary. Nothing in `cmd/` or `internal/resolve` may reference Lima, WSL, `limactl`, or `wsl.exe` (Req 17.3, 18.14).
 
@@ -175,7 +177,7 @@ func Resolve(provider ProviderID, cwd string, flags Flags, st *state.Store) (Res
 
 *(Amended during task 4.* The isolated name originally omitted the environment, which made a project's isolated machine identified by the project alone. An isolated environment is derived from a clean base image of **the selected** (distro, arch) — Req 11.1 — so the environment is part of what identifies it: without it, `avr --isolate --distro fedora` in a project already isolated on Ubuntu resolves to the existing Ubuntu machine and silently hands the user the wrong distribution (Req 4.2). It also keeps isolation consistent with Req 4.3, where each distinct (distro, arch) already gets its own machine. The project hash still guarantees the name is stable from any depth within the project. Longest name in the current matrix: 37 characters.)*
 
-**Precedence**: explicit flags > project record (remembered isolation, Req 11.2) > the project's `.avr.toml` (distro/arch only, §3.11) > global State_Dir `config.toml` defaults > built-in defaults (ubuntu 24.04, host-native arch, shared). On WSL2Provider, a foreign architecture fails capability validation before any environment is created (Req 18.6).
+**Precedence**: explicit flags > project record (remembered isolation, Req 11.2) > the project's `.avr.toml` (distro/arch only, §3.11) > built-in defaults (ubuntu 24.04, host-native arch, shared). The State_Dir `config.toml` supplies no distro or arch default (§3.3). On WSL2Provider, a foreign architecture fails capability validation before any environment is created (Req 18.6).
 
 **Project identity**: macOS keeps `EvalSymlinks(abs(cwd))`. Windows first resolves the volume and final path, converts separators to `\`, removes non-root trailing separators, normalizes drive-letter/UNC casing using case-insensitive comparison semantics, and hashes a prefixed key such as `windows:c:\users\ola\code\app`. Display casing remains in `ProjectRecord.Path`; only `PathKey` is normalized. This prevents `C:\Code\App`, `c:/code/app`, and equivalent separator spellings from creating different records (Req 18.13).
 
@@ -190,7 +192,7 @@ Layout:
 ```
 <State_Dir>/                    # ~/.avr on macOS; %LocalAppData%\avar on Windows
   schema.json        # state schema version + completed migrations
-  config.toml        # user-editable global defaults (idle timeout, resources, forward_env allowlist)
+  config.toml        # the user's hand-edited settings: idle_timeout, forward_env (below)
   projects.json      # Project_Identity → ProjectRecord
   machines.json      # machines avar created: name → MachineRecord
   sessions.json      # live session pids per machine (idle-stop input)
@@ -204,6 +206,26 @@ Layout:
 Windows uses `ReplaceFile`/`MoveFileEx` semantics for atomic replacement rather than assuming POSIX `rename`; directory creation grants only the current Windows user and administrators access. State schema v2 migrates existing `Mounts []string` entries into `MountSpec{HostPath: p, GuestPath: p}` and `VMType` into `Runtime`, assigning `Provider: "lima"` to pre-Windows records.
 
 `operations.json` records intent before an external create, restore, or destructive unregister. A reconciler may adopt or remove an unrecorded backend environment only when a matching pending operation and on-guest avar marker prove ownership. A name prefix alone never authorizes mutation.
+
+#### `config.toml`: the user's own settings, read exactly (Req 17.7)
+
+`config.toml` is optional, written only by the user, and never by avar. Its schema is closed and has two keys, which are the two settings the code reads from it:
+
+```toml
+idle_timeout = "2h"                # Go duration; "0" disables idle stop (Req 5.5, §3.8)
+forward_env  = ["AWS_PROFILE"]     # standing grant of host variables to every session (Req 12.4, §3.10)
+```
+
+`state.Store.Config` reads it with `internal/tomlsubset`, the strict reader `.avr.toml` uses (§3.11), and returns a `state.Config`. A missing file is the zero `Config`, which means avar's defaults. `idle_timeout` accepts a quoted Go duration, plus two forms files written for the lenient reader used with the meaning intended: the integer `0` and a negative duration, both of which disable idle stop. A `forward_env` name must be a portable variable name (`types.CheckVariableName`, shared with `.avr.toml`); a name listed twice is kept once, because the list has only ever been read as a set. `distro`, `arch`, `cpus`, `memory` and `packages` are refused with a message saying they are not supported in `config.toml` and where to set them instead, rather than as unknown keys, since writing one there is a reasonable guess and not a typo. Global distro and arch defaults remain a possible future layer (§3.11 precedence); they are not accepted until they do something.
+
+**Maintainer decision, 2026-09-17: fail rather than guess.** This file was previously read by two hand-rolled readers, `state.parseConfigList` and `session.parseTOMLKey`, which were deliberately lenient on the principle that a typo in the user's own file must never stop a shell. That principle produced silent misreads, each confirmed in code and each proven by a test that failed against it: a misspelt key such as `idle_timout` was ignored; `parseTOMLKey` matched only the literal prefix `idle_timeout = `, so `idle_timeout="0"` left auto-stop on; and `parseConfigList` split on every comma, so `forward_env = ["A,B"]` granted two variables nobody listed. A setting that silently does not apply is worse than a command that stops, because the user believes it is in force. The readers were replaced, not repaired.
+
+When the file cannot be read exactly:
+
+- **Every command refuses before any machine work** — before resolving, which would register a project — with exit 1, the file's full path, the line, the key, what to write instead, and a suggested key when the unknown one is a near miss (edit distance ≤ 1, or ≤ 2 for keys of eight letters or more). The check lives in `cmd` dispatch (`checkUserConfig`) so that no command can forget it, and `App.Config` caches the one read so the command's own use sees the same parse.
+- **`help` and `version` still work.** They are answered before dispatch and never read the file.
+- **`status`, `stop` and `destroy` still work,** after printing the error and saying that other commands, and idle stop, are paused until the file is fixed. None of them reads a setting from the file, and a broken setting must not stop the user from seeing or releasing what avar is running. `reset`, `snapshot`, `isolate` and the rest are refused: they are not needed to recover, and the maintainer's default is to fail.
+- **The scheduled idle check stops nothing and exits non-zero.** Nobody is watching it, and no guess is safe: falling back to the two-hour default would stop the environments of the user whose broken line was `idle_timeout = "0"`. The non-zero exit is recorded by launchd or Task Scheduler as the last result, and the next interactive `avr` names the line. Idle stop resumes on the first check after the file is fixed.
 
 **Does not**: know how Lima or WSL operates. Backend reality (`limactl` or `wsl.exe`) remains the source of truth; the provider reconciles that reality with avar's records and operation journal.
 
@@ -424,7 +446,7 @@ Using imported distributions avoids first-launch username prompts and prevents a
 **Purpose**: Track active sessions (Req 5.1 "in use", Req 5.5 idle stop) independent of provider.
 
 - On attach, append `{machine, pid, started_at}` to `sessions.json`; remove on exit (defer + best-effort). Stale entries (dead pid) are pruned on every read.
-- Idle stop: avar installs (with one-time notice) a per-user scheduled invocation of `avr internal idle-check` every 10 minutes: `launchd` on macOS, Task Scheduler on Windows. For each running or stopped avar environment with zero live sessions and `last_activity + IdleTimeout < now`, call its recorded Provider's `Stop`, which converges on stopped and releases anything a stopped machine left behind (task 41). `idle_timeout = "0"` disables it. Registration is checked on every environment-creating invocation for one file read, and repaired when it names a binary other than the running one (the plist's content on macOS, a stamp file on Windows). A launchd agent the user has unloaded is corrected on disk but not reloaded. Flow tests replace registration through `App.scheduleIdleCheck`, so no test reaches the real scheduler.
+- Idle stop: avar installs (with one-time notice) a per-user scheduled invocation of `avr internal idle-check` every 10 minutes: `launchd` on macOS, Task Scheduler on Windows. For each running or stopped avar environment with zero live sessions and `last_activity + IdleTimeout < now`, call its recorded Provider's `Stop`, which converges on stopped and releases anything a stopped machine left behind (task 41). `idle_timeout = "0"` disables it, and a `config.toml` that cannot be read stops nothing (§3.3). Registration is checked on every environment-creating invocation for one file read, and repaired when it names a binary other than the running one (the plist's content on macOS, a stamp file on Windows). A launchd agent the user has unloaded is corrected on disk but not reloaded. Flow tests replace registration through `App.scheduleIdleCheck`, so no test reaches the real scheduler.
 - Windows Task Scheduler registration uses the current user's token and the absolute `avr.exe` path, requires no elevation, and is updated after binary upgrades. Removing avar removes only its named task.
 
 ### 3.9 Editor Launcher (`internal/editor`) — Phase 2, extended post-MVP
@@ -481,11 +503,11 @@ The file is flat. There are no tables, and every value is a string, a non-negati
 
 #### Parsing: a strict subset of TOML, in the standard library
 
-The standard library has no TOML parser. avar already reads `config.toml` with two small hand-rolled readers (`state.parseConfigList`, `session.parseTOMLKey`), and they are deliberately lenient: a typo in the user's own global file must not stop a shell. They cannot be extended to this file, for two reasons. The policy is the opposite one — a project file that is misread applies the wrong environment or, worse, reads a grant its author never wrote, so it must be refused. And they are not correct as parsers: the list reader splits on commas without regard to quotes, so `["a,b"]` is two names.
+The standard library has no TOML parser. A project file that is misread applies the wrong environment or, worse, reads a grant its author never wrote, so it must be refused rather than guessed at. When this file was introduced, avar read `config.toml` with two hand-rolled readers that were deliberately lenient and not correct as parsers; they could not be extended to it, and have since been replaced by the reader below (§3.3, maintainer decision of 2026-09-17).
 
-`internal/projconfig` therefore has its own reader for a precisely defined subset of TOML: full-line and trailing `#` comments; bare keys; basic strings without escape sequences and literal strings; decimal integers without sign, underscores or leading zeros; arrays of strings, on one line or several, with comments and a trailing comma allowed. Everything else TOML allows — tables, dotted and quoted keys, inline tables, floats, booleans, dates, multi-line strings, escapes — is refused with the line number and what the reader does accept. Duplicate keys are refused, as TOML refuses them. The subset is chosen so that every file it accepts means the same thing to a conforming TOML parser; the tests feed each unsupported construct in and require a refusal. The file is capped at 64 KiB before parsing.
+`internal/tomlsubset` reads a precisely defined subset of TOML, and both `.avr.toml` and `config.toml` use it, each with its own closed schema (`tomlsubset.Schema`) and its own meaning for each key. The subset is: full-line and trailing `#` comments; bare keys; basic strings without escape sequences and literal strings; decimal integers without sign, underscores or leading zeros; arrays of strings, on one line or several, with comments and a trailing comma allowed. Everything else TOML allows — tables, dotted and quoted keys, inline tables, floats, booleans, dates, multi-line strings, escapes — is refused with the line number and what the reader does accept. Duplicate keys are refused, as TOML refuses them. An unknown key within a small edit distance of a known one names it ("did you mean packages?"), and an unquoted word where a key takes a string is shown quoted (`idle_timeout: 4h needs quotes: … idle_timeout = "4h"`). The subset is chosen so that every file it accepts means the same thing to a conforming TOML parser; the tests feed each unsupported construct in and require a refusal. The file is capped at 64 KiB before parsing.
 
-A dependency (`BurntSushi/toml`, `pelletier/go-toml`) was considered and rejected. It would accept far more than the schema and every extra construct would then need rejecting by hand, so it buys little correctness for a six-key flat file, and CLAUDE.md puts the standard library first. Unifying the global `config.toml` readers onto this one is possible and would change what that file accepts; it is left as a follow-up rather than done silently here.
+A dependency (`BurntSushi/toml`, `pelletier/go-toml`) was considered and rejected. It would accept far more than the schema and every extra construct would then need rejecting by hand, so it buys little correctness for a six-key flat file, and CLAUDE.md puts the standard library first.
 
 #### Where it is read, and precedence
 
@@ -497,7 +519,7 @@ A dependency (`BurntSushi/toml`, `pelletier/go-toml`) was considered and rejecte
 
 The consequence is stated rather than hidden: if the first `avr` in a repository was run in a subdirectory, that subdirectory is the project, and a `.avr.toml` at the repository root is not read from there. `avr init` shows the full path it will write before asking.
 
-**Maintainer decision, confirmed 2026-09-17.** For now, project configuration counts in exactly two places: the Project's own `.avr.toml`, and the user's global `~/.avr/config.toml` (the State_Dir's `config.toml`). Nothing else is read, and in particular there is no search of parent directories: when the Project is a subdirectory of a repository, a `.avr.toml` at the repository root is not read. (A subdirectory of a directory avar already records as a Project resolves to that recorded Project, and reads that Project's file; that is the Project's own directory, not a parent search.) The code was checked against this when it was recorded, with no change needed: `projconfig.Load` opens `<projectDir>/.avr.toml` and nothing else, `Resolve` passes it `ProjectRecord.Path` only, and `TestResolve_ProjectConfigIsReadFromTheProjectDirectoryOnly_REQ_15_1` proves that a file in a parent is not read. One difference from the precedence table below was found and is reported rather than changed here: the command layer does not yet fill `resolve.Options.Config`, so today the global `config.toml` supplies `forward_env` (Req 12.4) and `idle_timeout` but no distro or architecture defaults.
+**Maintainer decision, confirmed 2026-09-17.** For now, project configuration counts in exactly two places: the Project's own `.avr.toml`, and the user's global `~/.avr/config.toml` (the State_Dir's `config.toml`). Nothing else is read, and in particular there is no search of parent directories: when the Project is a subdirectory of a repository, a `.avr.toml` at the repository root is not read. (A subdirectory of a directory avar already records as a Project resolves to that recorded Project, and reads that Project's file; that is the Project's own directory, not a parent search.) The code was checked against this when it was recorded, with no change needed: `projconfig.Load` opens `<projectDir>/.avr.toml` and nothing else, `Resolve` passes it `ProjectRecord.Path` only, and `TestResolve_ProjectConfigIsReadFromTheProjectDirectoryOnly_REQ_15_1` proves that a file in a parent is not read. One difference from the precedence table below was found and reported: the command layer does not fill `resolve.Options.Config`, so the global `config.toml` supplies `forward_env` (Req 12.4) and `idle_timeout` but no distro or architecture defaults. The table was corrected to match the code when `config.toml` moved to the strict reader (§3.3), which now refuses `distro` and `arch` there as not supported yet.
 
 The injected reader keeps the resolver pure. `resolve.Options` gains `ProjectConfig func(projectDir string) (projconfig.Config, error)`; the command layer supplies `projconfig.Load`, which reads that one file, and tests supply a function. `Resolve` calls it after identifying the project and returns the result in `ResolvedTarget.Config`, so every later step reads the same parse. A missing file is the zero `Config` and no error.
 
@@ -508,8 +530,9 @@ Precedence, highest first:
 | Flags (`--distro`, `--arch`, `--isolate`, `--shared`) | ✔ | ✔ |
 | Project record in the State_Dir (remembered choices) | ✔ | ✔ (Req 11.2) |
 | `.avr.toml` | ✔ | — (not in the schema) |
-| Global `config.toml` defaults (`Options.Config`) | ✔ | — |
 | Built-in defaults (Ubuntu 24.04, host architecture, shared) | ✔ | ✔ |
+
+*(Amended 2026-09-17.)* This table listed a "global `config.toml` defaults (`Options.Config`)" layer between `.avr.toml` and the built-in defaults. `resolve.Options.Config` exists and `Resolve` consults it, but nothing has ever filled it and `config.toml` has no distro or arch key, so the layer did not exist in practice. It is removed here rather than implemented: whether users get global distro and arch defaults is the maintainer's decision, and a key accepted before it does anything is the silent misread §3.3 exists to prevent. The `Options.Config` seam is left in place for that decision.
 
 Flags win because they are what the user typed for this invocation. The project record sits above the file because it is the user's own choice on this host, while the file is what somebody committed; a file that arrives with `git pull` must not override a decision the user already made locally. (Today only isolation is written to the record — `ProjectRecord.Selector` is read but nothing sets it — so in practice the file decides distro and architecture whenever no flag does.) As everywhere else in the chain, a layer that names a distribution also fixes its version.
 
@@ -827,6 +850,10 @@ _For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host'
 | Editor launcher rejects avar's arguments (e.g. an old Zed without `--wsl`) | launcher exits non-zero | Pass the launcher's stderr through and report `launch <editor> with <argv>: <exit status>` (Req 13.5, 13.6). |
 | `--env-file` missing/unparseable | pre-flight | Exit 1 before any machine work (Req 12.2). |
 | `.avr.toml` unreadable, over 64 KiB, or outside the supported TOML subset; unknown key; invalid value | `projconfig.Load` during resolution | Exit 1 before any machine work, naming the file, the line, the problem and the keys or syntax avar accepts; an unknown key suggests upgrading avar in case it is from a newer version. Never apply part of a file (Req 15.1). |
+| `config.toml` unreadable, over 64 KiB, or outside the supported TOML subset; unknown key; invalid value | `state.Store.Config`, from `cmd` dispatch before any handler runs | Exit 1 before resolving or any machine work, naming the full path, the line, the key, what to write with an example, and the nearest known key for a near miss; a second line says nothing was started and which commands still work. Never apply part of the file, never fall back to defaults (Req 17.7). |
+| `config.toml` sets `distro`, `arch`, `cpus`, `memory` or `packages` | `config.toml`'s schema | As above, with a message saying the key is not supported in `config.toml` and where to set it instead (`.avr.toml`, or `--distro`/`--arch`) rather than calling it unknown (Req 17.7). |
+| `config.toml` cannot be read during `avr status`, `stop` or `destroy` | dispatch | Print the same error and that other commands and idle stop are paused, then run the command (Req 17.7). |
+| `config.toml` cannot be read during the scheduled idle check | `runIdleCheck` | Stop nothing, and exit 1 with the error so the host scheduler records a failed run; the next interactive `avr` names the line. Never guess a timeout (Req 17.7, 5.5). |
 | `.avr.toml` names a distro or arch avar does not support | resolver matrix check | Exit 2 listing the supported values, as the flag does, and naming the file as the source (Req 4.4, 15.1). |
 | `.avr.toml` declares packages or forward_env the user has not approved | approved sets in `ProjectRecord` | Interactive: list each pending name and where it applies, ask; no → continue with what was approved before. No terminal: one stderr line naming what is pending and to run `avr` from a terminal; continue. Never approve implicitly (Req 15.3, Property 23). |
 | Approved package install fails | package manager exit status via `Provider.Shell` | Warn with the command and status; record nothing so the next invocation retries; the session still starts (Req 15.1). |
@@ -847,6 +874,7 @@ _For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host'
 - WSL architecture capability rejection before side effects (Property 18).
 - Argv grammar: subcommand vs guest command vs `--` (Property 9) — table-driven over tricky argvs (`avr status`, `avr -- status`, `avr --arch amd64 npm test`, `avr --distro fedora code`).
 - Env policy allowlist composition (Property 4).
+- `config.toml` parsing: files written for the lenient readers keep their meaning, each construct those readers misread is refused with its line and fix, and accepted files agree with Python's `tomllib` (Req 17.7).
 - `.avr.toml` parsing: every schema key, malformed input, unknown keys, each refused TOML construct, and `Parse(Render(c)) == c`; manifest detection per manifest type; install argv per distribution (§3.11).
 - Resolver precedence with the project-configuration layer, and zero-configuration invariance against a reader that finds nothing (Property 24).
 - State store: schema-v1→v2 migration, Windows atomic replace adapter, lock behavior, and create/restore journal decision tables (Properties 7, 16).
