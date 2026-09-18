@@ -483,6 +483,13 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 18.1, 18.4, 10.1, 10.2, 1.5, 5.6_
   - _writes: cmd/destroy.go, cmd/destroy_test.go, cmd/snapshot.go, cmd/snapshot_test.go, internal/provider/lima/snapshot.go, internal/provider/lima/snapshot_test.go, site/commands/snapshot.md, site/troubleshooting.md, .kiro/specs/avar-cli/tasks.md_
 
+- [ ] 52. `avr reset` and `avr destroy` confirm only at a terminal
+  - Reported, investigated and confirmed (2026-09-18): neither command checked for a terminal before reading its typed confirmation. Without one, end of input made `reset` fail with `reading confirmation: EOF` (exit 1, no mention of `--yes`) and made `destroy` exit 0; a correct name piped on stdin made both delete; and at a terminal, Ctrl-D was an error for `reset` and a cancellation for `destroy`.
+  - Maintainer decision (2026-09-17, conditional on confirmation): make them consistent. Without a terminal and without `--yes`, both print the summary, delete nothing, say to use `--yes`, and exit 1, whatever stdin holds. At a terminal, end of input cancels like any other wrong answer, exit 0. Shared as `App.requireConfirmer`; `reset` now uses `App.confirmByTyping` as `destroy` does, and its own `confirmReset` is removed.
+  - REQ-5.6 and REQ-10.3 amended with the refusal clause; design §6 row added.
+  - _Requirements: 5.6, 5.7, 5.8, 10.3_
+  - _writes: cmd/app.go, cmd/destroy.go, cmd/reset.go, cmd/confirm_test.go, cmd/destroy_test.go, cmd/reset_test.go, site/commands/{destroy,reset}.md, .kiro/specs/avar-cli/{requirements,design,tasks}.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

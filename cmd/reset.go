@@ -1,11 +1,8 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
-	"strings"
 
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/types"
@@ -90,11 +87,12 @@ func runReset(ctx context.Context, app *App, inv cli.Invocation) error {
 	writeResetSummary(app, machine, label)
 
 	if !yes {
-		confirmed, err := confirmReset(app.Stdin, app.Out, label)
-		if err != nil {
-			return fmt.Errorf("reading confirmation: %w", err)
+		if err := app.requireConfirmer("reset", "Nothing was changed."); err != nil {
+			return err
 		}
-		if !confirmed {
+		// Typing the label rather than "y" proves the user read what is
+		// about to be destroyed, which a single keystroke cannot (REQ-10.3).
+		if !app.confirmByTyping(fmt.Sprintf("\nType %q and press enter to reset, or anything else to cancel: ", label), label) {
 			fmt.Fprintln(app.Out, "Reset cancelled. Nothing was changed.")
 			return nil
 		}
@@ -153,22 +151,4 @@ func writeResetSummary(app *App, machine types.MachineStatus, label string) {
 	fmt.Fprintln(app.Out)
 	fmt.Fprintf(app.Out, "Your host project files are not affected. avar shares them, never copies\n")
 	fmt.Fprintf(app.Out, "them, so destroying the Linux environment cannot lose your work.\n")
-}
-
-// confirmReset asks the user to type the environment label to confirm they
-// understand what they are about to destroy.
-//
-// Typing the label rather than "y" or "yes" is deliberate: reading the label
-// and typing it back proves the user saw what was being destroyed, which a
-// single-character prompt cannot (REQ-10.3).
-func confirmReset(stdin io.Reader, out io.Writer, label string) (bool, error) {
-	fmt.Fprintf(out, "\nType %q and press enter to reset, or anything else to cancel: ", label)
-
-	reader := bufio.NewReader(stdin)
-	reply, err := reader.ReadString('\n')
-	if err != nil {
-		return false, err
-	}
-	reply = strings.TrimSpace(reply)
-	return reply == label, nil
 }

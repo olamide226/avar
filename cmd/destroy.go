@@ -141,9 +141,14 @@ func runDestroy(ctx context.Context, app *App, inv cli.Invocation) error {
 
 	writeDestroySummary(app, victims, args.scope)
 
-	if !args.yes && !confirmDestruction(app, victims, args.scope) {
-		fmt.Fprintln(app.Out, "Nothing was destroyed.")
-		return nil
+	if !args.yes {
+		if err := app.requireConfirmer("destroy", "Nothing was destroyed."); err != nil {
+			return err
+		}
+		if !confirmDestruction(app, victims, args.scope) {
+			fmt.Fprintln(app.Out, "Nothing was destroyed.")
+			return nil
+		}
 	}
 	fmt.Fprintln(app.Out)
 

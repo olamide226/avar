@@ -61,9 +61,12 @@ directory it shares, and how many `avr` sessions are attached to it right
 now. `--yes` skips the question but not the list.
 
 Anything other than the exact text cancels with `Nothing was destroyed.` and
-exit status 0. So does standard input ending before a line is read. avar
-reads the confirmation from standard input whether or not it is a terminal,
-so from a script use `--yes`.
+exit status 0. So does pressing Ctrl-D at the prompt.
+
+The confirmation has to be typed at a terminal. Without one, as in a script
+or a pipeline, avar prints the list, destroys nothing, and exits with status
+1, even if the right text arrives on standard input. From a script, use
+`--yes`.
 
 Environments are removed one at a time. If one fails, avar stops there and
 reports it; the ones already removed stay removed. For each environment it
@@ -79,7 +82,7 @@ holds work you want.
 | Status | When |
 | --- | --- |
 | `0` | The environments were removed, you cancelled, or there was nothing to remove |
-| `1` | Removing an environment failed |
+| `1` | Removing an environment failed, or there was no terminal to confirm at and `--yes` was not given |
 | `2` | An unknown argument, `--all` with `--orphaned`, or an unsupported environment |
 
 ## Errors
@@ -93,6 +96,12 @@ avr: `avr destroy` does not understand "<arg>": it takes --all, --orphaned, and 
 ```
 
 Both exit with status 2 and remove nothing.
+
+```text
+avr: `avr destroy` asks you to type a confirmation first, and there is no terminal to type it at. Nothing was destroyed. Run it from a terminal, or add --yes to go ahead without confirming
+```
+
+Standard input is not a terminal. Exit status 1, and nothing is removed.
 
 ```text
 There is no environment for this directory, so there is nothing to destroy.
