@@ -66,6 +66,15 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 		}
 	}
 
+	// --ssh-agent is a credential grant, and on a backend that cannot carry it
+	// the session would start without it, so it is refused here, before any
+	// machine work, rather than discovered when a `git push` fails in Linux.
+	if inv.SSHAgent {
+		if err := refuseUnforwardableAgent(p); err != nil {
+			return err
+		}
+	}
+
 	// A size the project's file asks for that this computer does not have is
 	// refused here, before the grants review and before any machine work.
 	if err := refuseOversizedProjectSize(ctx, app, p, target); err != nil {
@@ -130,6 +139,20 @@ func runGuest(ctx context.Context, app *App, inv cli.Invocation) error {
 		return Exit(code, nil)
 	}
 	return nil
+}
+
+// refuseUnforwardableAgent refuses --ssh-agent on a backend that cannot
+// forward the host's SSH agent (REQ-12.3).
+//
+// It suggests the one thing that is true everywhere — running without the flag,
+// and what the session then has — rather than a workaround avar does not
+// provide and could not stand behind.
+func refuseUnforwardableAgent(p provider.Provider) error {
+	if _, ok := p.(provider.SSHAgentForwarder); ok {
+		return nil
+	}
+	return Exit(exitUsage, errors.New("--ssh-agent is not supported in this environment yet: avar cannot lend it your SSH agent. "+
+		"Nothing was started. Run avr without --ssh-agent; SSH inside Linux then uses only keys stored inside Linux"))
 }
 
 // attachSession records a live session on machine for this process and

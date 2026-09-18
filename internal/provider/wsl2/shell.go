@@ -86,8 +86,8 @@ func (p *Provider) Shell(ctx context.Context, machine string, opts provider.Shel
 	return runShell(ctx, machine, cmd)
 }
 
-// checkShellOpts refuses the two ways one execution can be self-contradictory,
-// before anything is started.
+// checkShellOpts refuses an execution that contradicts itself or asks for
+// something this backend cannot do, before anything is started.
 func checkShellOpts(machine string, opts provider.ShellOpts) error {
 	if strings.TrimSpace(opts.Workdir) == "" {
 		// Without one, wsl.exe chooses a working directory of its own from the
@@ -95,6 +95,15 @@ func checkShellOpts(machine string, opts provider.ShellOpts) error {
 		// start under /mnt/c, a path avar's distributions do not even have
 		// mounted (REQ-1.1, REQ-6.6, REQ-18.5, PROP-1).
 		return fmt.Errorf("running a command in environment %s: no guest working directory was given; it comes from MapProjectPath", machine)
+	}
+	if opts.ForwardSSHAgent {
+		// Nothing here can carry the host's agent into the distribution, so
+		// the request is refused rather than dropped: a session without the
+		// agent the user asked for fails only later, at whatever they wanted
+		// it for. The command layer refuses first, because this backend is
+		// not a provider.SSHAgentForwarder (REQ-12.3).
+		return fmt.Errorf("%w: running a command in environment %s: SSH agent forwarding is not supported here",
+			provider.ErrUnsupportedCapability, machine)
 	}
 	if !strings.HasPrefix(opts.Workdir, "/") {
 		// --cd interprets an argument that does not begin with / as a Windows

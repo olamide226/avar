@@ -463,6 +463,13 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 5.9, 5.5, 17.1, 18.15_
   - _writes: cmd/internal_idle.go, cmd/internal_idle_test.go, cmd/idle_task_test.go, .goreleaser.yaml, README.md, site/design.md, site/syntax/config-toml.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
+- [ ] 49. Refuse `--ssh-agent` where the backend cannot forward an agent
+  - Maintainer decision (2026-09-17): on Windows `avr --ssh-agent` was accepted and did nothing, because nothing in `internal/provider/wsl2` reads `ShellOpts.ForwardSSHAgent`. Refuse it clearly for now rather than implement forwarding.
+  - New optional capability `provider.SSHAgentForwarder`, following `MachineSizer`/`NativeWorkspacer`: Lima implements it, WSL does not. `runGuest` asserts it before any machine work and exits 2 saying agent forwarding is not supported in this environment yet. The WSL backend's `Shell` also refuses `ForwardSSHAgent` with `ErrUnsupportedCapability`, so a caller that forgets to ask cannot drop the grant.
+  - REQ-12.3 amended with the refusal clause; design §3.4 and a §6 row added.
+  - _Requirements: 12.3, 9.2, 17.3, 18.14_
+  - _writes: internal/provider/provider.go, internal/provider/lima/{lima,shell}.go, internal/provider/wsl2/shell{,_test}.go, internal/provider/fake/fake.go, cmd/shell.go, cmd/sshagent_test.go, README.md, site/commands/avr.md, site/syntax/{index,command-line}.md, site/design.md, .kiro/specs/avar-cli/{requirements,design,tasks}.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

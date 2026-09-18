@@ -124,7 +124,8 @@ allowlist can only be wrong about a variable you never asked avar to carry.
 **The trade-off.** Tools that expect your credentials, such as `git push` over
 SSH or a cloud CLI, do not have them in Linux until you pass them.
 `--ssh-agent` has to be given on every invocation that needs it, and today it
-works only on macOS. See the
+works only on macOS. On Windows avar refuses the flag instead of starting a
+session that lacks the agent you asked for. See the
 [known gaps]({% link syntax/index.md %}#what-crosses-into-linux) in how grants
 reach the guest.
 

@@ -47,7 +47,14 @@ var (
 	_ provider.NativeWorkspacer     = (*Fake)(nil)
 	_ provider.PortDiagnoser        = (*Fake)(nil)
 	_ provider.MachineSizer         = (*Fake)(nil)
+	_ provider.SSHAgentForwarder    = (*Fake)(nil)
 )
+
+// ForwardsSSHAgent implements provider.SSHAgentForwarder. The Fake records
+// ShellOpts.ForwardSSHAgent on every Shell call, so a test asserts what a flow
+// asked for; a test of a backend without the capability hides this method by
+// embedding the Fake in a struct that exposes only provider.Provider.
+func (f *Fake) ForwardsSSHAgent() {}
 
 // DefaultHostCapacity is the computer a Fake reports until SetHostCapacity says
 // otherwise: a 10-core, 32 GiB Mac, large enough for every size a test asks

@@ -81,6 +81,10 @@ var transportForwardable = []string{"TERM", "COLORTERM", "LANG"}
 // (REQ-17.1).
 const sshAgentOverride = `SSH=ssh -A -o ControlMaster=no -o ControlPath=none`
 
+// ForwardsSSHAgent implements provider.SSHAgentForwarder: Shell applies
+// sshAgentOverride whenever ShellOpts.ForwardSSHAgent is set.
+func (p *Provider) ForwardsSSHAgent() {}
+
 // Shell runs opts.Argv in the guest, or attaches an interactive login shell
 // when it is empty, and reports the status the guest process finished with.
 //
