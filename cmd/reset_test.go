@@ -105,6 +105,7 @@ func TestReset_ConfirmsBeforeDestroying_REQ_10_3(t *testing.T) {
 
 	// Simulate the user typing the wrong confirmation text.
 	app.Stdin = strings.NewReader("no\n")
+	app.terminal = func() bool { return true } // a person answering at a terminal
 
 	if err := runReset(context.Background(), app.App, resetInvocation()); err != nil {
 		t.Fatalf("avr reset cancelled: %v", err)
@@ -134,6 +135,7 @@ func TestReset_ConfirmationAccepted_REQ_10_3(t *testing.T) {
 
 	// Simulate the user typing the correct label.
 	app.Stdin = strings.NewReader(label + "\n")
+	app.terminal = func() bool { return true } // a person answering at a terminal
 
 	if err := runReset(context.Background(), app.App, resetInvocation()); err != nil {
 		t.Fatalf("avr reset: %v", err)

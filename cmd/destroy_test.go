@@ -96,6 +96,7 @@ func TestDestroy_WrongConfirmationChangesNothing_REQ_5_6(t *testing.T) {
 	seedMachine(t, f, target, ubuntu(), types.KindShared)
 
 	app.Stdin = strings.NewReader("no\n")
+	app.terminal = func() bool { return true } // a person answering at a terminal
 
 	if err := runDestroy(context.Background(), app.App, destroyInvocation()); err != nil {
 		t.Fatalf("avr destroy cancelled: %v", err)
@@ -115,6 +116,7 @@ func TestDestroy_CorrectConfirmationProceeds_REQ_5_6(t *testing.T) {
 	seedMachine(t, f, target, ubuntu(), types.KindShared)
 
 	app.Stdin = strings.NewReader(label + "\n")
+	app.terminal = func() bool { return true } // a person answering at a terminal
 
 	if err := runDestroy(context.Background(), app.App, destroyInvocation()); err != nil {
 		t.Fatalf("avr destroy: %v", err)
@@ -160,6 +162,7 @@ func TestDestroy_AllNeedsAnExplicitWord_REQ_5_7(t *testing.T) {
 
 	// The environment's own name is not enough for --all.
 	app.Stdin = strings.NewReader(label + "\n")
+	app.terminal = func() bool { return true } // a person answering at a terminal
 
 	if err := runDestroy(context.Background(), app.App, destroyInvocation("--all")); err != nil {
 		t.Fatalf("avr destroy --all: %v", err)
@@ -366,6 +369,7 @@ func TestDestroy_SummaryNamesLiveSessions_REQ_5_6(t *testing.T) {
 	f := fake.New()
 	app := newTestApp(t, f)
 	app.Stdin = strings.NewReader("no\n")
+	app.terminal = func() bool { return true } // a person answering at a terminal
 
 	target, _ := resolvedTarget(t, app)
 	seedMachine(t, f, target, ubuntu(), types.KindShared, hostPath("/Users/ola/code/app"))

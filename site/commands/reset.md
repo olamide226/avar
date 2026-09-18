@@ -56,8 +56,9 @@ avr reset --yes             # no confirmation, for scripts
    Type "Ubuntu 24.04 · arm64" and press enter to reset, or anything else to cancel:
    ```
 
-   Only the environment's exact name confirms. Anything else prints
-   `Reset cancelled. Nothing was changed.`
+   Only the environment's exact name confirms. Anything else, including
+   Ctrl-D, prints `Reset cancelled. Nothing was changed.` and exits with
+   status 0.
 4. Destroys the environment and creates a fresh one, then prints
    `Reset complete.`
 
@@ -68,10 +69,10 @@ Packages approved in the project's `.avr.toml` are installed again the next
 time you enter the environment with `avr`.
 
 {: .note }
-> avar reads the confirmation from standard input whether or not it is a
-> terminal, so piping the right name in confirms. From a script, pass
-> `--yes` instead. If standard input ends before a line is read, the reset
-> fails with exit status 1 and nothing is changed.
+> The confirmation has to be typed at a terminal. Without one, as in a script
+> or a pipeline, avar prints the summary, changes nothing, and exits with
+> status 1, even if the right name arrives on standard input. From a script,
+> pass `--yes`.
 
 On Windows, a Linux-native workspace made by `--native-fs` lives inside the
 environment and is destroyed with it. Run `avr sync --to-host` first if it
@@ -82,7 +83,7 @@ holds work you want.
 | Status | When |
 | --- | --- |
 | `0` | The environment was reset, you cancelled, or there was no environment to reset |
-| `1` | Destroying or re-creating the environment failed, or standard input ended before a confirmation was read |
+| `1` | Destroying or re-creating the environment failed, or there was no terminal to confirm at and `--yes` was not given |
 | `2` | An argument other than `--yes`, or an unsupported environment |
 
 ## Errors
@@ -94,11 +95,10 @@ avr: `avr reset` does not understand "<arg>": it takes no arguments except --yes
 Selector flags go before `reset`. Exit status 2.
 
 ```text
-avr: reading confirmation: EOF
+avr: `avr reset` asks you to type a confirmation first, and there is no terminal to type it at. Nothing was changed. Run it from a terminal, or add --yes to go ahead without confirming
 ```
 
-Standard input was empty or closed. Pass `--yes`, or run from a terminal.
-Exit status 1.
+Standard input is not a terminal. Exit status 1, and nothing is changed.
 
 ## See also
 

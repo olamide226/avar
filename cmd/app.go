@@ -116,6 +116,22 @@ func (a *App) confirmYesNo(question string) bool {
 	}
 }
 
+// requireConfirmer refuses a command that needs a typed confirmation when
+// there is no terminal to type it at, saying what did not happen and how to
+// run the command unattended.
+//
+// A reply on a pipe is not a confirmation: it was written before the summary
+// it answers was printed, so nobody can have read what it agreed to. The
+// refusal is an error rather than a quiet cancellation so that a script sees
+// the command did nothing.
+func (a *App) requireConfirmer(command, outcome string) error {
+	if a.interactive() {
+		return nil
+	}
+	return fmt.Errorf("`avr %s` asks you to type a confirmation first, and there is no terminal to type it at. %s "+
+		"Run it from a terminal, or add --yes to go ahead without confirming", command, outcome)
+}
+
 // confirmByTyping asks the user to type an exact phrase before something
 // irreversible happens, and reports whether they did.
 //

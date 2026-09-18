@@ -138,7 +138,7 @@ project's directory is the working directory. A user wanting to reclaim the disk
 environment holds had no avar command for it and had to reach for the backend's own
 tooling, which is precisely what Requirement 1.5 and the product rule exist to prevent.
 
-5.6 WHEN a user runs `avr destroy` THEN THE CLI SHALL remove the environment for the current Environment_Selector — the machine and everything inside it — after stating what will be destroyed and obtaining interactive confirmation, bypassable with `--yes`. Host project files SHALL never be affected. *(Phase 2)*
+5.6 WHEN a user runs `avr destroy` THEN THE CLI SHALL remove the environment for the current Environment_Selector — the machine and everything inside it — after stating what will be destroyed and obtaining interactive confirmation, bypassable with `--yes`. IF standard input is not a terminal and `--yes` was not given THEN THE CLI SHALL destroy nothing, say to use `--yes`, and exit non-zero, whatever standard input contains. Host project files SHALL never be affected. *(Phase 2)*
 
 5.7 WHEN a user runs `avr destroy --all` THEN THE CLI SHALL remove every avar-managed environment under the same confirmation rules, and SHALL report how many were removed. *(Phase 2)*
 
@@ -227,7 +227,7 @@ unaffected and works on every environment.
 
 10.2 WHEN a user runs `avr restore <name>` THEN THE CLI SHALL restore that snapshot and confirm completion; IF the name does not exist THEN THE CLI SHALL list available snapshots.
 
-10.3 WHEN a user runs `avr reset` THEN THE CLI SHALL return the current environment to a clean base state (fresh OS, no user-installed packages), require interactive confirmation (bypassable with `--yes`), and state clearly beforehand what will be destroyed. Project files on the host SHALL never be affected by reset.
+10.3 WHEN a user runs `avr reset` THEN THE CLI SHALL return the current environment to a clean base state (fresh OS, no user-installed packages), require interactive confirmation (bypassable with `--yes`), and state clearly beforehand what will be destroyed. IF standard input is not a terminal and `--yes` was not given THEN THE CLI SHALL change nothing, say to use `--yes`, and exit non-zero, whatever standard input contains. Project files on the host SHALL never be affected by reset.
 
 10.4 WHEN a user runs `avr snapshot` with no arguments THEN THE CLI SHALL list existing snapshots for the current environment with creation timestamps.
 
