@@ -221,6 +221,32 @@ On macOS, Lima can snapshot only an emulated environment, and avar runs the
 Mac's own architecture natively. Use `avr reset` for a clean state, or work in
 an emulated environment if you need snapshots.
 
+### A console window flashes every few minutes (Windows)
+
+avar 0.12.3 and earlier registered its idle check to run `avr.exe`, a console
+program, so Windows opened a window each time the check ran. Upgrade, then run
+any `avr` command that opens an environment: avar replaces the task with one
+that runs `avrw.exe`, which opens no window. It ships beside `avr.exe` in the
+Windows download and the winget package.
+
+```text
+avr: idle auto-stop is off: avrw.exe is not in the same folder as avr.exe.
+```
+
+avar found no `avrw.exe` beside `avr.exe`, so it registered nothing rather than
+a task that opens a window, and removed one an earlier version registered. Put
+`avrw.exe` from the same download next to `avr.exe`, and the next `avr` turns
+idle auto-stop on. Until then, stop environments you are not using with
+`avr stop`.
+
+```text
+avr: idle auto-stop is not set up, because avr is running from a temporary folder (…).
+```
+
+A scheduled check would outlive a binary in the temporary folder, so avar does
+not register one. This happens when `avr.exe` is run straight out of a zip
+archive, or built with `go run`. Install it somewhere permanent.
+
 ### My environment stopped by itself
 
 Environments with no live session stop after two hours, so an environment you

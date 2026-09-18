@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/session"
+	"github.com/olamide226/avar/internal/state"
 	"github.com/olamide226/avar/internal/types"
 )
 
@@ -121,12 +123,33 @@ func runIdleCheck(ctx context.Context, app *App) error {
 // environments are idle, what the timeout is, whether a session is attached — is
 // the same code on both, which is why the branch is here and not inside the
 // feature.
+//
+// A binary in the temporary directory is never registered. The registration
+// names the file and outlives it: a `go test` binary, a helper a test built,
+// `go run`, and an avr.exe opened straight out of a zip archive all run from
+// there, and each is deleted while the scheduler keeps running it and failing.
+// A test binary that did exactly that is why this guard sits here, in front of
+// both hosts, and not only behind the App.scheduleIdleCheck seam tests use:
+// the seam protects the tests that remember it, and this protects the host
+// from the ones that do not.
 func ensureIdleScheduler(app *App) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		return
+	}
+	bin, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if withinDir(bin, os.TempDir()) {
+		fmt.Fprintf(app.Err, "avr: idle auto-stop is not set up, because avr is running from a temporary folder (%s).\n", filepath.Dir(bin))
+		fmt.Fprintf(app.Err, "     Install it somewhere permanent and it is set up on the next `avr`.\n")
+		return
+	}
 	switch runtime.GOOS {
 	case "darwin":
-		ensureLaunchdAgent(app)
+		ensureLaunchdAgent(app, bin)
 	case "windows":
-		ensureScheduledTask(app)
+		ensureScheduledTask(app, bin)
 	}
 }
 
@@ -136,12 +159,8 @@ func ensureIdleScheduler(app *App) {
 //
 // It costs one read when the agent is already current, and repairs one that
 // runs a different binary (see installLaunchdAgent).
-func ensureLaunchdAgent(app *App) {
+func ensureLaunchdAgent(app *App, bin string) {
 	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-	bin, err := os.Executable()
 	if err != nil {
 		return
 	}
@@ -254,28 +273,39 @@ func launchctl(args ...string) error {
 	return cmd.Run()
 }
 
-// scheduledTaskName is the Windows Task Scheduler entry that invokes `avr
-// internal idle-check`. It is a single name at the root rather than a task in a
-// folder, so that removing avar removes exactly one thing and leaves no empty
-// folder behind (design §3.8).
+// scheduledTaskName is the Windows Task Scheduler entry that runs avar's idle
+// check. It is a single name at the root rather than a task in a folder, so
+// that removing avar removes exactly one thing and leaves no empty folder
+// behind (design §3.8).
 const scheduledTaskName = "avar-idle-check"
 
-// scheduledTaskStamp records, inside avar's state directory, what the Task
-// Scheduler entry was registered with: the binary and the interval. Its
-// presence is the cheap answer to "is this already registered", and its
-// contents are the cheap answer to "is it still what this avar would
-// register". An older avar wrote the binary alone, which never matches, so its
-// task is registered again at the current interval.
+// scheduledTaskStamp records, inside avar's state directory, what avar last
+// did about the Task Scheduler entry for this binary: registered it, or found
+// no helper to register. Its presence is the cheap answer to "has this been
+// done", and its contents are the cheap answer to "is it still what this avar
+// would do". Every stamp an earlier avar wrote matches nothing this one writes,
+// which is what replaces the tasks those versions registered.
 const scheduledTaskStamp = "idle-task"
 
 // idleCheckMinutes is how often the check runs, on both hosts. It was ten
-// minutes until 2026-09-18. On Windows every run briefly opens a console
+// minutes until 2026-09-18. On Windows every run then briefly opened a console
 // window, and six of those an hour was too many; thirty keeps a forgotten
 // environment's extra running time within half an hour of its timeout.
 const idleCheckMinutes = 30
 
-// ensureScheduledTask registers the Windows Task Scheduler entry that invokes
-// `avr internal idle-check`.
+// windowlessHelper is the program the scheduled task runs: avar's idle check
+// linked as a Windows GUI-subsystem binary (cmd/avrw). avr.exe is a console
+// program, and Windows gives a console program started in the user's session a
+// console window of its own, so a task running avr.exe put a window on the
+// desktop every time it fired. A GUI-subsystem program gets no console.
+//
+// It ships beside avr.exe in avar's Windows archive and is found there, never
+// on PATH: whatever a scheduled task runs, it runs unattended every few
+// minutes, and it must be the file avar shipped.
+const windowlessHelper = "avrw.exe"
+
+// ensureScheduledTask registers the Windows Task Scheduler entry that runs the
+// idle check.
 //
 // The task runs as the signed-in user with their own token, which is what makes
 // it work without elevation: a per-user task needs no administrator, and asking
@@ -283,59 +313,58 @@ const idleCheckMinutes = 30
 // trade. It also means the task can only see the environments that user owns,
 // which is the same boundary everything else in avar respects.
 //
+// That is also why the window is avoided by changing the program rather than
+// the logon. A task registered to run whether or not the user is logged on
+// runs in no desktop session and would open no window, but it needs the
+// user's password stored or an S4U logon, and wsl.exe is reported not to work
+// from either (design §3.8 has the evidence).
+//
 // What it does *not* do is run schtasks on every invocation. This is reached
 // from recordMachine, which runs on every `avr`, warm or cold — the macOS branch
-// costs one stat there and returns. Spawning two subprocesses instead (measured
+// costs one read there and returns. Spawning two subprocesses instead (measured
 // at 50–150 ms on this host) would spend a fifth of REQ-17.1's whole latency
 // budget re-registering a task that has not changed, and rewrite the task store
 // on disk each time.
 //
-// So the stat is kept, and the file records the binary the task points at. That
-// is what lets registration still be corrected after an upgrade moves avr.exe —
-// the case the previous unconditional `/Create /F` existed for — without paying
-// for it when nothing has moved.
-//
 // Every failure is silent, exactly as the launchd path is. Idle auto-stop is a
 // convenience; a user who has just asked for a Linux shell should not be given
 // an error about a background timer instead.
-func ensureScheduledTask(app *App) {
-	bin, err := os.Executable()
-	if err != nil {
-		return
-	}
+func ensureScheduledTask(app *App, bin string) {
 	store, err := app.Store()
 	if err != nil {
 		return
 	}
-	schtasks, err := exec.LookPath("schtasks")
-	if err != nil {
-		return
-	}
-	installScheduledTask(app, filepath.Join(store.Root(), scheduledTaskStamp), bin, func(args ...string) error {
-		cmd := exec.Command(schtasks, args...)
-		cmd.Stdout, cmd.Stderr = nil, nil
-		return cmd.Run()
-	})
+	installScheduledTask(app, filepath.Join(store.Root(), scheduledTaskStamp), bin, runSchtasks)
 }
 
 // installScheduledTask is ensureScheduledTask with its host dependencies passed
-// in: the stamp file, the binary the task should run, and how to run schtasks.
+// in: the stamp file, the running binary, and how to run schtasks.
 func installScheduledTask(app *App, stamp, bin string, schtasks func(args ...string) error) {
-	// The warm path: the task is registered as this binary would register it.
-	want := scheduledTaskStampContent(bin)
-	if recorded, err := os.ReadFile(stamp); err == nil && string(recorded) == want {
+	recorded, err := os.ReadFile(stamp)
+	found := err == nil
+	registered := scheduledTaskStampContent(bin)
+
+	// The warm path, and the whole of it: one read, no look for the helper,
+	// no subprocess.
+	if found && string(recorded) == registered {
+		return
+	}
+
+	helper, ok := windowlessHelperBeside(bin)
+	if !ok {
+		withoutWindowlessHelper(app, stamp, bin, recorded, found, schtasks)
 		return
 	}
 
 	// The command is one string because Task Scheduler stores it as one; the
-	// binary path is quoted inside it so a path containing a space stays one
-	// argument when the scheduler runs it. /F overwrites, which is what makes
-	// this correct a task left by a previous install rather than fail on it.
-	action := fmt.Sprintf(`"%s" internal idle-check`, bin)
+	// path is quoted inside it so a path containing a space stays one argument
+	// when the scheduler runs it. The helper takes no arguments. /F overwrites,
+	// which is what replaces a task left by a previous install, including one
+	// that runs avr.exe directly.
 	if err := schtasks(
 		"/Create",
 		"/TN", scheduledTaskName,
-		"/TR", action,
+		"/TR", fmt.Sprintf(`"%s"`, helper),
 		"/SC", "MINUTE",
 		"/MO", strconv.Itoa(idleCheckMinutes),
 		"/F",
@@ -345,23 +374,96 @@ func installScheduledTask(app *App, stamp, bin string, schtasks func(args ...str
 
 	// The stamp is written only after the task exists, so a failed
 	// registration is retried next time rather than remembered as done.
-	firstTime := !fileExists(stamp)
-	if err := os.WriteFile(stamp, []byte(want), 0o600); err != nil {
-		return
-	}
-	if !firstTime {
-		// An upgrade corrects the task silently rather than announcing itself
-		// again to somebody who has already read this once.
+	if err := state.WriteFileAtomic(stamp, []byte(registered)); err != nil {
 		return
 	}
 
+	// Replacing a task is silent: this user has read the notice already. It is
+	// shown when there was no task before, including when the last thing avar
+	// said was that idle auto-stop was off.
+	if found && string(recorded) != helperMissingStampContent(bin) {
+		return
+	}
 	printIdleNotice(app, fmt.Sprintf("schtasks /Delete /TN %s /F", scheduledTaskName))
 }
 
-// scheduledTaskStampContent is what the stamp records for a task that runs bin
-// every idleCheckMinutes minutes.
+// withoutWindowlessHelper is what happens when avrw.exe is not beside avr.exe:
+// nothing is registered, and the user is told once.
+//
+// Registering avr.exe itself instead would keep idle auto-stop working at the
+// price of a window that takes the keyboard focus from whatever the user is
+// typing into, every time the check runs, for as long as the environment
+// exists. An environment left running costs memory until `avr stop`; that is
+// the smaller cost, and the one the user can end. A task an earlier avar
+// registered is deleted for the same reason: it runs avr.exe directly.
+//
+// The deletion is best-effort. If it fails, the old task keeps running as it
+// did before, and the stamp still records that the user has been told, so a
+// failure does not cost a subprocess on every invocation.
+func withoutWindowlessHelper(app *App, stamp, bin string, recorded []byte, found bool, schtasks func(args ...string) error) {
+	missing := helperMissingStampContent(bin)
+	if found && string(recorded) == missing {
+		return
+	}
+	if found {
+		_ = schtasks("/Delete", "/TN", scheduledTaskName, "/F")
+	}
+	if err := state.WriteFileAtomic(stamp, []byte(missing)); err != nil {
+		return
+	}
+	name := filepath.Base(bin)
+	fmt.Fprintf(app.Err, "avr: idle auto-stop is off: %s is not in the same folder as %s.\n", windowlessHelper, name)
+	fmt.Fprintf(app.Err, "     %s runs the background idle check without opening a window,\n", windowlessHelper)
+	fmt.Fprintf(app.Err, "     and it ships beside %s in avar's Windows download. Put it next to\n", name)
+	fmt.Fprintf(app.Err, "     %s and your next `avr` turns idle auto-stop on. Until then, stop\n", name)
+	fmt.Fprintf(app.Err, "     environments you are not using with `avr stop`.\n")
+}
+
+// scheduledTaskStampContent is what the stamp records once the task runs the
+// helper beside bin every idleCheckMinutes minutes.
 func scheduledTaskStampContent(bin string) string {
-	return fmt.Sprintf("%s\nevery %d minutes\n", bin, idleCheckMinutes)
+	return fmt.Sprintf("%s\nevery %d minutes\nthrough %s\n", bin, idleCheckMinutes, windowlessHelper)
+}
+
+// helperMissingStampContent is what the stamp records once avar has told the
+// user that bin has no helper beside it.
+func helperMissingStampContent(bin string) string {
+	return fmt.Sprintf("%s\nnot registered: no %s\n", bin, windowlessHelper)
+}
+
+// windowlessHelperBeside finds the helper that ships beside the running
+// binary.
+//
+// Both meanings of "beside" are tried, because os.Executable makes no promise
+// about which one it returns: "If a symlink was used to start the process,
+// depending on the operating system, the result might be the symlink or the
+// path it pointed to." winget unpacks the archive into a package folder and
+// may link avr.exe onto PATH from another, so the two can differ, and the
+// helper is certainly beside the real file.
+func windowlessHelperBeside(bin string) (string, bool) {
+	candidates := []string{filepath.Join(filepath.Dir(bin), windowlessHelper)}
+	if resolved, err := filepath.EvalSymlinks(bin); err == nil && resolved != bin {
+		candidates = append(candidates, filepath.Join(filepath.Dir(resolved), windowlessHelper))
+	}
+	for _, candidate := range candidates {
+		if fileExists(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+// runSchtasks runs schtasks with the given arguments. Finding it is part of
+// running it, so the warm path, which runs no schtasks, does not search PATH
+// either.
+func runSchtasks(args ...string) error {
+	schtasks, err := exec.LookPath("schtasks")
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(schtasks, args...)
+	cmd.Stdout, cmd.Stderr = nil, nil
+	return cmd.Run()
 }
 
 // fileExists reports whether a path is there, treating any error as absent —
@@ -370,4 +472,39 @@ func scheduledTaskStampContent(bin string) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// withinDir reports whether path is dir or lies beneath it, comparing the two
+// with symbolic links resolved where they can be: on macOS the temporary
+// directory is reached through /var, which is itself a link to /private/var.
+// Windows paths compare without regard to case, as Windows compares them.
+func withinDir(path, dir string) bool {
+	path, dir = resolveLinks(path), resolveLinks(dir)
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		rel = strings.ToLower(rel)
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// resolveLinks resolves the links in the longest part of path that exists, and
+// keeps the rest as written: a binary about to be registered exists, but the
+// same answer is wanted for one that does not.
+func resolveLinks(path string) string {
+	path = filepath.Clean(path)
+	rest := ""
+	for {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return filepath.Join(path, rest)
+		}
+		rest = filepath.Join(filepath.Base(path), rest)
+		path = parent
+	}
 }

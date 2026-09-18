@@ -37,6 +37,7 @@ const childWaitDelay = 5 * time.Second
 func (execRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = childWaitDelay
+	hideConsoleWindow(cmd)
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -60,6 +61,7 @@ func (execRunner) Stream(ctx context.Context, w io.Writer, name string, args ...
 	cmd.Stdout = w
 	cmd.Stderr = w
 	cmd.WaitDelay = childWaitDelay
+	hideConsoleWindow(cmd)
 	return cmd.Run()
 }
 

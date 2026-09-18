@@ -59,7 +59,10 @@ new terminal afterwards so it is found. winget receives each minor release
 of it appearing on the [releases page](https://github.com/olamide226/avar/releases),
 so it can trail the newest patch release. To skip
 the wait, download the `windows_amd64` or `windows_arm64` archive from there,
-unzip it, and put `avr.exe` somewhere on your `PATH`.
+unzip it, and put the folder's `avr.exe` and `avrw.exe` together somewhere on
+your `PATH`. `avrw.exe` runs avar's background idle check without opening a
+window; without it beside `avr.exe`, avar says so and does not set up idle
+auto-stop.
 
 Either way, avar checks for WSL 2 on first run and offers to set it up. The
 binaries are unsigned, so SmartScreen may warn the first time.
