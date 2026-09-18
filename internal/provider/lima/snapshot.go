@@ -113,12 +113,24 @@ func (p *Provider) requireSnapshotCapable(ctx context.Context, machine string) (
 		return instance{}, err
 	}
 	if inst.VMType == vmTypeVZ {
-		return instance{}, fmt.Errorf("%w: %s runs on Apple's virtualization framework, which cannot take snapshots; "+
-			"an emulated environment (avr --arch amd64) can, and `avr reset` returns any environment to a clean state",
-			provider.ErrUnsupportedCapability, machine)
+		return instance{}, errVZCannotSnapshot
 	}
 	return inst, nil
 }
+
+// errVZCannotSnapshot is the reason a native machine cannot be snapshotted,
+// worded for the user: the command layer shows it after the environment's
+// label and adds nothing, so it names no machine (REQ-1.5) and says what to do
+// instead.
+var errVZCannotSnapshot error = unsupportedError("it runs on Apple's virtualization framework, which cannot take them. " +
+	"`avr reset` returns it to a clean state, and an emulated environment (`avr --arch amd64`) can be snapshotted")
+
+// unsupportedError is a provider.ErrUnsupportedCapability whose text is only
+// the reason, without the sentinel's generic sentence in front of it.
+type unsupportedError string
+
+func (e unsupportedError) Error() string { return string(e) }
+func (e unsupportedError) Unwrap() error { return provider.ErrUnsupportedCapability }
 
 // startAfterSnapshotOp restarts a machine after a failed snapshot or restore,
 // on a detached context because the caller's context may already be cancelled.

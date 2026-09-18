@@ -221,6 +221,9 @@ On macOS, Lima can snapshot only an emulated environment, and avar runs the
 Mac's own architecture natively. Use `avr reset` for a clean state, or work in
 an emulated environment if you need snapshots.
 
+On Windows, the text after the colon is the reason that applies there. An
+environment registered as WSL 1 gets the command that converts it to WSL 2.
+
 ### A console window flashes every few minutes (Windows)
 
 avar 0.12.3 and earlier registered its idle check to run `avr.exe`, a console
