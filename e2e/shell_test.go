@@ -6,7 +6,10 @@
 package e2e
 
 import (
+	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -185,4 +188,67 @@ func TestAvr_WarmPathLatency_REQ_17_1(t *testing.T) {
 	if mean > ceiling {
 		t.Errorf("warm path mean %v exceeds %v; REQ-17.1 budgets ~500ms of avar overhead", mean, ceiling)
 	}
+}
+
+// An interactive shell gets the grants the command line gave it (REQ-12.1,
+// REQ-12.2), and still nothing else of the host's (PROP-4).
+//
+// It has to be driven through a real terminal, which is the whole reason this
+// defect survived: every other test here runs a one-shot command, and the
+// one-shot path composed the environment through an `env` prefix the
+// interactive path had no equivalent of. `avr` with no command therefore
+// dropped every --env, --env-file and forward_env grant, silently, on macOS —
+// and no assertion on an argv could have shown it, because the argv was
+// exactly what its author intended (docs/lessons.md, "A test that asserts a
+// command's *shape* proves only that you wrote what you wrote").
+//
+// script(1) supplies the terminal: it allocates a pseudo-terminal, runs avr
+// under it, and copies this process's stdin into it, so the shell that starts
+// is the one a person would get.
+func TestAvr_InteractiveShellReceivesGrantedEnvironment_REQ_12_1(t *testing.T) {
+	dir := project(t, "interactive-grants")
+
+	envFile := filepath.Join(dir, "grants.env")
+	if err := os.WriteFile(envFile, []byte("FROM_FILE=file value\n"), 0o600); err != nil {
+		t.Fatalf("write the env file: %v", err)
+	}
+
+	const marker = "AVR_E2E_SECRET"
+	out := interactive(t, dir, []string{marker + "=leaked"},
+		`printf 'GRANT=[%s] [%s] [%s] SECRET=[%s] LOGIN=[%s]\n' "$FROM_FLAG" "$WITH_SPACES" "$FROM_FILE" "$`+marker+`" "$(shopt -q login_shell && echo yes || echo no)"`,
+		"--env", "FROM_FLAG=flag value is here", "--env", "WITH_SPACES=two words", "--env-file", envFile)
+
+	want := "GRANT=[flag value is here] [two words] [file value] SECRET=[] LOGIN=[yes]"
+	if !strings.Contains(out, want) {
+		t.Errorf("the interactive shell reported:\n%s\nwant a line containing:\n%s", out, want)
+	}
+}
+
+// interactive runs avr under a pseudo-terminal, types script into the guest
+// shell it opens, and returns everything the terminal showed.
+//
+// The shell is left with `exit`, so avar's own exit path runs rather than the
+// session being killed from outside.
+func interactive(t *testing.T, dir string, env []string, script string, args ...string) string {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	// script(1) takes the command after the typescript file, which is
+	// /dev/null here: the transcript avar's output is read from is this
+	// process's own stdout, not a file.
+	cmd := exec.CommandContext(ctx, "/usr/bin/script", append([]string{"-q", "/dev/null", avrBinary}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	cmd.Stdin = strings.NewReader(script + "\nexit\n")
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("driving an interactive avr through a terminal failed: %v\nterminal:\n%s", err, out.String())
+	}
+	return out.String()
 }

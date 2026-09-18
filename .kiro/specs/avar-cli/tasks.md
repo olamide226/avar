@@ -149,6 +149,15 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 12.1, 12.2, 12.3, 12.4, 9.2_
   - _writes: internal/envpolicy/policy.go, internal/envpolicy/policy_test.go, cmd/root.go_
 
+- [ ] 45. Forward the granted environment into an interactive shell on macOS
+  - `--env`, `--env-file`, `forward_env` and approved `.avr.toml` variables reached `avr <command>` and were silently dropped from `avr`. `internal/provider/lima.shellArgv` returned `limactl shell --workdir … <machine>` with no argv when `ShellOpts.Argv` was empty, and the environment was composed only in `guestArgv`, which that shape never reached. A code comment asserted the interactive form "has no equivalent", so the gap read as a decision rather than a defect.
+  - Interactive sessions now pass an argv of their own: `sh -c 'exec env -- "$@" "$SHELL" -l' sh NAME=value …`. Assignments are positional arguments to a constant script, so no value is ever parsed as shell syntax; `"$SHELL"` is expanded before the grant applies, so the account's own login shell is exec'd (REQ-1.1) even when the grant names SHELL; `-l` keeps it a login shell.
+  - Verified against Lima 2.2.0 and Ubuntu 24.04 through a pseudo-terminal, before and after. Lima runs any argv as `exec "$SHELL" -l -c '<argv>'`, so the profile is read by that shell and again by the interactive one — which means a profile that assigns a granted name unconditionally wins in an interactive session. That is stated in design §3.5 and on the site rather than worked around.
+  - WSL 2 does not have the same defect: `WSLENV` is set on the `wsl.exe` process rather than in the argv, so an interactive launch already carries the grant. A test now asserts it instead of leaving it to be true by accident.
+  - _Requirements: 12.1, 12.2, 12.4, 1.1, 9.1_
+  - _Properties: 4_
+  - _writes: internal/provider/lima/shell.go, internal/provider/lima/shell_test.go, internal/provider/wsl2/shell_test.go, e2e/shell_test.go, site/commands/avr.md, site/syntax/index.md, docs/lessons.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
+
 - [x] 19. Implement `avr code`  _(PR #33, #38)_
   - avar-owned `~/.avr/ssh/config` from `limactl show-ssh`; one-time approved `Include` line in user ssh config; launch `code --remote ssh-remote+avr-<machine> <path>`; missing-`code` guidance; honors selector flags
   - _Requirements: 13.1, 13.2, 13.3, 13.4_

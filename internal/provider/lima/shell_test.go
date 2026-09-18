@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -56,18 +57,68 @@ func TestShellArgv_OneShotCommand_REQ_2_1(t *testing.T) {
 	}
 }
 
-// An interactive session has no argv of its own: Lima execs the user's own
-// login shell, which is what keeps avar out of the business of knowing which
-// shell a distribution installs (REQ-1.1).
-func TestShellArgv_InteractiveSession_REQ_1_1(t *testing.T) {
+// An interactive session gets the policy environment exactly as a one-shot
+// command does (REQ-12.1, REQ-12.2). It used to pass no argv at all, so Lima
+// ran the login shell with nothing but what ssh carries by itself, and every
+// --env, --env-file and forward_env grant was silently dropped from `avr`.
+//
+// The assignments travel as positional arguments to a fixed script, never as
+// shell syntax, and the program exec'd is still the guest account's own login
+// shell (REQ-1.1).
+func TestShellArgv_InteractiveSessionGetsThePolicyEnvironment_REQ_12_1_REQ_1_1(t *testing.T) {
 	got := shellArgv(shellMachine, provider.ShellOpts{
 		Workdir: "/Users/dev/code/app",
 		Env:     guestEnv(),
 	})
 
-	want := []string{"shell", "--workdir", "/Users/dev/code/app", shellMachine}
+	want := []string{
+		"shell", "--workdir", "/Users/dev/code/app", shellMachine, "--",
+		"sh", "-c", `exec env -- "$@" "$SHELL" -l`, "sh",
+		"LANG=en_GB.UTF-8", "TERM=xterm-256color",
+	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("shellArgv:\nwant: %v\ngot:  %v", want, got)
+		t.Errorf("shellArgv:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+// The argv above is only worth anything if a shell reads it the way it was
+// meant. This runs the guest half of it under the host's own /bin/sh, with
+// $SHELL standing in for the guest account's login shell, and checks what that
+// shell received: exactly the granted values, byte for byte, including ones a
+// shell would otherwise split or expand, and the -l that makes it a login
+// shell. The Lima half — quoting through `limactl shell` and ssh — is proven
+// against a real machine by e2e TestAvr_InteractiveShellReceivesGrantedEnvironment_REQ_12_1.
+func TestInteractiveArgv_ALoginShellReceivesTheGrantVerbatim_REQ_12_1_PROP_4(t *testing.T) {
+	loginShell := t.TempDir() + "/login-shell"
+	report := `#!/bin/sh
+printf 'args=[%s]\n' "$*"
+printf 'FOO=[%s]\n' "$FOO"
+printf 'TRICKY=[%s]\n' "$TRICKY"
+`
+	if err := os.WriteFile(loginShell, []byte(report), 0o755); err != nil {
+		t.Fatalf("write the stand-in login shell: %v", err)
+	}
+
+	argv := shellArgv(shellMachine, provider.ShellOpts{
+		Workdir: "/w",
+		Env:     map[string]string{"FOO": "bar", "TRICKY": `two words; $(echo no) "q" 'x' *`},
+	})
+	guest := argv[slices.Index(argv, "--")+1:]
+
+	cmd := exec.Command(guest[0], guest[1:]...)
+	// What the guest account's sshd session provides: a PATH and the SHELL
+	// the script execs.
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "SHELL=" + loginShell}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the interactive argv under /bin/sh: %v\n%s", err, out)
+	}
+
+	want := "args=[-l]\n" +
+		"FOO=[bar]\n" +
+		`TRICKY=[two words; $(echo no) "q" 'x' *]` + "\n"
+	if string(out) != want {
+		t.Errorf("the login shell saw:\n%s\nwant:\n%s", out, want)
 	}
 }
 

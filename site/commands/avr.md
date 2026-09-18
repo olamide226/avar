@@ -164,12 +164,14 @@ Everything else after the `=` is the value: quotes are kept, and a `#` later
 in the line is part of the value rather than a comment. When a name appears
 twice, the last line wins.
 
+Grants reach an interactive shell and a one-shot command alike. In an
+interactive shell they are set before your login profile runs, so a profile
+that assigns the same name unconditionally — `export LANG=C` in `.profile`,
+say — wins over the grant, exactly as it would over a variable you exported
+before logging in.
+
 {: .warning }
 > **Known gaps, today.**
-> - On macOS, granted variables reach a one-shot command (`avr <command>`)
->   but not an interactive `avr` shell, which receives only `TERM`, `LANG`
->   and `LC_*`. Run the program that needs the variable as a one-shot
->   command instead.
 > - `--ssh-agent` lends the guest your SSH agent on macOS. On Windows the
 >   flag is accepted and has no effect.
 

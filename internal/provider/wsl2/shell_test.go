@@ -547,6 +547,36 @@ func TestShell_OnlyThePolicysVariablesCross_PROP_4(t *testing.T) {
 	_ = p
 }
 
+// REQ-12.1: the grant reaches an interactive shell, not only a one-shot
+// command. On this backend that is a property of the wsl.exe process rather
+// than of the argv — WSLENV is set either way — which is why the same defect
+// that had to be fixed for Lima (task 45) does not exist here. Asserted rather
+// than assumed, because "the mechanism happens not to be tied to the argv" is
+// exactly the kind of thing a later refactor breaks silently.
+func TestShell_InteractiveSessionCarriesTheGrant_REQ_12_1(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeWSL()
+	f.register(testMachine, 2, true)
+	p := newProvider(t, f, recorded(testMachine))
+
+	cmd := p.shellCommand(context.Background(), testMachine, provider.ShellOpts{
+		Workdir: "/work",
+		TTY:     true,
+		Env:     map[string]string{"GITHUB_TOKEN": "ghp_granted", "TERM": "xterm-256color"},
+	})
+
+	if has(cmd.Args, "--exec") {
+		t.Fatalf("argv = %v, want no --exec so the login shell runs", cmd.Args)
+	}
+	if !containsEntry(cmd.Env, "GITHUB_TOKEN=ghp_granted") {
+		t.Errorf("the granted value is not in wsl.exe's environment: %v", cmd.Env)
+	}
+	if !containsEntry(cmd.Env, wslEnvVar+"=GITHUB_TOKEN/u:TERM/u") {
+		t.Errorf("WSLENV does not name the grant, so nothing crosses into the login shell: %v", cmd.Env)
+	}
+}
+
 // An empty grant still sets WSLENV, to an empty value: leaving it unset would
 // let a WSLENV inherited from somewhere avar did not look decide what crosses.
 func TestShell_AnEmptyGrantStillClosesTheDoor_PROP_4(t *testing.T) {

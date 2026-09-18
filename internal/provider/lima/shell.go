@@ -188,15 +188,15 @@ func (p *Provider) shellCommand(ctx context.Context, machine string, opts provid
 // string: avar re-splits nothing and quotes nothing, so `avr git commit -m 'two
 // words'` reaches the guest as the three arguments the user typed (REQ-2.5).
 // Lima escapes each one for the guest's login shell itself.
+//
+// An interactive session passes an argv too. Without one, Lima runs the login
+// shell with no way to put anything in its environment, which is how every
+// granted variable used to reach one-shot commands and never reach `avr`.
 func shellArgv(machine string, opts provider.ShellOpts) []string {
-	argv := []string{limactlShell, "--workdir", opts.Workdir, machine}
+	argv := []string{limactlShell, "--workdir", opts.Workdir, machine, "--"}
 	if len(opts.Argv) == 0 {
-		// No command: Lima execs the user's own login shell, which is what
-		// REQ-1.1 asks for and what keeps avar out of the business of knowing
-		// which shell a distribution installs.
-		return argv
+		return append(argv, interactiveArgv(opts)...)
 	}
-	argv = append(argv, "--")
 	return append(argv, guestArgv(opts)...)
 }
 
@@ -213,17 +213,52 @@ func shellArgv(machine string, opts provider.ShellOpts) []string {
 // there for: `avr -- env --version` runs the guest's env with --version
 // instead of printing this env's own version. Both forms verified against the
 // guest's GNU coreutils 9.4.
-//
-// The interactive form has no equivalent, because Lima builds `exec <shell> -l`
-// with nowhere to put a prefix. There the policy's terminal type reaches the
-// guest through ssh's pseudo-terminal request instead — see transportEnv.
 func guestArgv(opts provider.ShellOpts) []string {
 	argv := make([]string, 0, len(opts.Env)+len(opts.Argv)+2)
 	argv = append(argv, guestEnvCommand, "--")
-	for _, name := range sortedNames(opts.Env) {
-		argv = append(argv, name+"="+opts.Env[name])
-	}
+	argv = append(argv, assignments(opts.Env)...)
 	return append(argv, opts.Argv...)
+}
+
+// loginShellScript execs the guest account's own login shell with the
+// assignments it is given as positional arguments.
+//
+// It is a constant: nothing the user supplies is ever part of it. The
+// assignments arrive as "$@", which the shell expands to exactly the words it
+// was given, so a value containing spaces, quotes or `$(...)` stays a value.
+// "$SHELL" is expanded by this script, before env applies the grant, so it is
+// always the account's login shell even when the grant itself names SHELL.
+//
+// The shell is started with -l because that is what makes it a login shell
+// (REQ-1.1), and -l rather than --login because it is the spelling bash, zsh
+// and dash all accept — the same choice Lima makes for the session it would
+// otherwise have started.
+const loginShellScript = `exec env -- "$@" "$SHELL" -l`
+
+// interactiveArgv is the guest argv for an interactive session: the
+// account's login shell, with the policy environment.
+//
+// Lima runs any argv under the login shell's `-c`, so the account's profile
+// is read once there and again by the interactive login shell this execs.
+// That second read is what a login shell is; the first is Lima's, and is
+// harmless. It also means a profile that assigns one of the granted variables
+// unconditionally wins over the grant in an interactive session, exactly as it
+// would for a variable the user exported on the host and then logged in.
+// Verified against Lima 2.2.0 and Ubuntu 24.04: --env and --env-file values
+// arrive in the interactive shell, and the host's other variables do not.
+func interactiveArgv(opts provider.ShellOpts) []string {
+	argv := make([]string, 0, len(opts.Env)+4)
+	argv = append(argv, "sh", "-c", loginShellScript, "sh")
+	return append(argv, assignments(opts.Env)...)
+}
+
+// assignments renders an environment as NAME=value arguments, in name order.
+func assignments(env map[string]string) []string {
+	out := make([]string, 0, len(env))
+	for _, name := range sortedNames(env) {
+		out = append(out, name+"="+env[name])
+	}
+	return out
 }
 
 // sortedNames orders an environment's names so that one execution produces one
@@ -247,10 +282,9 @@ func sortedNames(env map[string]string) []string {
 // are the policy's values rather than whatever the user's shell exported
 // (REQ-9.1, PROP-4).
 //
-// This is also how an interactive session gets its terminal type: with no argv
-// there is nowhere to put an `env` prefix, and TERM travels in ssh's
-// pseudo-terminal request, taken from the environment ssh itself is running in
-// (REQ-3.2).
+// TERM also travels in ssh's pseudo-terminal request, taken from the
+// environment ssh itself is running in, so the value sshd sets before any
+// argv runs is already the policy's (REQ-3.2).
 func transportEnv(hostEnv []string, guest map[string]string) []string {
 	out := make([]string, 0, len(hostEnv)+len(guest))
 	for _, entry := range hostEnv {
