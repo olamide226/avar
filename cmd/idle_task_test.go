@@ -12,11 +12,13 @@ import (
 	"github.com/olamide226/avar/internal/provider/fake"
 )
 
-// schtasksRecorder records what installScheduledTask asked schtasks to do, and
-// fails every call when fail is set.
+// schtasksRecorder records what installScheduledTask asked schtasks to do. It
+// fails every call when fail is set, and answers /Query as schtasks does for a
+// task that does not exist when missing is set.
 type schtasksRecorder struct {
-	calls [][]string
-	fail  bool
+	calls   [][]string
+	fail    bool
+	missing bool
 }
 
 func (s *schtasksRecorder) run(args ...string) error {
@@ -24,8 +26,14 @@ func (s *schtasksRecorder) run(args ...string) error {
 	if s.fail {
 		return errors.New("schtasks: access is denied")
 	}
+	if s.missing && len(args) > 0 && args[0] == "/Query" {
+		return errors.New("exit status 1: ERROR: The system cannot find the file specified.")
+	}
 	return nil
 }
+
+// queryTask is how avar asks whether the task it registered is still there.
+var queryTask = []string{"/Query", "/TN", "avar-idle-check"}
 
 // windowsInstall lays out what avar's Windows archive unpacks into a folder:
 // avr.exe, and avrw.exe beside it unless withHelper is false. It returns the
@@ -105,7 +113,7 @@ func TestScheduledTask_ReplacesATaskThatRanAvrDirectly_REQ_18_16(t *testing.T) {
 
 			installScheduledTask(app.App, stamp, bin, st.run)
 
-			want := [][]string{createHelperTask(helper)}
+			want := [][]string{queryTask, createHelperTask(helper)}
 			if !reflect.DeepEqual(st.calls, want) {
 				t.Errorf("schtasks calls:\n got %q\nwant %q", st.calls, want)
 			}
@@ -307,5 +315,176 @@ func TestWithinDir(t *testing.T) {
 		if got := withinDir(path, dir); got != want {
 			t.Errorf("withinDir(%q, %q) = %t, want %t", path, dir, got, want)
 		}
+	}
+}
+
+// REQ-5.9: the notice tells the user to delete the task to turn the check off.
+// A registration that no longer matches, because avr.exe moved or an older
+// avar made it, is replaced only if the task is still there: one the user
+// deleted stays deleted, and avar remembers that so the next `avr` is one read
+// again.
+func TestScheduledTask_LeavesATaskTheUserDeleted_REQ_5_9(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	bin, _, stamp := windowsInstall(t, true)
+	if err := os.WriteFile(stamp, []byte(scheduledTaskStampContent(`C:\old\avr.exe`)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := &schtasksRecorder{missing: true}
+
+	installScheduledTask(app.App, stamp, bin, st.run)
+
+	if want := [][]string{queryTask}; !reflect.DeepEqual(st.calls, want) {
+		t.Errorf("schtasks calls:\n got %q\nwant %q", st.calls, want)
+	}
+	if app.err.Len() != 0 {
+		t.Errorf("respecting the user's deletion printed something:\n%s", app.err.String())
+	}
+
+	again := &schtasksRecorder{}
+	installScheduledTask(app.App, stamp, bin, again.run)
+	if len(again.calls) != 0 {
+		t.Errorf("the next invocation ran schtasks for a task the user deleted: %q", again.calls)
+	}
+}
+
+// REQ-17.1: the existence check is on the rare path only. A first registration,
+// and one after avar itself removed the task, create it without asking.
+func TestScheduledTask_QueriesOnlyWhenReplacingARegistration_REQ_17_1(t *testing.T) {
+	for name, recorded := range map[string]func(bin string) string{
+		"no stamp":       nil,
+		"helper missing": helperMissingStampContent,
+		"disabled":       func(string) string { return idleDisabledStamp },
+	} {
+		t.Run(name, func(t *testing.T) {
+			app := newTestApp(t, fake.New())
+			bin, helper, stamp := windowsInstall(t, true)
+			if recorded != nil {
+				if err := os.WriteFile(stamp, []byte(recorded(bin)), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			st := &schtasksRecorder{missing: true}
+
+			installScheduledTask(app.App, stamp, bin, st.run)
+
+			if want := [][]string{createHelperTask(helper)}; !reflect.DeepEqual(st.calls, want) {
+				t.Errorf("schtasks calls:\n got %q\nwant %q", st.calls, want)
+			}
+			if !strings.Contains(app.err.String(), idleNoticeText) {
+				t.Errorf("registering again after avar had it off was not announced:\n%s", app.err.String())
+			}
+		})
+	}
+}
+
+// REQ-5.9: idle_timeout = "0" turns idle stopping off, so the task that would
+// do it is removed rather than left running to stop nothing; the user is told
+// once.
+func TestScheduledTask_IdleTimeoutZeroRemovesTheTask_REQ_5_9(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	bin, _, stamp := windowsInstall(t, true)
+	installScheduledTask(app.App, stamp, bin, (&schtasksRecorder{}).run)
+	app.err.Reset()
+
+	st := &schtasksRecorder{}
+	removeScheduledTask(app.App, stamp, st.run)
+
+	if want := [][]string{{"/Delete", "/TN", "avar-idle-check", "/F"}}; !reflect.DeepEqual(st.calls, want) {
+		t.Errorf("schtasks calls:\n got %q\nwant %q", st.calls, want)
+	}
+	if !strings.Contains(app.err.String(), `idle_timeout = "0"`) {
+		t.Errorf("the user was not told why the task was removed:\n%s", app.err.String())
+	}
+
+	app.err.Reset()
+	again := &schtasksRecorder{}
+	removeScheduledTask(app.App, stamp, again.run)
+	if len(again.calls) != 0 || app.err.Len() != 0 {
+		t.Errorf("the second invocation ran %q and printed %q; it should do neither", again.calls, app.err.String())
+	}
+}
+
+// REQ-5.9: with idle stopping off and nothing registered, there is nothing to
+// remove and nothing to say, and avar never removes a task it did not make.
+func TestScheduledTask_IdleTimeoutZeroWithNothingRegistered_REQ_5_9(t *testing.T) {
+	for name, recorded := range map[string]string{
+		"no stamp":         "",
+		"helper missing":   helperMissingStampContent(`C:\avr.exe`),
+		"removed by user":  removedByUserStamp,
+		"already disabled": idleDisabledStamp,
+	} {
+		t.Run(name, func(t *testing.T) {
+			app := newTestApp(t, fake.New())
+			stamp := filepath.Join(t.TempDir(), scheduledTaskStamp)
+			if recorded != "" {
+				if err := os.WriteFile(stamp, []byte(recorded), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			st := &schtasksRecorder{}
+
+			removeScheduledTask(app.App, stamp, st.run)
+
+			if len(st.calls) != 0 || app.err.Len() != 0 {
+				t.Errorf("ran %q and printed %q; want neither", st.calls, app.err.String())
+			}
+		})
+	}
+}
+
+// REQ-5.9: on macOS idle_timeout = "0" unloads and removes the agent, and
+// says so once: with the plist gone there is nothing to say next time.
+func TestLaunchdAgent_IdleTimeoutZeroRemovesTheAgent_REQ_5_9(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	dir := t.TempDir()
+	path := writePlist(t, dir, "/opt/homebrew/bin/avr")
+	lc := &launchctlCalls{loaded: true}
+
+	removeLaunchdAgent(app.App, dir, lc.run)
+
+	if fileExists(path) {
+		t.Error("the agent's plist is still there")
+	}
+	if want := []string{"list " + launchdLabel, "unload " + path}; !reflect.DeepEqual(lc.calls, want) {
+		t.Errorf("launchctl calls:\n got %q\nwant %q", lc.calls, want)
+	}
+	if !strings.Contains(app.err.String(), `idle_timeout = "0"`) {
+		t.Errorf("the user was not told why the agent was removed:\n%s", app.err.String())
+	}
+
+	app.err.Reset()
+	again := &launchctlCalls{}
+	removeLaunchdAgent(app.App, dir, again.run)
+	if len(again.calls) != 0 || app.err.Len() != 0 {
+		t.Errorf("the second invocation ran %q and printed %q; it should do neither", again.calls, app.err.String())
+	}
+}
+
+// REQ-5.9: whether a check is wanted is read through the strict config API.
+// "0" turns it off, the default and a real timeout keep it on, and a file that
+// cannot be read changes nothing, since avar cannot tell what it says.
+func TestIdleCheckWanted_FollowsIdleTimeout_REQ_5_9(t *testing.T) {
+	for name, tc := range map[string]struct {
+		config     string
+		wanted, ok bool
+	}{
+		"no file":         {"", true, true},
+		"a timeout":       {"idle_timeout = \"4h\"\n", true, true},
+		"zero":            {"idle_timeout = \"0\"\n", false, true},
+		"zero, no spaces": {"idle_timeout=\"0\"\n", false, true},
+		"unreadable":      {"idle_timout = \"0\"\n", false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app := newTestApp(t, fake.New())
+			if tc.config != "" {
+				if err := os.WriteFile(app.store.ConfigPath(), []byte(tc.config), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wanted, ok := idleCheckWanted(app.App)
+			if wanted != tc.wanted || ok != tc.ok {
+				t.Errorf("idleCheckWanted = (%t, %t), want (%t, %t)", wanted, ok, tc.wanted, tc.ok)
+			}
+		})
 	}
 }

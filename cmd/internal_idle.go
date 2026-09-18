@@ -145,12 +145,32 @@ func ensureIdleScheduler(app *App) {
 		fmt.Fprintf(app.Err, "     Install it somewhere permanent and it is set up on the next `avr`.\n")
 		return
 	}
+	wanted, ok := idleCheckWanted(app)
+	if !ok {
+		return
+	}
 	switch runtime.GOOS {
 	case "darwin":
-		ensureLaunchdAgent(app, bin)
+		ensureLaunchdAgent(app, bin, wanted)
 	case "windows":
-		ensureScheduledTask(app, bin)
+		ensureScheduledTask(app, bin, wanted)
 	}
+}
+
+// idleCheckWanted reports whether the user's configuration wants idle stopping
+// at all, and whether the configuration could be read to say so.
+//
+// idle_timeout = "0" turns idle stopping off, and a scheduler entry that runs
+// every half hour to stop nothing is a background task with no purpose, so it
+// is removed rather than left. A config.toml that cannot be read says nothing
+// avar can act on: the registration is left exactly as it is, and the command
+// that got here has already named the line.
+func idleCheckWanted(app *App) (wanted, ok bool) {
+	cfg, err := app.Config()
+	if err != nil {
+		return false, false
+	}
+	return session.IdleTimeout(cfg) > 0, true
 }
 
 // ensureLaunchdAgent installs a per-user launchd agent. The plist lives in
@@ -159,12 +179,44 @@ func ensureIdleScheduler(app *App) {
 //
 // It costs one read when the agent is already current, and repairs one that
 // runs a different binary (see installLaunchdAgent).
-func ensureLaunchdAgent(app *App, bin string) {
+func ensureLaunchdAgent(app *App, bin string, wanted bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
 	}
-	installLaunchdAgent(app, filepath.Join(home, "Library", "LaunchAgents"), bin, launchctl)
+	dir := filepath.Join(home, "Library", "LaunchAgents")
+	if !wanted {
+		removeLaunchdAgent(app, dir, launchctl)
+		return
+	}
+	installLaunchdAgent(app, dir, bin, launchctl)
+}
+
+// removeLaunchdAgent unloads and deletes the agent because idle stopping is
+// off. It costs one stat when there is no agent, which is every invocation
+// after the first.
+//
+// Setting a timeout again brings it back: the next `avr` finds no plist and
+// installs one, with the notice.
+func removeLaunchdAgent(app *App, launchAgentsDir string, launchctl func(args ...string) error) {
+	plistPath := filepath.Join(launchAgentsDir, launchdPlist)
+	if !fileExists(plistPath) {
+		return
+	}
+	if launchctl("list", launchdLabel) == nil {
+		_ = launchctl("unload", plistPath)
+	}
+	if err := os.Remove(plistPath); err != nil {
+		return
+	}
+	printIdleRemoved(app)
+}
+
+// printIdleRemoved tells the user avar removed its scheduler entry because of
+// their setting, on either host.
+func printIdleRemoved(app *App) {
+	fmt.Fprintf(app.Err, "avr: removed the background idle-check, because idle_timeout = \"0\" turns idle stopping off.\n")
+	fmt.Fprintf(app.Err, "     Set a timeout again and your next `avr` puts it back.\n")
 }
 
 // installLaunchdAgent is ensureLaunchdAgent with its host dependencies passed
@@ -329,12 +381,17 @@ const windowlessHelper = "avrw.exe"
 // Every failure is silent, exactly as the launchd path is. Idle auto-stop is a
 // convenience; a user who has just asked for a Linux shell should not be given
 // an error about a background timer instead.
-func ensureScheduledTask(app *App, bin string) {
+func ensureScheduledTask(app *App, bin string, wanted bool) {
 	store, err := app.Store()
 	if err != nil {
 		return
 	}
-	installScheduledTask(app, filepath.Join(store.Root(), scheduledTaskStamp), bin, runSchtasks)
+	stamp := filepath.Join(store.Root(), scheduledTaskStamp)
+	if !wanted {
+		removeScheduledTask(app, stamp, runSchtasks)
+		return
+	}
+	installScheduledTask(app, stamp, bin, runSchtasks)
 }
 
 // installScheduledTask is ensureScheduledTask with its host dependencies passed
@@ -345,14 +402,23 @@ func installScheduledTask(app *App, stamp, bin string, schtasks func(args ...str
 	registered := scheduledTaskStampContent(bin)
 
 	// The warm path, and the whole of it: one read, no look for the helper,
-	// no subprocess.
-	if found && string(recorded) == registered {
+	// no subprocess. A task the user deleted is as settled as a current one.
+	if found && (string(recorded) == registered || string(recorded) == removedByUserStamp) {
 		return
 	}
 
 	helper, ok := windowlessHelperBeside(bin)
 	if !ok {
 		withoutWindowlessHelper(app, stamp, bin, recorded, found, schtasks)
+		return
+	}
+
+	// Replacing a registration — avr.exe moved, or an older avar made it — is
+	// the one time avar asks whether the task is still there. The notice told
+	// the user that deleting it turns the check off, so one that is gone was
+	// deleted on purpose, and /Create /F would quietly undo that.
+	if found && replacesRegistration(recorded, bin) && schtasks("/Query", "/TN", scheduledTaskName) != nil {
+		_ = state.WriteFileAtomic(stamp, []byte(removedByUserStamp))
 		return
 	}
 
@@ -379,9 +445,9 @@ func installScheduledTask(app *App, stamp, bin string, schtasks func(args ...str
 	}
 
 	// Replacing a task is silent: this user has read the notice already. It is
-	// shown when there was no task before, including when the last thing avar
-	// said was that idle auto-stop was off.
-	if found && string(recorded) != helperMissingStampContent(bin) {
+	// shown when there was no task before, including when avar itself had
+	// taken it away.
+	if found && replacesRegistration(recorded, bin) {
 		return
 	}
 	printIdleNotice(app, fmt.Sprintf("schtasks /Delete /TN %s /F", scheduledTaskName))
@@ -429,6 +495,43 @@ func scheduledTaskStampContent(bin string) string {
 // user that bin has no helper beside it.
 func helperMissingStampContent(bin string) string {
 	return fmt.Sprintf("%s\nnot registered: no %s\n", bin, windowlessHelper)
+}
+
+// removedByUserStamp records that the task avar registered was found deleted.
+// It names no binary: the user turned the check off, not one copy of avr.
+// Deleting the stamp file undoes it, at the next `avr`.
+const removedByUserStamp = "not registered: removed by the user\n"
+
+// idleDisabledStamp records that avar removed the task because idle_timeout
+// is "0". A timeout set again registers it at the next `avr`.
+const idleDisabledStamp = "not registered: idle_timeout is 0\n"
+
+// replacesRegistration reports whether a stamp describes a task avar
+// registered, as opposed to one of the states in which avar registered none.
+// Every stamp an earlier avar wrote describes a registration.
+func replacesRegistration(recorded []byte, bin string) bool {
+	switch string(recorded) {
+	case helperMissingStampContent(bin), removedByUserStamp, idleDisabledStamp:
+		return false
+	}
+	return !strings.HasSuffix(string(recorded), fmt.Sprintf("\nnot registered: no %s\n", windowlessHelper))
+}
+
+// removeScheduledTask deletes the task because idle stopping is off, and says
+// so once. Only a task avar registered is deleted; if the stamp says there is
+// none, there is nothing to do, and that costs the one read.
+func removeScheduledTask(app *App, stamp string, schtasks func(args ...string) error) {
+	recorded, err := os.ReadFile(stamp)
+	if err != nil || !replacesRegistration(recorded, "") {
+		return
+	}
+	if err := schtasks("/Delete", "/TN", scheduledTaskName, "/F"); err != nil {
+		return
+	}
+	if err := state.WriteFileAtomic(stamp, []byte(idleDisabledStamp)); err != nil {
+		return
+	}
+	printIdleRemoved(app)
 }
 
 // windowlessHelperBeside finds the helper that ships beside the running

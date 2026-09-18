@@ -455,6 +455,14 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 18.16, 5.5, 17.1, 18.14, 18.15_
   - _writes: cmd/avrw/**, cmd/internal_idle.go, cmd/internal_idle_test.go, cmd/idle_task_test.go, internal/deps/exec.go, internal/deps/console_{other,windows}.go, .goreleaser.yaml, README.md, site/design.md, site/troubleshooting.md, docs/lessons.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
+- [ ] 48. Keep the idle-check registration in step with the user
+  - `idle_timeout = "0"` left the scheduler running every half hour to stop nothing. `ensureIdleScheduler` now reads the timeout through `App.Config`. With "0" it removes the launchd agent or the scheduled task and says so once, and a timeout set again registers the check at the next `avr`. A config it cannot read leaves registration alone.
+  - On Windows, a task the user deleted came back whenever the stamp stopped matching (avr.exe moved, or an upgrade changed the stamp, which task 47 does to every stamp). On that path only, avar runs `schtasks /Query` first, and a missing task is recorded as removed by the user and never re-created.
+  - Uninstall: the cask removes the agent in `zap`, not `uninstall`, because Homebrew runs `uninstall` on every upgrade. Its caveat names `--zap`. winget runs nothing of avar's at uninstall, so its installation notes and the README's Uninstall section give the `schtasks /Delete` command.
+  - Not done: a macOS plist the user deleted is still reinstalled (the notice tells macOS users to `bootout`, which is respected). And nothing can remove a registration left by an uninstall that skipped these steps; it is inert.
+  - _Requirements: 5.9, 5.5, 17.1, 18.15_
+  - _writes: cmd/internal_idle.go, cmd/internal_idle_test.go, cmd/idle_task_test.go, .goreleaser.yaml, README.md, site/design.md, site/syntax/config-toml.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.
