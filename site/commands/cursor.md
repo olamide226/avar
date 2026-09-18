@@ -46,7 +46,9 @@ avr -- cursor                 # a program called cursor inside Linux, not this c
 
 The same steps as [avr code]({% link commands/code.md %}#what-it-does):
 find the `cursor` launcher first, prepare the environment as `avr` does, then
-open Cursor on the current directory inside Linux.
+open Cursor on the current directory inside Linux. While a Cursor window is
+connected, idle auto-stop leaves the environment running, as described for
+[avr code]({% link commands/code.md %}#idle-auto-stop-while-the-editor-is-open).
 
 | Host | Connection |
 | --- | --- |

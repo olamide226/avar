@@ -35,7 +35,7 @@ avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or 
 - **Environment_Selector**: The (distro, arch, isolation) triple that determines which machine a command targets.
 - **Provider**: The backend that implements environment lifecycle and execution operations. LimaProvider serves macOS hosts and WSL2Provider serves Windows hosts.
 - **State_Dir**: avar's private metadata directory on the host (`~/.avr/` on macOS; a platform-appropriate per-user application-data directory on Windows) containing project records, environment registry, generated connection configuration, and logs.
-- **Idle_Timeout**: The period with no active avar sessions after which a machine is automatically stopped.
+- **Idle_Timeout**: The period with no active avar sessions and no connected editor window (5.10) after which a machine is automatically stopped.
 
 ---
 
@@ -113,7 +113,7 @@ avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or 
 
 4.7 IF `--arch` / `--distro` selection would require provisioning a new machine THEN THE CLI SHALL state which environment is being created before doing so (no silent multi-VM sprawl).
 
-### Requirement 5: Machine Lifecycle Management — *Phase 1 (5.1–5.4), Phase 2 (5.5–5.8)*
+### Requirement 5: Machine Lifecycle Management — *Phase 1 (5.1–5.4), Phase 2 (5.5–5.11)*
 
 **User Story:** As a developer, I want avar to manage machine state invisibly but let me inspect and stop it, so that I keep control without needing to think about VMs day to day.
 
@@ -127,7 +127,7 @@ avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or 
 
 5.4 THE CLI SHALL only ever manage machines it created (identified by an avar naming prefix/label), and SHALL never list, modify, or stop the user's other Lima machines.
 
-5.5 WHILE a machine has had no active avar sessions for the Idle_Timeout (default 2 hours, configurable, disableable) THE system SHALL stop that machine automatically to release memory. *(Phase 2)*
+5.5 WHILE a machine has had no active avar sessions and no connected editor window (5.10) for the Idle_Timeout (default 2 hours, configurable, disableable) THE system SHALL stop that machine automatically to release memory. *(Phase 2; amended by 5.10)*
 
 *Criteria 5.6–5.8 added after implementation.* Every other lifecycle verb was
 specified — create, start, stop, idle-stop, reset — and removal was not, so nothing
@@ -145,6 +145,17 @@ tooling, which is precisely what Requirement 1.5 and the product rule exist to p
 5.8 WHEN a user runs `avr destroy --orphaned` THEN THE CLI SHALL remove only those isolated environments whose project directory no longer exists on the host, naming the project each belonged to. THIS is the only path by which such an environment can be removed, because `avr isolate off` requires the project directory it is being run from to exist. *(Phase 2)*
 
 5.9 WHILE idle stopping is disabled (Idle_Timeout "0") THE system SHALL keep no scheduled idle check registered with the host: the next environment-creating invocation SHALL remove the one avar registered and say so once, and WHEN a timeout is set again the next such invocation SHALL register it again. A scheduled check the user removed themselves SHALL NOT be registered again because avar's binary moved or avar was upgraded. *(Added 2026-09-18, maintainer report: with idle stopping off, the check kept running to stop nothing, and a task the user had deleted came back after an upgrade.)*
+
+*Criteria 5.10–5.11 added after implementation, and 5.5 amended to cite them.* 5.5
+counted only avar sessions, and only `avr` and `avr <command>` hold one.
+`avr code`, `avr cursor` and `avr zed` launch the editor and exit, and the editor
+then works in the guest through its own remote server. Someone working only in
+their editor therefore had the environment stopped under them once the timeout
+passed, on both hosts.
+
+5.10 WHILE a window of an editor avar opens (VS Code, Cursor or Zed; 13.1, 13.5, 13.6) is connected to a machine THE system SHALL treat the machine as in use for 5.5 although no avar session exists, and SHALL restart its Idle_Timeout from the latest check that found the window, and from the moment `avr code`, `avr cursor` or `avr zed` opened the editor. An editor's remote server that is running with no window connected SHALL NOT count as a connected window. *(Phase 2)*
+
+5.11 IF the system cannot determine whether an editor window is connected to a running machine that 5.5 would otherwise stop THEN THE system SHALL leave that machine running, SHALL leave its Idle_Timeout unchanged, and SHALL end that idle check with a failure naming the environment and the cause, so the host scheduler records it. *(Phase 2)*
 
 ### Requirement 6: Project File Sharing (Live Mount) — *Phase 1*
 

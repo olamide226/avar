@@ -11,11 +11,11 @@
 // The operations are split by capability rather than gathered into one large
 // interface. Provider is the core set every backend must be able to do at all;
 // Snapshotter, EditorTargetProvider, NativeWorkspacer, PortDiagnoser,
-// MachineSizer and SSHAgentForwarder describe abilities a backend either
-// genuinely has or genuinely lacks. A caller that needs a capability
-// type-asserts for it and tells the user plainly when the backend
-// does not offer it, instead of every backend being forced to declare methods
-// it can only stub out.
+// EditorProber, MountLimiter, MachineSizer and SSHAgentForwarder describe
+// abilities a backend either genuinely has or genuinely lacks. A caller that
+// needs a capability type-asserts for it and tells the user plainly when the
+// backend does not offer it, instead of every backend being forced to declare
+// methods it can only stub out.
 //
 // Vocabulary comes from the glossary: a Machine is one Linux environment avar
 // manages, a Selector is the (distro, version, arch, isolation) choice that
@@ -452,6 +452,39 @@ type MountLimiter interface {
 	// at once. It is always positive and does not depend on the machine: it
 	// describes what the backend can do, not what any machine is doing.
 	MountLimit() int
+}
+
+// EditorProber is implemented by backends that can look inside a running
+// machine for editor windows connected to it.
+//
+// avar's session records cannot see an editor. `avr code`, `avr cursor` and
+// `avr zed` launch it and exit, and the editor then works in the guest through
+// its own remote server, over whatever transport the backend offers. The
+// evidence is inside the guest, which only the backend can reach. The idle
+// check asks before it stops a machine that has no avar session, so that
+// somebody working only in an editor does not have the environment stopped
+// under them.
+type EditorProber interface {
+	// ConnectedEditors reports the editor windows connected to the machine,
+	// one per window, ordered by guest process id. It is a read-only query:
+	// it changes nothing, emits no progress, and never escalates privilege.
+	//
+	// A machine that is not running has no editor connected and reports an
+	// empty result. It is never started in order to be asked.
+	//
+	// An error means the backend could not find out — the transport failed,
+	// the guest refused the probe — and never that nothing was found. The
+	// caller decides whether to stop a machine on the answer, so a backend
+	// that cannot reach the guest must say so rather than answer "none".
+	ConnectedEditors(ctx context.Context, machine string) ([]EditorConnection, error)
+}
+
+// EditorConnection is one editor window connected to a machine.
+type EditorConnection struct {
+	// Editor names the editor as a user would, e.g. "VS Code".
+	Editor string
+	// PID is the guest process that shows the window is connected.
+	PID int
 }
 
 // MachineSizer is implemented by backends that give each machine its own CPU

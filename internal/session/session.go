@@ -70,6 +70,21 @@ func Detach(store *state.Store, machine string, pid int) {
 	}
 }
 
+// RestartIdleClock starts the machine's idle clock again from now, so the
+// machine is not stopped before a full timeout has passed.
+//
+// It is for use that avar sees without holding a session: an editor window
+// found connected by the idle check, or one just opened by `avr code`, whose
+// remote server needs time to install and connect before the idle check can
+// see it. A live session makes the clock irrelevant, and Detach starts it again
+// when the last one leaves.
+func RestartIdleClock(store *state.Store, machine string) error {
+	if err := recordIdleSince(store, machine, time.Now().UTC()); err != nil {
+		return fmt.Errorf("restarting the idle clock of %s: %w", machine, err)
+	}
+	return nil
+}
+
 // ThisPID returns the current process id.
 func ThisPID() int { return os.Getpid() }
 

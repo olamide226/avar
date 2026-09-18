@@ -50,7 +50,9 @@ avr --native-fs code         # Windows: the Linux-native copy of the project
    about any unapproved packages or variables in `.avr.toml`, then creates or
    starts the environment and shares the project into it, exactly as `avr`
    does.
-3. Opens VS Code on the current directory inside Linux, and prints
+3. Restarts the environment's idle clock, so that idle auto-stop gives VS Code
+   a full timeout to connect (see [below](#idle-auto-stop-while-the-editor-is-open)).
+4. Opens VS Code on the current directory inside Linux, and prints
    `avr: opened <project> in VS Code on <environment>`.
 
 How VS Code reaches the environment depends on the host:
@@ -84,6 +86,25 @@ prints the line instead. When an environment is destroyed or reset, avar
 removes its entry from its own file.
 
 The paths above are the macOS defaults; avar shows the real paths it uses.
+
+### Idle auto-stop while the editor is open
+
+`avr code` launches VS Code and exits, so no `avr` session stays open while
+you work in the editor. The [idle check]({% link syntax/config-toml.md %}#idle_timeout)
+looks inside an environment before stopping it, and leaves it running while
+a VS Code, Cursor or Zed window is connected to it. What it looks for is the
+process each window has inside Linux: VS Code's and Cursor's remote extension
+host, or Zed's remote proxy. The editor's remote server on its own does not
+count, because it keeps running for a few minutes after the last window
+closes.
+
+- Closing the window lets the environment stop once the idle timeout has
+  passed since the check that last saw it.
+- A window whose connection dropped without closing, for example when a laptop
+  lid closes, keeps VS Code's extension host alive for up to three hours so it
+  can reconnect. The environment stays running for that time too.
+- If avar cannot look inside the environment, it leaves it running and tries
+  again at the next check.
 
 ## Exit status
 

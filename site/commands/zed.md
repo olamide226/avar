@@ -46,7 +46,9 @@ avr -- zed                    # a zed installed inside Linux, not this command
 
 The same steps as [avr code]({% link commands/code.md %}#what-it-does):
 find the `zed` launcher first, prepare the environment as `avr` does, then
-open Zed on the current directory inside Linux.
+open Zed on the current directory inside Linux. While a Zed window is
+connected, idle auto-stop leaves the environment running, as described for
+[avr code]({% link commands/code.md %}#idle-auto-stop-while-the-editor-is-open).
 
 | Host | Connection |
 | --- | --- |

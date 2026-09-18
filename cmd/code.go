@@ -8,6 +8,7 @@ import (
 	"github.com/olamide226/avar/internal/cli"
 	"github.com/olamide226/avar/internal/editor"
 	"github.com/olamide226/avar/internal/provider"
+	"github.com/olamide226/avar/internal/session"
 )
 
 // The editor commands differ only in the editor they open, so they share one
@@ -76,6 +77,26 @@ func forgetSSHHost(app *App, machine string) {
 		return
 	}
 	_ = editor.RemoveHost(store.SSHDir(), machine)
+}
+
+// restartIdleClockForEditor gives the environment a full idle timeout from the
+// moment an editor is opened on it.
+//
+// The editor holds no avar session, and the idle check finds it only once its
+// remote server is running and a window has connected, which on a first
+// connection includes downloading the server. A check that ran in that gap
+// would stop the environment the user has just asked to open. Failing to
+// restart the clock does not stop the editor opening; it is said, because the
+// consequence would otherwise arrive later with nothing to explain it.
+func restartIdleClockForEditor(app *App, ed editor.Editor, machine, label string) {
+	store, err := app.Store()
+	if err == nil {
+		err = session.RestartIdleClock(store, machine)
+	}
+	if err != nil {
+		fmt.Fprintf(app.Err, "avr: could not mark %s as in use (%v); if idle auto-stop stops it before %s connects, run `avr %s` again\n",
+			label, err, ed.Name, ed.Command)
+	}
 }
 
 // editorCommand builds the handler for one editor subcommand.
@@ -204,6 +225,8 @@ func openInEditor(ctx context.Context, app *App, inv cli.Invocation, ed editor.E
 			return err
 		}
 	}
+
+	restartIdleClockForEditor(app, ed, target.MachineName, target.Selector.Label())
 
 	if err := ed.Launch(ctx, launcher, args, app.Err); err != nil {
 		return err

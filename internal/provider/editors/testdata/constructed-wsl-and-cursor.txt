@@ -1,0 +1,19 @@
+@processes
+1 /init
+7 /init
+8 /init
+9 plan9 --control-socket 7 --log-level 4 --server-fd 8 --pipe-fd 10 --log-truncate
+41 sh /home/ola/.vscode-server/bin/08d4889f9ec4a1685d257b9b95de036c8e1ce1e5/bin/code-server --host=127.0.0.1 --port=0 --connection-token=REDACTED --use-host-proxy --without-browser-env-var --disable-websocket-compression --accept-server-license-terms --telemetry-level all
+46 /home/ola/.vscode-server/bin/08d4889f9ec4a1685d257b9b95de036c8e1ce1e5/node /home/ola/.vscode-server/bin/08d4889f9ec4a1685d257b9b95de036c8e1ce1e5/out/server-main.js --host=127.0.0.1 --port=0 --connection-token=REDACTED --use-host-proxy --without-browser-env-var --disable-websocket-compression --accept-server-license-terms --telemetry-level all
+120 /home/ola/.vscode-server/bin/08d4889f9ec4a1685d257b9b95de036c8e1ce1e5/node --dns-result-order=ipv4first /home/ola/.vscode-server/bin/08d4889f9ec4a1685d257b9b95de036c8e1ce1e5/out/bootstrap-fork --type=extensionHost --transformURIs --useHostProxy=false
+131 /home/ola/.vscode-server/bin/08d4889f9ec4a1685d257b9b95de036c8e1ce1e5/node /home/ola/.vscode-server/bin/08d4889f9ec4a1685d257b9b95de036c8e1ce1e5/out/bootstrap-fork --type=fileWatcher
+150 /home/ola/.cursor-server/cli/servers/Stable-96e5b01ca25f8fbd4c4c10bc69b15f6228c80770/server/node /home/ola/.cursor-server/cli/servers/Stable-96e5b01ca25f8fbd4c4c10bc69b15f6228c80770/server/out/server-main.js --connection-token=REDACTED --accept-server-license-terms --start-server --enable-remote-auto-shutdown --socket-path=/tmp/code-6a1c0b5e-2f4f-4f39-8f8e-3cf0b7f3a1d2
+164 /home/ola/.cursor-server/cli/servers/Stable-96e5b01ca25f8fbd4c4c10bc69b15f6228c80770/server/node --dns-result-order=ipv4first /home/ola/.cursor-server/cli/servers/Stable-96e5b01ca25f8fbd4c4c10bc69b15f6228c80770/server/out/bootstrap-fork --type=extensionHost --transformURIs --useHostProxy=false
+170 /bin/sh -c cd; env .zed_server/zed-remote-server-stable-1.20.2 proxy --identifier wsl-ubuntu
+171 .zed_server/zed-remote-server-stable-1.20.2 proxy --identifier wsl-ubuntu
+176 /home/ola/.zed_server/zed-remote-server-stable-1.20.2 run --log-file /home/ola/.local/share/zed/logs/server-wsl-ubuntu.log --pid-file /home/ola/.local/share/zed/server_state/wsl-ubuntu/server.pid --stdin-socket /home/ola/.local/share/zed/server_state/wsl-ubuntu/stdin.sock --stdout-socket /home/ola/.local/share/zed/server_state/wsl-ubuntu/stdout.sock --stderr-socket /home/ola/.local/share/zed/server_state/wsl-ubuntu/stderr.sock
+190 bash -c ls -la /home/ola/.vscode-server && du -sh /home/ola/.cursor-server
+191 ls -la /home/ola/.vscode-server
+195 grep -r token /home/ola/.zed_server
+196 node /home/ola/.vscode-server/extensions/some.extension/tool.js --type=extensionHost
+197 /home/ola/.zed_server/zed-remote-server-stable-1.20.2 version

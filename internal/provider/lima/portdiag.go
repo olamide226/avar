@@ -90,25 +90,27 @@ func (p *Provider) PortDiagnostics(ctx context.Context, machine string) ([]provi
 		return nil, nil
 	}
 
-	out, err := p.run(ctx, guestListenersArgv(machine)...)
+	out, err := p.run(ctx, guestScriptArgv(machine, listeners.Script)...)
 	if err != nil {
 		return nil, fmt.Errorf("reading the listening ports inside machine %s: %w", machine, err)
 	}
 	return attribute(diagnostics, listeners.Parse(string(out))), nil
 }
 
-// guestListenersArgv runs listeners.Script in the guest as the guest user.
+// guestScriptArgv runs one of avar's guest probe scripts as the guest user.
 //
 // The script travels base64-encoded and is decoded by the guest's own shell, so
 // it reaches /bin/sh byte for byte whatever quoting `limactl shell` applies on
 // its way through SSH — the same arrangement the WSL backend uses. It is a
 // constant: nothing about the machine or the user is interpolated into it.
 //
-// It runs unprivileged. The servers a developer starts run as that developer and
-// are attributed; a system daemon's port is listed without a process rather than
-// reached for with sudo, because a read-only listing has no business escalating.
-func guestListenersArgv(machine string) []string {
-	encoded := base64.StdEncoding.EncodeToString([]byte(listeners.Script))
+// It runs unprivileged, because a read-only probe has no business escalating.
+// The servers a developer starts run as that developer, so their listening
+// ports are attributed, and a system daemon's port is listed without a process
+// rather than reached for with sudo. Command lines are world-readable, so the
+// editor probe sees every window whatever account it runs as.
+func guestScriptArgv(machine, script string) []string {
+	encoded := base64.StdEncoding.EncodeToString([]byte(script))
 	return []string{"shell", "--workdir", guestProbeWorkdir, machine, "--", "/bin/sh", "-c", "echo " + encoded + " | base64 -d | /bin/sh"}
 }
 

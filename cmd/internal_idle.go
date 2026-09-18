@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/olamide226/avar/internal/cli"
+	"github.com/olamide226/avar/internal/provider"
 	"github.com/olamide226/avar/internal/session"
 	"github.com/olamide226/avar/internal/state"
 	"github.com/olamide226/avar/internal/types"
@@ -47,6 +49,11 @@ func runInternal(ctx context.Context, app *App, inv cli.Invocation) error {
 // every 30 minutes and is designed to be safe to run at any frequency:
 // machines with live sessions are never stopped (Property 11), and an idle
 // clock only starts when the last session detaches.
+//
+// An editor window connected to a machine is a session too, though avar holds
+// no record of it (REQ-5.10). Only a running machine the check is about to stop
+// is asked, which keeps the round trip into a guest off every other machine,
+// and a machine the backend cannot answer for is left running.
 //
 // A config.toml it cannot read stops nothing. Nobody is watching a scheduled
 // check, so it cannot ask, and there is no safe guess: the default timeout
@@ -87,16 +94,31 @@ func runIdleCheck(ctx context.Context, app *App) error {
 	// what releases them, and without it only an explicit `avr stop` ever
 	// would. A machine coming up, broken, or in a state avar has no word for is
 	// left alone, as `avr stop --all` leaves it.
-	stoppable := make(map[string]bool, len(statuses))
+	stoppable := make(map[string]types.MachineStatus, len(statuses))
 	for _, s := range statuses {
 		if s.State == types.StateRunning || s.State == types.StateStopped {
-			stoppable[s.Name] = true
+			stoppable[s.Name] = s
 		}
 	}
 
+	// A backend that cannot look inside its machines has no editor to report,
+	// and the check decides on avar's session records alone, as it always has.
+	prober, _ := p.(provider.EditorProber)
+	var unanswered []error
+
 	for _, name := range idle {
-		if !stoppable[name] {
+		m, ok := stoppable[name]
+		if !ok {
 			continue
+		}
+		if m.State == types.StateRunning && prober != nil {
+			kept, err := keptForEditor(ctx, app, prober, store, m)
+			if err != nil {
+				unanswered = append(unanswered, err)
+			}
+			if kept {
+				continue
+			}
 		}
 		// Stop is best-effort: a failure leaves the machine running, and
 		// the next idle-check will try again. A machine that disappeared
@@ -107,7 +129,9 @@ func runIdleCheck(ctx context.Context, app *App) error {
 			continue
 		}
 	}
-	return nil
+	// Nobody is watching a scheduled check. Exiting non-zero is what makes
+	// the host scheduler record that a machine was kept for want of an answer.
+	return errors.Join(unanswered...)
 }
 
 // ensureIdleScheduler asks the host's own scheduler to invoke `avr internal
