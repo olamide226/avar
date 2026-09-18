@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/olamide226/avar/internal/state"
@@ -15,7 +16,13 @@ import (
 // as the scheduler sees it: a process, its arguments, and its exit status.
 func buildHelper(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "avrw")
+	// Windows runs a file only by its extension: exec looks for avrw.exe, and a
+	// file named avrw is not found at all.
+	name := "avrw"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(t.TempDir(), name)
 	build := exec.Command("go", "build", "-o", bin, ".")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building avrw: %v\n%s", err, out)
