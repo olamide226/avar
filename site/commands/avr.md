@@ -172,8 +172,9 @@ before logging in.
 
 {: .warning }
 > **Known gaps, today.**
-> - `--ssh-agent` lends the guest your SSH agent on macOS. On Windows the
->   flag is accepted and has no effect.
+> - `--ssh-agent` lends the guest your SSH agent on macOS. On Windows avar
+>   cannot forward an agent yet, so it refuses the flag with status 2 and
+>   starts nothing, rather than opening a session without the agent.
 
 ### --native-fs
 

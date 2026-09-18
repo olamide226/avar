@@ -257,7 +257,7 @@ unaffected and works on every environment.
 
 12.2 WHEN a user passes `--env-file <path>` THEN THE CLI SHALL load variables from that file into the guest session/command; IF the file does not exist or cannot be parsed THEN THE CLI SHALL exit non-zero before starting the session.
 
-12.3 WHEN a user passes `--ssh-agent` THEN THE CLI SHALL forward the host SSH agent socket into the guest for the duration of that session only.
+12.3 WHEN a user passes `--ssh-agent` THEN THE CLI SHALL forward the host SSH agent socket into the guest for the duration of that session only. IF the backend serving the invocation cannot forward the host SSH agent THEN THE CLI SHALL exit non-zero before any machine work, saying that agent forwarding is not supported in this environment yet, and SHALL NOT start a session without the agent.
 
 12.4 Forwarding SHALL be per-invocation: no `--env`/`--ssh-agent` grant SHALL persist beyond the session it was given to, unless the user configures a persistent allowlist in avar's own (host-side) configuration.
 

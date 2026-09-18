@@ -233,7 +233,7 @@ When the file cannot be read exactly:
 
 **Purpose**: Backend abstraction (Req 17.3, 18.14). Command orchestration depends only on this interface; the Resolver depends only on shared types.
 
-The operations are **segregated by capability** rather than gathered into one interface. `Provider` is the core set every backend must implement; `Snapshotter`, `EditorTargetProvider`, `PortDiagnoser`, and `MachineSizer` describe optional abilities. Callers type-assert for a capability and report plainly when it is absent. Editor launch is modeled by a transport-neutral target, so WSL is not forced through SSH.
+The operations are **segregated by capability** rather than gathered into one interface. `Provider` is the core set every backend must implement; `Snapshotter`, `EditorTargetProvider`, `PortDiagnoser`, `MachineSizer`, and `SSHAgentForwarder` describe optional abilities. Callers type-assert for a capability and report plainly when it is absent. Editor launch is modeled by a transport-neutral target, so WSL is not forced through SSH.
 
 ```go
 type Provider interface {
@@ -307,6 +307,16 @@ type MachineSizer interface {
     HostCapacity(ctx context.Context) (types.HostCapacity, error) // logical CPUs, physical memory in bytes
 }
 
+// SSHAgentForwarder marks a backend whose Shell honours ShellOpts.ForwardSSHAgent
+// (Req 12.3). Lima implements it; WSL 2 does not, and its Shell refuses the
+// request with ErrUnsupportedCapability rather than dropping it. The command
+// layer asserts it before any machine work and refuses `--ssh-agent` when it is
+// absent, because a credential grant that silently does not happen is the worst
+// failure the flag has.
+type SSHAgentForwarder interface {
+    ForwardsSSHAgent() // a declaration, not an operation
+}
+
 type MachineSpec struct {
     Name       string                     // avr-…, from the resolver (ownership marker)
     Provider   types.ProviderID
@@ -339,7 +349,7 @@ type ShellOpts struct {
     Stdin   io.Reader         // nil → the calling process's stream; redirection is invalid with TTY.
     Stdout  io.Writer         // Used by avar's own guest probes (e.g. mount verification, Req 6.5)
     Stderr  io.Writer         // so their output never reaches the user's terminal.
-    ForwardSSHAgent bool      // Phase 2
+    ForwardSSHAgent bool      // honoured only by an SSHAgentForwarder; refused by any other backend
 }
 
 type EditorTarget struct {
@@ -859,6 +869,7 @@ _For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host'
 | Editor cannot connect to the target the backend describes | `Editor.Args` returns `ErrUnsupportedTarget` | Exit 1 saying the editor cannot open this environment and suggesting `avr code`; write no SSH configuration and propose no Include (Req 13.8). The message names the connection kind, never the machine (Req 1.5). |
 | Editor launcher rejects avar's arguments (e.g. an old Zed without `--wsl`) | launcher exits non-zero | Pass the launcher's stderr through and report `launch <editor> with <argv>: <exit status>` (Req 13.5, 13.6). |
 | `--env-file` missing/unparseable | pre-flight | Exit 1 before any machine work (Req 12.2). |
+| `--ssh-agent` on a backend that cannot forward the agent (WSL 2 today) | `provider.SSHAgentForwarder` type assertion in `cmd/`, before any machine work; the WSL backend's `Shell` also refuses `ForwardSSHAgent` with `ErrUnsupportedCapability` | Exit 2 saying agent forwarding is not supported in this environment yet and that nothing was started; suggest running without the flag, and say that SSH inside Linux then uses only keys stored there. Never start the session without the agent, and suggest no workaround avar does not provide (Req 12.3, 17.3). |
 | `.avr.toml` unreadable, over 64 KiB, or outside the supported TOML subset; unknown key; invalid value | `projconfig.Load` during resolution | Exit 1 before any machine work, naming the file, the line, the problem and the keys or syntax avar accepts; an unknown key suggests upgrading avar in case it is from a newer version. Never apply part of a file (Req 15.1). |
 | `config.toml` unreadable, over 64 KiB, or outside the supported TOML subset; unknown key; invalid value | `state.Store.Config`, from `cmd` dispatch before any handler runs | Exit 1 before resolving or any machine work, naming the full path, the line, the key, what to write with an example, and the nearest known key for a near miss; a second line says nothing was started and which commands still work. Never apply part of the file, never fall back to defaults (Req 17.7). |
 | `config.toml` sets `distro`, `arch`, `cpus`, `memory` or `packages` | `config.toml`'s schema | As above, with a message saying the key is not supported in `config.toml` and where to set it instead (`.avr.toml`, or `--distro`/`--arch`) rather than calling it unknown (Req 17.7). |

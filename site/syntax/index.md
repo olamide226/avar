@@ -79,4 +79,5 @@ profile that assigns the same name unconditionally wins over the grant.
 
 {: .warning }
 > **Known gaps, today.**
-> - On Windows, `--ssh-agent` is accepted and has no effect.
+> - On Windows, avar cannot forward your SSH agent yet. `--ssh-agent` is
+>   refused with status 2 and nothing is started.

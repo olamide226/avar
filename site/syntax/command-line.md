@@ -94,6 +94,7 @@ Each of these exits with status 2 and changes nothing:
 | `avr --arch` | A flag that needs a value, at the end of the line |
 | `avr --isolate=maybe` | Not a boolean |
 | `avr --isolate --shared` | The two contradict each other |
+| `avr --ssh-agent` on Windows | avar cannot forward your SSH agent there yet. It says so rather than starting a session without the agent |
 
 A release that is not in the environment matrix, such as `--distro fedora:41`,
 passes the grammar and is refused a moment later when avar resolves the

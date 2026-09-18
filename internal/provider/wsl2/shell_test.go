@@ -650,6 +650,30 @@ func TestShell_RefusesASelfContradictoryExecution(t *testing.T) {
 	}
 }
 
+// REQ-12.3: this backend cannot lend the guest the host's SSH agent, so a
+// request for it is refused before anything starts rather than dropped. The
+// command layer refuses first, because the backend does not implement
+// provider.SSHAgentForwarder; this is what keeps a caller that forgets to ask
+// from handing the user a session without the agent they believe they have.
+func TestShell_RefusesAgentForwarding_REQ_12_3(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeWSL()
+	f.register(testMachine, 2, true)
+	p := newProvider(t, f, recorded(testMachine))
+
+	_, err := p.Shell(context.Background(), testMachine, provider.ShellOpts{Workdir: "/work", ForwardSSHAgent: true})
+	if !errors.Is(err, provider.ErrUnsupportedCapability) {
+		t.Fatalf("error = %v, want ErrUnsupportedCapability", err)
+	}
+	if f.ranAny("--exec") {
+		t.Errorf("Shell started a session without the agent: %v", f.argvs())
+	}
+	if _, ok := any(p).(provider.SSHAgentForwarder); ok {
+		t.Error("the WSL backend claims to forward the SSH agent")
+	}
+}
+
 // PROP-15: a WSL 1 registration is never entered.
 func TestShell_RefusesWSL1_PROP_15(t *testing.T) {
 	t.Parallel()

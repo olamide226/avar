@@ -10,10 +10,10 @@
 //
 // The operations are split by capability rather than gathered into one large
 // interface. Provider is the core set every backend must be able to do at all;
-// Snapshotter, EditorTargetProvider, NativeWorkspacer and PortDiagnoser
-// describe abilities a backend either genuinely has or genuinely lacks. A
-// caller that needs a
-// capability type-asserts for it and tells the user plainly when the backend
+// Snapshotter, EditorTargetProvider, NativeWorkspacer, PortDiagnoser,
+// MachineSizer and SSHAgentForwarder describe abilities a backend either
+// genuinely has or genuinely lacks. A caller that needs a capability
+// type-asserts for it and tells the user plainly when the backend
 // does not offer it, instead of every backend being forced to declare methods
 // it can only stub out.
 //
@@ -461,6 +461,23 @@ type MachineSizer interface {
 	HostCapacity(ctx context.Context) (types.HostCapacity, error)
 }
 
+// SSHAgentForwarder is implemented by backends that can make the host's SSH
+// agent reachable from a guest session, so that ShellOpts.ForwardSSHAgent
+// means something there (REQ-12.3).
+//
+// Not every backend can, and the flag is a credential grant: a session the
+// user believes has their agent, and does not, fails only later, at whatever
+// authenticated operation they ran it for. A caller with a forwarding request
+// checks for this capability before any machine work and refuses when it is
+// absent, rather than handing the request to a backend that would drop it
+// (docs/lessons.md, "`--ssh-agent` was accepted, plumbed, and did nothing").
+type SSHAgentForwarder interface {
+	// ForwardsSSHAgent declares that Shell honours ShellOpts.ForwardSSHAgent.
+	// It does nothing; implementing it is the claim, and the claim is what a
+	// caller asserts on.
+	ForwardsSSHAgent()
+}
+
 // MachineSpec fully describes the machine a caller wants to exist. It is the
 // resolver's decision stated in backend-neutral terms: no image references, no
 // configuration file, no virtualization mode.
@@ -566,7 +583,10 @@ type ShellOpts struct {
 
 	// ForwardSSHAgent asks for the host's SSH agent to be reachable from the
 	// guest for this one execution and no longer, and is never set by default
-	// (REQ-9.2, REQ-12.3, REQ-12.4). Phase 2.
+	// (REQ-9.2, REQ-12.3, REQ-12.4). Only a backend that implements
+	// SSHAgentForwarder honours it; any other refuses it with
+	// ErrUnsupportedCapability rather than starting a session without the
+	// agent.
 	ForwardSSHAgent bool
 }
 

@@ -243,7 +243,7 @@ default rather than selecting an environment.
 | `--shared` | Use the environment shared by every project, just this once |
 | `--env NAME` or `--env NAME=value` | Forward or set one variable in the guest. Repeatable |
 | `--env-file PATH` | Forward a file of `KEY=value` lines |
-| `--ssh-agent` | Lend the guest your SSH agent for this invocation only |
+| `--ssh-agent` | Lend the guest your SSH agent for this invocation only. macOS only for now: on Windows avar refuses it and starts nothing |
 
 `--env`, `--env-file`, and `--ssh-agent` apply only to an interactive shell or
 one-shot guest command. Management commands do not start a guest session, so

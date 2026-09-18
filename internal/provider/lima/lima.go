@@ -44,6 +44,9 @@ var _ provider.Provider = (*Provider)(nil)
 // Every Lima instance has its own cpus and memory, on vz and qemu alike.
 var _ provider.MachineSizer = (*Provider)(nil)
 
+// Shell forwards the host's SSH agent on request (see sshAgentOverride).
+var _ provider.SSHAgentForwarder = (*Provider)(nil)
+
 // cleanupTimeout bounds the cleanup of a partially created machine. It runs on a
 // context detached from the caller's, because the usual reason cleanup is needed
 // is that the caller's context was cancelled — and a Ctrl-C that leaves a wedged
