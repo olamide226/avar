@@ -405,6 +405,12 @@ func TestSnapshot_RefusedOnAMachineThatCannotDoIt_REQ_10_1(t *testing.T) {
 			if !errors.Is(err, provider.ErrUnsupportedCapability) {
 				t.Fatalf("want ErrUnsupportedCapability, got %v", err)
 			}
+			// The command layer shows this reason as it stands, after the
+			// environment's label, so it must explain itself and must not
+			// name the machine (REQ-1.5).
+			if msg := err.Error(); strings.Contains(msg, vzMachine) || !strings.Contains(msg, "avr --arch amd64") {
+				t.Errorf("the reason names the machine or omits the alternative: %q", msg)
+			}
 
 			// Nothing may have been done to the machine: a refusal that had
 			// already stopped the guest would be worse than the failure it

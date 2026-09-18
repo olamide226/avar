@@ -49,6 +49,30 @@ func TestDestroy_RemovesTheCurrentEnvironment_REQ_5_6(t *testing.T) {
 	}
 }
 
+// REQ-18.1: the command layer serves macOS and Windows with the same words, so
+// the reassurance that host files survive names the computer, not a Mac. It
+// said "this Mac" to Windows users.
+func TestDestroy_NamesNoParticularHost_REQ_18_1(t *testing.T) {
+	f := fake.New()
+	app := newTestApp(t, f)
+	target, _ := resolvedTarget(t, app)
+	seedMachine(t, f, target, ubuntu(), types.KindShared, hostPath("/Users/ola/code/app"))
+
+	if err := runDestroy(context.Background(), app.App, destroyInvocation("--yes")); err != nil {
+		t.Fatalf("avr destroy --yes: %v", err)
+	}
+
+	out := app.stdout()
+	for _, host := range []string{"Mac", "macOS", "Windows"} {
+		if strings.Contains(out, host) {
+			t.Errorf("`avr destroy` names a particular host (%q):\n%s", host, out)
+		}
+	}
+	if strings.Count(out, "this computer") != 2 {
+		t.Errorf("want the summary and the result both to say \"this computer\":\n%s", out)
+	}
+}
+
 // Destroying an environment that was never created is not an error, and must
 // not create one on the way to removing it.
 func TestDestroy_NothingToDestroyIsNotAnError_REQ_5_6(t *testing.T) {

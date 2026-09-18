@@ -477,6 +477,12 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 6.1, 6.4, 6.5, 17.3_
   - _writes: internal/provider/provider.go, internal/provider/lima/{lima,mounts,lima_test}.go, internal/provider/wsl2/wsl2_test.go, internal/provider/fake/fake.go, internal/mounts/mounts{,_test}.go, site/{design,platforms,troubleshooting}.md, .kiro/specs/avar-cli/{design,tasks}.md_
 
+- [ ] 51. Say "this computer", not "this Mac", in the command layer
+  - Maintainer decision (2026-09-17): `avr destroy` told Windows users their project files "on this Mac" were not touched, in its summary and its result. Both now say "this computer", as `cmd/ports.go` does.
+  - A sweep of `cmd/` for other host-specific wording found `explainUnsupported` in `cmd/snapshot.go`, which replaced every `ErrUnsupportedCapability` from a snapshot operation with the macOS reason ("Apple's virtualization framework … `avr --arch amd64`"). The WSL backend returns that sentinel for a WSL 1 distribution, so a Windows user was told something false and lost the `wsl --set-version` remedy REQ-18.4 requires. The command layer now wraps the backend's reason; Lima's reason is the old text, without a machine name, so macOS output is unchanged.
+  - _Requirements: 18.1, 18.4, 10.1, 10.2, 1.5, 5.6_
+  - _writes: cmd/destroy.go, cmd/destroy_test.go, cmd/snapshot.go, cmd/snapshot_test.go, internal/provider/lima/snapshot.go, internal/provider/lima/snapshot_test.go, site/commands/snapshot.md, site/troubleshooting.md, .kiro/specs/avar-cli/tasks.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

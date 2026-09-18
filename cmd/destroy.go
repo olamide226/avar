@@ -156,7 +156,7 @@ func runDestroy(ctx context.Context, app *App, inv cli.Invocation) error {
 	}
 
 	fmt.Fprintln(app.Out)
-	fmt.Fprintf(app.Out, "Destroyed %s. Your project files on this Mac were not touched.\n",
+	fmt.Fprintf(app.Out, "Destroyed %s. Your project files on this computer were not touched.\n",
 		countLabel(len(victims), "environment", "environments"))
 	fmt.Fprintln(app.Out, "Run `avr` in a project to create one again.")
 	return nil
@@ -331,7 +331,7 @@ func writeDestroySummary(app *App, victims []victim, scope destroyScope) {
 	fmt.Fprintln(app.Out)
 	fmt.Fprintln(app.Out, "Everything installed inside them is lost: packages, files outside your")
 	fmt.Fprintln(app.Out, "project directories, and any running state.")
-	fmt.Fprintln(app.Out, "Your project files on this Mac are shared, never copied, and are not affected.")
+	fmt.Fprintln(app.Out, "Your project files on this computer are shared, never copied, and are not affected.")
 }
 
 // confirmDestruction asks for confirmation proportionate to what is at stake.

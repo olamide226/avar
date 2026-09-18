@@ -86,7 +86,9 @@ A name already used for this environment is refused.
 avr: <environment> does not support snapshots: it runs on Apple's virtualization framework, which cannot take them. `avr reset` returns it to a clean state, and an emulated environment (`avr --arch amd64`) can be snapshotted
 ```
 
-macOS, native architecture. Exit status 1.
+macOS, native architecture. Exit status 1. On Windows the same line carries
+the reason that applies there instead: an environment registered as WSL 1, for
+example, gets the `wsl --set-version` command that converts it.
 
 ### too many arguments
 

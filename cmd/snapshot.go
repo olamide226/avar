@@ -34,17 +34,17 @@ func runSnapshot(ctx context.Context, app *App, inv cli.Invocation) error {
 	}
 }
 
-// explainUnsupported turns a capability refusal into one plain sentence.
+// explainUnsupported names the environment in a capability refusal.
 //
-// The user asked for something this environment cannot do. That is not a
-// failure they can debug, so the answer names the environment and what to do
-// instead rather than restating a chain of wrapped errors.
+// Why the environment cannot be snapshotted, and what to do instead, is the
+// backend's answer and differs between them, so it is carried through rather
+// than written here: a reason written in this layer is one backend's reason
+// told to every user.
 func explainUnsupported(err error, label string) error {
 	if !errors.Is(err, provider.ErrUnsupportedCapability) {
 		return err
 	}
-	return fmt.Errorf("%s does not support snapshots: it runs on Apple's virtualization framework, which cannot take them. "+
-		"`avr reset` returns it to a clean state, and an emulated environment (`avr --arch amd64`) can be snapshotted", label)
+	return fmt.Errorf("%s does not support snapshots: %w", label, err)
 }
 
 // listSnapshots shows the snapshots held for the current environment, with
