@@ -490,6 +490,15 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 5.6, 5.7, 5.8, 10.3_
   - _writes: cmd/app.go, cmd/destroy.go, cmd/reset.go, cmd/confirm_test.go, cmd/destroy_test.go, cmd/reset_test.go, site/commands/{destroy,reset}.md, .kiro/specs/avar-cli/{requirements,design,tasks}.md_
 
+- [ ] 53. Keep an environment running while an editor window is connected to it
+  - `avr code`, `avr cursor` and `avr zed` launch the editor and exit, and the editor then works in the guest through its own remote server, so no avar session existed while somebody worked only in their editor. The idle check read only avar's session records and stopped the environment under them once the timeout passed, on both hosts. REQ-5.10 and REQ-5.11 are added, REQ-5.5 and the Idle_Timeout glossary entry are amended to cite them, PROP-11 is extended, §6 gains two rows, and design §3.8 gains "Editors connected without a session".
+  - **Detection rule:** a guest process whose program lies in the editor's server directory and which exists once per connected window — VS Code's and Cursor's remote extension host (`--type=extensionHost`), Zed's `proxy`. A server with no window does not count. VS Code and Zed were measured in a throwaway Lima 2.2.0 guest against real 1.135.0 and 1.20.2 servers, with a real window attached, closed and dropped; Zed runs its server by a relative path (`.zed_server/…`), which a match on `/.zed_server/` would have missed. Cursor, and every WSL layout, are constructed from the editors' sources and labelled so in the fixtures.
+  - `provider.EditorProber`, implemented by both backends through one shared guest probe, `internal/provider/editors` (the `internal/provider/listeners` pattern). The idle check asks only a running machine it is about to stop; a probe that fails keeps that machine, leaves its idle clock alone and makes the check exit 1; a window found restarts the idle clock; `avr code`, `avr cursor` and `avr zed` restart it when they open the editor, so a first connection that downloads the server is not stopped mid-install.
+  - Not verified on a real Windows host: VS Code's WSL extension layout, Zed through `wsl.exe`, and Cursor on either host. Check them with task 43's list.
+  - _Requirements: 5.5, 5.10, 5.11, 13.1, 13.5, 13.6_
+  - _Properties: 11_
+  - _writes: internal/provider/editors/**, internal/provider/provider.go, internal/provider/lima/editorprobe.go, internal/provider/lima/editorprobe_test.go, internal/provider/lima/portdiag.go, internal/provider/wsl2/editorprobe.go, internal/provider/wsl2/editorprobe_test.go, internal/provider/wsl2/wsl2_test.go, internal/provider/fake/fake.go, internal/session/session.go, internal/session/session_test.go, cmd/internal_idle.go, cmd/idle_editors.go, cmd/idle_editors_test.go, cmd/code.go, site/commands/{code,cursor,zed}.md, site/design.md, site/syntax/config-toml.md, site/troubleshooting.md, docs/lessons.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

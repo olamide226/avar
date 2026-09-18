@@ -257,6 +257,17 @@ forgot costs nothing. The next `avr` starts it again. Change the timeout, or
 turn idle stopping off with `"0"`, through `idle_timeout` in
 [config.toml]({% link syntax/config-toml.md %}#idle_timeout).
 
+An editor window opened with `avr code`, `avr cursor` or `avr zed` counts as a
+session while it is connected. The editor's remote server running on its own,
+after its windows have closed, does not
+([details]({% link commands/code.md %}#idle-auto-stop-while-the-editor-is-open)).
+
+### My environment will not stop by itself
+
+A connected editor window keeps it running, including a VS Code window whose
+connection dropped without closing: VS Code keeps that window's session for
+up to three hours so it can reconnect. Close the window, or run `avr stop`.
+
 ## Ports and editors
 
 ### "port N is not forwarded"

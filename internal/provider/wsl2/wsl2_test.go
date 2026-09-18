@@ -113,6 +113,9 @@ type fakeWSL struct {
 	// installRegistersThenFails models an install that got far enough to
 	// register the distribution and then failed anyway.
 	installRegistersThenFails bool
+	// processes is what the editor probe reports: the guest's process list in
+	// the probe's own format.
+	processes string
 
 	calls      [][]string
 	provisions []string
@@ -258,6 +261,8 @@ func (f *fakeWSL) guestCommand(args []string) (string, error) {
 		return healthyFacts(), nil
 	case strings.Contains(script, "/proc/net/tcp"):
 		return f.reportListeners(), nil
+	case strings.Contains(script, "@processes"):
+		return f.processes, nil
 	case strings.Contains(script, "/proc/mounts"):
 		return f.reportMounts(machine), nil
 	case strings.Contains(script, "mount -t drvfs") || strings.Contains(script, "umount"):

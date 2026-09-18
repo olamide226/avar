@@ -55,6 +55,14 @@ How long an environment with no live `avr` session waits before avar stops
 it. Durations use Go's syntax: a number followed by `h`, `m` or `s`, and
 combinations such as `1h30m`.
 
+A VS Code, Cursor or Zed window connected to the environment counts as a
+session, although `avr code`, `avr cursor` and `avr zed` exit once the editor
+opens. Before stopping a running environment, the check looks inside it for a
+connected window. If it finds one, it leaves the environment running and
+restarts its timeout. If it cannot look, it leaves the environment running.
+Opening an editor also restarts the timeout, so the editor has time to
+connect. See [avr code]({% link commands/code.md %}#idle-auto-stop-while-the-editor-is-open).
+
 avar checks every thirty minutes, so an environment stops up to half an hour
 after its timeout rather than exactly at it. The check is registered with the host's
 scheduler (a launchd agent on macOS, a Task Scheduler task on Windows) when

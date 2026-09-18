@@ -401,3 +401,41 @@ func TestIdleSinceFile_MissingIsEmpty(t *testing.T) {
 		t.Errorf("len = %d, want 0", len(got))
 	}
 }
+
+// REQ-5.10: restarting the idle clock gives a machine that has been idle for
+// hours a full timeout from now, and leaves every other machine's clock alone.
+func TestRestartIdleClock_GivesAFullTimeoutFromNow_REQ_5_10(t *testing.T) {
+	store := testStore(t)
+	writeMachine(t, store, "avr-ubuntu-24.04-arm64", types.KindShared)
+	writeMachine(t, store, "avr-fedora-42-arm64", types.KindShared)
+	longAgo := time.Now().UTC().Add(-3 * time.Hour)
+	for _, name := range []string{"avr-ubuntu-24.04-arm64", "avr-fedora-42-arm64"} {
+		if err := recordIdleSince(store, name, longAgo); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before := time.Now().UTC()
+	if err := RestartIdleClock(store, "avr-ubuntu-24.04-arm64"); err != nil {
+		t.Fatalf("RestartIdleClock: %v", err)
+	}
+
+	since, err := readIdleSince(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := since["avr-ubuntu-24.04-arm64"]; got.Before(before) {
+		t.Errorf("idle clock = %v, want restarted at or after %v", got, before)
+	}
+	if got := since["avr-fedora-42-arm64"]; !got.Equal(longAgo) {
+		t.Errorf("another machine's idle clock moved: %v, want %v", got, longAgo)
+	}
+
+	idle, err := IdleMachines(store, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idle) != 1 || idle[0] != "avr-fedora-42-arm64" {
+		t.Errorf("IdleMachines = %v, want only the machine whose clock was not restarted", idle)
+	}
+}

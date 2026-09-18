@@ -25,9 +25,11 @@ between commands. To stop environments you have stopped using, avar registers
 a scheduled job with your operating system: a launchd agent on macOS, a Task
 Scheduler task on Windows. Every thirty minutes it runs `avr internal idle-check`,
 which stops any environment that has had no live `avr` session for the idle
-timeout (two hours by default). On Windows the task runs `avrw.exe`, the same
-check built as a program with no console, so nothing appears on screen when it
-runs; it ships beside `avr.exe`.
+timeout (two hours by default). An editor window connected to the environment
+counts as a session, and the check looks inside an environment for one before
+stopping it. On Windows the task runs `avrw.exe`, the same check built as a
+program with no console, so nothing appears on screen when it runs; it ships
+beside `avr.exe`.
 
 **Why.** A resident service is one more thing to install, keep running,
 upgrade and trust with your machine. The operating system already has a
@@ -45,6 +47,9 @@ command run on a schedule does that without a service.
   on macOS; on Windows, delete the task first. The README's Uninstall section
   has the commands.
 - Stopping happens on the next check after the timeout, not at it.
+- Only an environment the check is about to stop is searched for an editor
+  window, because the search runs a command inside it. When that command
+  fails, the environment is left running rather than stopped on a guess.
 - An environment you leave idle stops, and your next `avr` pays a start of
   about ten to fifteen seconds.
 

@@ -419,6 +419,28 @@ is the same rule as *"a test that asserts a command's shape proves only that you
 wrote what you wrote"*, arriving from the other end: there the assertion was the
 author's, here the input was.
 
+### A real capture of a process you started yourself carries your idea of how it starts
+
+The idle check's editor detection was first written with a fixture that was
+genuinely captured: the real Zed 1.20.2 remote server, running in a real
+Ubuntu guest, listed by the real probe. The parser matched a program path
+containing `/.zed_server/`, the fixture agreed, and the tests were green. But
+the proxy in that capture had been started by hand, with an absolute path,
+because that is how its author assumed Zed starts it. Zed does not. Its client
+runs `cd; env .zed_server/zed-remote-server-stable-1.20.2 proxy …` (and the
+same through `wsl.exe --cd ~`), so on every real connection the proxy's
+command line begins `.zed_server/`, with no slash in front, and the check
+would never have seen a single Zed window. Reading `ssh.rs` and `wsl.rs`, then
+starting the proxy their way, found it.
+
+This is *"a test double that shares the code's assumption"* a third time. There
+the fake answered in avar's vocabulary; here every byte was real except the
+one thing the author supplied, which was the thing under test. A capture proves
+the format of what you captured, not that you captured what happens. When the
+fixture depends on how a process is launched, launch it the way its real
+launcher does, from the launcher's own source, and say in the fixture where
+that command came from.
+
 ### `/mnt` on WSL is not the user's drives
 
 The same provisioning run refused a perfectly good environment because the

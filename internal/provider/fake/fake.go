@@ -46,6 +46,7 @@ var (
 	_ provider.EditorTargetProvider = (*Fake)(nil)
 	_ provider.NativeWorkspacer     = (*Fake)(nil)
 	_ provider.PortDiagnoser        = (*Fake)(nil)
+	_ provider.EditorProber         = (*Fake)(nil)
 	_ provider.MachineSizer         = (*Fake)(nil)
 	_ provider.SSHAgentForwarder    = (*Fake)(nil)
 	_ provider.MountLimiter         = (*Fake)(nil)
@@ -112,19 +113,20 @@ type Op string
 // The operations a Fake records. The values match the method names so that a
 // failed assertion reads like the code under test.
 const (
-	OpEnsureMachine   Op = "EnsureMachine"
-	OpShell           Op = "Shell"
-	OpAppliedMounts   Op = "AppliedMounts"
-	OpSetMounts       Op = "SetMounts"
-	OpStop            Op = "Stop"
-	OpDelete          Op = "Delete"
-	OpStatus          Op = "Status"
-	OpSnapshot        Op = "Snapshot"
-	OpRestoreSnapshot Op = "RestoreSnapshot"
-	OpListSnapshots   Op = "ListSnapshots"
-	OpEditorTarget    Op = "EditorTarget"
-	OpPortDiagnostics Op = "PortDiagnostics"
-	OpHostCapacity    Op = "HostCapacity"
+	OpEnsureMachine    Op = "EnsureMachine"
+	OpShell            Op = "Shell"
+	OpAppliedMounts    Op = "AppliedMounts"
+	OpSetMounts        Op = "SetMounts"
+	OpStop             Op = "Stop"
+	OpDelete           Op = "Delete"
+	OpStatus           Op = "Status"
+	OpSnapshot         Op = "Snapshot"
+	OpRestoreSnapshot  Op = "RestoreSnapshot"
+	OpListSnapshots    Op = "ListSnapshots"
+	OpEditorTarget     Op = "EditorTarget"
+	OpPortDiagnostics  Op = "PortDiagnostics"
+	OpConnectedEditors Op = "ConnectedEditors"
+	OpHostCapacity     Op = "HostCapacity"
 
 	OpScanNativeWorkspace  Op = "ScanNativeWorkspace"
 	OpApplyNativeWorkspace Op = "ApplyNativeWorkspace"
@@ -248,6 +250,7 @@ type Fake struct {
 
 	editorTargets map[string]provider.EditorTarget
 	portDiags     map[string][]provider.PortDiagnostic
+	editors       map[string][]provider.EditorConnection
 
 	// workspaces models the two copies of each project a native workspace
 	// keeps, keyed by the workspace's guest path. See native.go.
@@ -268,6 +271,7 @@ func New() *Fake {
 		queuedErr:     make(map[Op][]error),
 		editorTargets: make(map[string]provider.EditorTarget),
 		portDiags:     make(map[string][]provider.PortDiagnostic),
+		editors:       make(map[string][]provider.EditorConnection),
 		workspaces:    make(map[string]*nativeWorkspace),
 		hostCapacity:  DefaultHostCapacity,
 	}
@@ -402,6 +406,15 @@ func (f *Fake) SetPortDiagnostics(name string, diags []provider.PortDiagnostic) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.portDiags[name] = append([]provider.PortDiagnostic(nil), diags...)
+}
+
+// SetConnectedEditors programs the editor windows connected to a machine. They
+// are reported only while the machine is running, as a real backend reports
+// them: stopping a machine disconnects every window, so Stop forgets them.
+func (f *Fake) SetConnectedEditors(name string, connections []provider.EditorConnection) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.editors[name] = append([]provider.EditorConnection(nil), connections...)
 }
 
 // SetHostCapacity programs the computer HostCapacity reports.
@@ -750,6 +763,7 @@ func (f *Fake) stop(ctx context.Context, name string, progress types.ProgressSin
 		Message: fmt.Sprintf("Stopping %s", m.selector.Label()),
 	})
 	m.state = types.StateStopped
+	delete(f.editors, name)
 	return nil
 }
 
@@ -938,6 +952,27 @@ func (f *Fake) PortDiagnostics(ctx context.Context, name string) ([]provider.Por
 		call.Err = err
 	} else {
 		out = append([]provider.PortDiagnostic(nil), f.portDiags[name]...)
+	}
+	f.calls = append(f.calls, call)
+	return out, call.Err
+}
+
+// --- EditorProber ---------------------------------------------------------
+
+// ConnectedEditors returns the programmed editor windows of a running machine,
+// and nothing for a machine that is not running.
+func (f *Fake) ConnectedEditors(ctx context.Context, name string) ([]provider.EditorConnection, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	call := Call{Op: OpConnectedEditors, Machine: name}
+	var out []provider.EditorConnection
+	if err := f.gate(ctx, OpConnectedEditors, name); err != nil {
+		call.Err = err
+	} else if m, err := f.owned(name); err != nil {
+		call.Err = err
+	} else if m.state == types.StateRunning {
+		out = append([]provider.EditorConnection(nil), f.editors[name]...)
 	}
 	f.calls = append(f.calls, call)
 	return out, call.Err
