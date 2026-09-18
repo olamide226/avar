@@ -225,13 +225,19 @@ func (s *schtasksCalls) run(args ...string) error {
 	return nil
 }
 
-// modifier returns the /MO value of the one /Create call, or "".
+// modifier returns the /MO value of the one /Create call.
 func (s *schtasksCalls) modifier(t *testing.T) string {
 	t.Helper()
-	if len(s.calls) != 1 {
-		t.Fatalf("schtasks ran %d times, want exactly one /Create: %q", len(s.calls), s.calls)
+	var creates [][]string
+	for _, call := range s.calls {
+		if len(call) > 0 && call[0] == "/Create" {
+			creates = append(creates, call)
+		}
 	}
-	args := s.calls[0]
+	if len(creates) != 1 {
+		t.Fatalf("schtasks ran /Create %d times, want exactly one: %q", len(creates), s.calls)
+	}
+	args := creates[0]
 	for i, a := range args {
 		if a == "/MO" && i+1 < len(args) {
 			return args[i+1]

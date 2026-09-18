@@ -144,6 +144,8 @@ tooling, which is precisely what Requirement 1.5 and the product rule exist to p
 
 5.8 WHEN a user runs `avr destroy --orphaned` THEN THE CLI SHALL remove only those isolated environments whose project directory no longer exists on the host, naming the project each belonged to. THIS is the only path by which such an environment can be removed, because `avr isolate off` requires the project directory it is being run from to exist. *(Phase 2)*
 
+5.9 WHILE idle stopping is disabled (Idle_Timeout "0") THE system SHALL keep no scheduled idle check registered with the host: the next environment-creating invocation SHALL remove the one avar registered and say so once, and WHEN a timeout is set again the next such invocation SHALL register it again. A scheduled check the user removed themselves SHALL NOT be registered again because avar's binary moved or avar was upgraded. *(Added 2026-09-18, maintainer report: with idle stopping off, the check kept running to stop nothing, and a task the user had deleted came back after an upgrade.)*
+
 ### Requirement 6: Project File Sharing (Live Mount) — *Phase 1*
 
 **User Story:** As a developer, I want my current project visible inside Linux at the same path with changes appearing instantly in both directions, so that macOS editors and Linux toolchains operate on the same files with zero synchronization steps.

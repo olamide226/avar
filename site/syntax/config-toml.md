@@ -59,8 +59,9 @@ avar checks every thirty minutes, so an environment stops up to half an hour
 after its timeout rather than exactly at it. The check is registered with the host's
 scheduler (a launchd agent on macOS, a Task Scheduler task on Windows) when
 avar creates an environment, and avar says so the first time, with the
-command that removes it. Setting `idle_timeout = "0"` leaves the check registered but
-makes it stop nothing.
+command that removes it. Setting `idle_timeout = "0"` removes the check at your
+next `avr`, and avar says so; setting a timeout again puts it back. A check you
+delete yourself stays deleted.
 
 ## How the file is read
 

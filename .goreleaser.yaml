@@ -185,6 +185,22 @@ homebrew_casks:
     dependencies:
       - formula: lima
     commit_msg_template: "avar {{ .Tag }}"
+    # avar's idle check is a per-user launchd agent that avar writes itself, so
+    # Homebrew does not know about it. It is removed on `--zap` rather than in
+    # `uninstall`, deliberately. Homebrew runs the whole `uninstall` stanza on
+    # every `brew upgrade` too (only `signal` is skipped), so the agent would
+    # disappear at each upgrade and idle stopping would halt until the next
+    # `avr` put it back. Homebrew's `launchctl` directive also looks the label
+    # up with sudo, which can ask for a password. A plain uninstall leaves an
+    # inert agent; the README says how to remove it, and the caveat says
+    # `--zap` does.
+    zap:
+      launchctl:
+        - com.avar.idle-check
+    caveats: |
+      avar registers a background idle check (launchd agent com.avar.idle-check)
+      the first time it creates an environment. `brew uninstall --zap avar`
+      removes it with avar; see the README's Uninstall section.
     # Released binaries are unsigned, so strip the quarantine attribute that
     # would otherwise make Gatekeeper refuse the first run.
     hooks:
@@ -230,7 +246,10 @@ winget:
     license: Apache-2.0
     license_url: https://github.com/olamide226/avar/blob/main/LICENSE
     release_notes_url: "https://github.com/olamide226/avar/releases/tag/{{ .Tag }}"
-    installation_notes: avar needs WSL 2. The first time you run `avr` it checks for WSL and offers to set it up, saying before it acts whether that needs administrator approval or a restart.
+    # winget runs nothing of avar's when it uninstalls a portable package, so
+    # the idle-check task avar registers cannot be removed with it. Saying how
+    # at install time is the best available: the note is shown then.
+    installation_notes: avar needs WSL 2. The first time you run `avr` it checks for WSL and offers to set it up, saying before it acts whether that needs administrator approval or a restart. avar also registers a scheduled task, avar-idle-check, that stops idle environments. Before `winget uninstall`, remove it with `schtasks /Delete /TN avar-idle-check /F`.
     tags:
       - cli
       - linux

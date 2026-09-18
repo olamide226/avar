@@ -67,6 +67,45 @@ auto-stop.
 Either way, avar checks for WSL 2 on first run and offers to set it up. The
 binaries are unsigned, so SmartScreen may warn the first time.
 
+### Uninstall
+
+avar registers one background job with your system, the idle check that stops
+environments you have stopped using. Neither package manager can remove it the
+way it would remove a file, so remove it first.
+
+**macOS.** `--zap` also unloads and deletes the idle check's launchd agent:
+
+```bash
+brew uninstall --zap --cask avar
+```
+
+A plain `brew uninstall` leaves the agent in `~/Library/LaunchAgents`. It is
+inert, pointing at a command that is gone, and this removes it:
+
+```bash
+launchctl bootout gui/$(id -u)/com.avar.idle-check
+rm ~/Library/LaunchAgents/com.avar.idle-check.plist
+```
+
+**Windows.** winget removes the files it installed and runs nothing of avar's,
+so delete the scheduled task first:
+
+```powershell
+schtasks /Delete /TN avar-idle-check /F
+winget uninstall olamide226.avar
+```
+
+A task left behind points at a file that is gone. It fails without starting
+anything and opens no window.
+
+On both hosts your environments, and avar's records of them, are left alone.
+Remove them first with `avr destroy --all` if you no longer want them.
+
+To turn the idle check off without uninstalling, set `idle_timeout = "0"` in
+[`config.toml`](#your-own-settings-configtoml): the next `avr` removes the
+job, and setting a timeout again puts it back. A job you delete yourself stays
+deleted.
+
 ## Sixty seconds to a Linux shell
 
 ```bash

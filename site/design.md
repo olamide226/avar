@@ -38,7 +38,12 @@ command run on a schedule does that without a service.
 **The trade-off.**
 - avar registers the job when it creates an environment, and tells you the
   first time, with the command that removes it. That is a background task
-  you did not explicitly ask for.
+  you did not explicitly ask for. `idle_timeout = "0"` removes it too, and a
+  job you delete stays deleted.
+- Uninstalling avar cannot remove the job for you, because neither Homebrew
+  nor winget runs avar when it uninstalls. `brew uninstall --zap` removes it
+  on macOS; on Windows, delete the task first. The README's Uninstall section
+  has the commands.
 - Stopping happens on the next check after the timeout, not at it.
 - An environment you leave idle stops, and your next `avr` pays a start of
   about ten to fifteen seconds.
