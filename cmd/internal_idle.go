@@ -17,7 +17,7 @@ import (
 func init() { registerSubcommand("internal", runInternal) }
 
 // launchdLabel and launchdPlist are the macOS per-user agent that invokes
-// `avr internal idle-check` every 10 minutes. The plist lives in
+// `avr internal idle-check` every 30 minutes. The plist lives in
 // ~/Library/LaunchAgents/ so launchd picks it up at the user's next login;
 // avar loads it immediately so no logout is needed.
 const (
@@ -42,7 +42,7 @@ func runInternal(ctx context.Context, app *App, inv cli.Invocation) error {
 
 // runIdleCheck stops machines that have been idle — no live sessions — for
 // longer than the configured timeout (REQ-5.5). It is invoked by launchd
-// every 10 minutes and is designed to be safe to run at any frequency:
+// every 30 minutes and is designed to be safe to run at any frequency:
 // machines with live sessions are never stopped (Property 11), and an idle
 // clock only starts when the last session detaches.
 //
@@ -109,7 +109,7 @@ func runIdleCheck(ctx context.Context, app *App) error {
 }
 
 // ensureIdleScheduler asks the host's own scheduler to invoke `avr internal
-// idle-check` every ten minutes, printing a one-time notice the first time it
+// idle-check` every thirty minutes, printing a one-time notice the first time it
 // does so.
 //
 // It is called when an environment is first created, so idle auto-stop is active
@@ -154,7 +154,7 @@ func ensureLaunchdAgent(app *App) {
 //
 // The plist is compared with what this binary would write, not merely looked
 // for. An agent that runs some other binary (an upgrade that moves avr, or the
-// one a test run once installed pointing at a deleted test binary) fails every ten minutes indefinitely, and trusting its
+// one a test run once installed pointing at a deleted test binary) fails on every run indefinitely, and trusting its
 // mere existence meant idle auto-stop silently never ran again. The warm path
 // is still one read: this runs on every `avr` (REQ-17.1).
 func installLaunchdAgent(app *App, launchAgentsDir, bin string, launchctl func(args ...string) error) {
@@ -260,16 +260,19 @@ func launchctl(args ...string) error {
 // folder behind (design §3.8).
 const scheduledTaskName = "avar-idle-check"
 
-// scheduledTaskStamp records, inside avar's state directory, which binary the
-// Task Scheduler entry currently points at. Its presence is the cheap answer to
-// "is this already registered", and its contents are the cheap answer to "does
-// it still point at me".
+// scheduledTaskStamp records, inside avar's state directory, what the Task
+// Scheduler entry was registered with: the binary and the interval. Its
+// presence is the cheap answer to "is this already registered", and its
+// contents are the cheap answer to "is it still what this avar would
+// register". An older avar wrote the binary alone, which never matches, so its
+// task is registered again at the current interval.
 const scheduledTaskStamp = "idle-task"
 
-// idleCheckMinutes is how often the check runs, on both hosts. Ten minutes is
-// short enough that a forgotten environment is stopped within a coffee break and
-// long enough that the check itself is not a background cost.
-const idleCheckMinutes = 10
+// idleCheckMinutes is how often the check runs, on both hosts. It was ten
+// minutes until 2026-09-18. On Windows every run briefly opens a console
+// window, and six of those an hour was too many; thirty keeps a forgotten
+// environment's extra running time within half an hour of its timeout.
+const idleCheckMinutes = 30
 
 // ensureScheduledTask registers the Windows Task Scheduler entry that invokes
 // `avr internal idle-check`.
@@ -304,15 +307,23 @@ func ensureScheduledTask(app *App) {
 	if err != nil {
 		return
 	}
-	stamp := filepath.Join(store.Root(), scheduledTaskStamp)
-
-	// The warm path: the task is registered and points at this binary.
-	if recorded, err := os.ReadFile(stamp); err == nil && string(recorded) == bin {
-		return
-	}
-
 	schtasks, err := exec.LookPath("schtasks")
 	if err != nil {
+		return
+	}
+	installScheduledTask(app, filepath.Join(store.Root(), scheduledTaskStamp), bin, func(args ...string) error {
+		cmd := exec.Command(schtasks, args...)
+		cmd.Stdout, cmd.Stderr = nil, nil
+		return cmd.Run()
+	})
+}
+
+// installScheduledTask is ensureScheduledTask with its host dependencies passed
+// in: the stamp file, the binary the task should run, and how to run schtasks.
+func installScheduledTask(app *App, stamp, bin string, schtasks func(args ...string) error) {
+	// The warm path: the task is registered as this binary would register it.
+	want := scheduledTaskStampContent(bin)
+	if recorded, err := os.ReadFile(stamp); err == nil && string(recorded) == want {
 		return
 	}
 
@@ -321,23 +332,21 @@ func ensureScheduledTask(app *App) {
 	// argument when the scheduler runs it. /F overwrites, which is what makes
 	// this correct a task left by a previous install rather than fail on it.
 	action := fmt.Sprintf(`"%s" internal idle-check`, bin)
-	create := exec.Command(schtasks,
+	if err := schtasks(
 		"/Create",
 		"/TN", scheduledTaskName,
 		"/TR", action,
 		"/SC", "MINUTE",
 		"/MO", strconv.Itoa(idleCheckMinutes),
 		"/F",
-	)
-	create.Stdout, create.Stderr = nil, nil
-	if err := create.Run(); err != nil {
+	); err != nil {
 		return
 	}
 
 	// The stamp is written only after the task exists, so a failed
 	// registration is retried next time rather than remembered as done.
 	firstTime := !fileExists(stamp)
-	if err := os.WriteFile(stamp, []byte(bin), 0o600); err != nil {
+	if err := os.WriteFile(stamp, []byte(want), 0o600); err != nil {
 		return
 	}
 	if !firstTime {
@@ -347,6 +356,12 @@ func ensureScheduledTask(app *App) {
 	}
 
 	printIdleNotice(app, fmt.Sprintf("schtasks /Delete /TN %s /F", scheduledTaskName))
+}
+
+// scheduledTaskStampContent is what the stamp records for a task that runs bin
+// every idleCheckMinutes minutes.
+func scheduledTaskStampContent(bin string) string {
+	return fmt.Sprintf("%s\nevery %d minutes\n", bin, idleCheckMinutes)
 }
 
 // fileExists reports whether a path is there, treating any error as absent —

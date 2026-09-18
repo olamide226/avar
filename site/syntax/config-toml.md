@@ -55,8 +55,8 @@ How long an environment with no live `avr` session waits before avar stops
 it. Durations use Go's syntax: a number followed by `h`, `m` or `s`, and
 combinations such as `1h30m`.
 
-avar checks every ten minutes, so an environment stops some minutes after its
-timeout rather than exactly at it. The check is registered with the host's
+avar checks every thirty minutes, so an environment stops up to half an hour
+after its timeout rather than exactly at it. The check is registered with the host's
 scheduler (a launchd agent on macOS, a Task Scheduler task on Windows) when
 avar creates an environment, and avar says so the first time, with the
 command that removes it. Setting `idle_timeout = "0"` leaves the check registered but
