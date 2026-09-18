@@ -34,12 +34,16 @@ environment's shares. If other `avr` sessions are attached to that
 environment at the time, avar asks before changing its shares, and without a
 terminal it stops and says why rather than risk disconnecting them.
 
-An environment shares at most sixteen project directories. Sharing another
-unshares the least recently used one and names it. Nothing is deleted: that
-project stays registered, and running `avr` in it shares it again. The
-project you are entering is never the one unshared. The limit exists because
-macOS caps how many directory shares one virtual machine can have (nineteen,
-measured against Lima 2.2.0), and avar applies the same cap on both hosts.
+On macOS, an environment shares at most sixteen project directories. Sharing
+another unshares the least recently used one and names it. Nothing is
+deleted: that project stays registered, and running `avr` in it shares it
+again. The project you are entering is never the one unshared. The limit
+exists because macOS caps how many directory shares one virtual machine can
+have (nineteen, measured against Lima 2.2.0).
+
+Windows has no such limit. A project share there is an ordinary mount inside
+the distribution, not a virtual device, so avar never unshares one to make
+room.
 
 ## macOS
 

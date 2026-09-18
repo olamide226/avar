@@ -437,6 +437,23 @@ type PortDiagnoser interface {
 	PortDiagnostics(ctx context.Context, machine string) ([]PortDiagnostic, error)
 }
 
+// MountLimiter is implemented by backends that can share only a limited number
+// of project directories with one machine.
+//
+// The limit is a property of the backend, not of avar. A backend whose
+// hypervisor gives each share a device of its own may have a ceiling past
+// which the machine does not start at all; a backend whose shares are plain
+// mounts inside the guest has no ceiling worth enforcing, and does not
+// implement this. A caller about to apply a mount set checks for this
+// capability and keeps the set within the limit; where it is absent the set is
+// applied whole, and nothing is unshared to make room that was never needed.
+type MountLimiter interface {
+	// MountLimit reports the most project directories one machine may share
+	// at once. It is always positive and does not depend on the machine: it
+	// describes what the backend can do, not what any machine is doing.
+	MountLimit() int
+}
+
 // MachineSizer is implemented by backends that give each machine its own CPU
 // and memory allocation, so that MachineSpec.CPUs and MachineSpec.MemoryGB mean
 // something there.

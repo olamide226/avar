@@ -69,8 +69,9 @@ project a download and a boot.
   package one project installs is there for all of them. Every project
   directory you have used in that environment is shared into the same
   machine, so code running for one project can read another's files.
-- A shared environment holds at most sixteen project directories at once.
-  Past that, avar unshares the least recently used one.
+- On macOS, a shared environment holds at most sixteen project directories at
+  once. Past that, avar unshares the least recently used one. Windows has no
+  such limit.
 - `cpus` and `memory` in a project's `.avr.toml` cannot size a shared
   environment, because no one project owns it.
 

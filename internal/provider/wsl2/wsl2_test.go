@@ -1379,3 +1379,16 @@ func TestEnsureMachine_DoesNotRetryOnceSomethingIsRegistered_PROP_7(t *testing.T
 		t.Error("the half-installed distribution was left registered")
 	}
 }
+
+// A WSL share is an ordinary DrvFS mount inside the distribution, not a
+// hypervisor device, so this backend has no share limit and must not claim
+// one: internal/mounts would otherwise unshare a Windows user's projects past
+// sixteen to make room that was never needed (REQ-6.1).
+func TestProvider_HasNoShareLimit_REQ_6_1(t *testing.T) {
+	t.Parallel()
+
+	p := newProvider(t, newFakeWSL(), recorded())
+	if _, ok := any(p).(provider.MountLimiter); ok {
+		t.Error("the WSL backend reports a mount limit")
+	}
+}

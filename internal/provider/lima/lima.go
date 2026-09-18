@@ -47,6 +47,10 @@ var _ provider.MachineSizer = (*Provider)(nil)
 // Shell forwards the host's SSH agent on request (see sshAgentOverride).
 var _ provider.SSHAgentForwarder = (*Provider)(nil)
 
+// A vz machine's shares are Virtualization.framework devices, and there is a
+// ceiling on those (see maxMounts).
+var _ provider.MountLimiter = (*Provider)(nil)
+
 // cleanupTimeout bounds the cleanup of a partially created machine. It runs on a
 // context detached from the caller's, because the usual reason cleanup is needed
 // is that the caller's context was cancelled — and a Ctrl-C that leaves a wedged

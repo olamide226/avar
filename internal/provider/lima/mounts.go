@@ -14,6 +14,26 @@ import (
 // enter its working directory.
 const guestProbeWorkdir = "/"
 
+// maxMounts caps how many project directories one machine shares at once.
+//
+// macOS's Virtualization.framework limits how many directory-share devices a
+// virtual machine may have, and Lima uses one per mount plus one for the
+// Rosetta share. Measured against Lima 2.2.0: nineteen project mounts start,
+// twenty do not. The failure is a bare "Internal Virtualization error" during
+// boot with nothing in it about directories at all, so a user who crossed the
+// line would have no way to connect it to the project they had just entered —
+// and no way back, because the machine cannot start to be repaired.
+//
+// Sixteen leaves headroom for the Rosetta share and for any device Lima adds
+// in a later version. Past it internal/mounts unshares the least recently used
+// project, which stays registered and reappears the next time it is entered.
+const maxMounts = 16
+
+// MountLimit implements provider.MountLimiter (see maxMounts). The limit was
+// measured on vz and is applied to every Lima machine, as it was before it
+// became the backend's to report.
+func (p *Provider) MountLimit() int { return maxMounts }
+
 // AppliedMounts reports the file shares Lima currently has for the machine,
 // sorted.
 //

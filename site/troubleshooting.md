@@ -175,8 +175,8 @@ a terminal and accept the prompt.
 avr: this environment shares as many project directories as it can hold, so the least recently used one made room:
 ```
 
-An environment shares at most sixteen project directories. Nothing was
-deleted. Run `avr` in the named directory again to share it back. To stop
+On macOS, an environment shares at most sixteen project directories. You do
+not see this on Windows, which has no such limit. Nothing was deleted. Run `avr` in the named directory again to share it back. To stop
 projects competing for one environment, give a busy project its own with
 `avr isolate on`.
 

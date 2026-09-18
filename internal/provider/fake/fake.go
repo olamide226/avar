@@ -48,6 +48,7 @@ var (
 	_ provider.PortDiagnoser        = (*Fake)(nil)
 	_ provider.MachineSizer         = (*Fake)(nil)
 	_ provider.SSHAgentForwarder    = (*Fake)(nil)
+	_ provider.MountLimiter         = (*Fake)(nil)
 )
 
 // ForwardsSSHAgent implements provider.SSHAgentForwarder. The Fake records
@@ -55,6 +56,16 @@ var (
 // asked for; a test of a backend without the capability hides this method by
 // embedding the Fake in a struct that exposes only provider.Provider.
 func (f *Fake) ForwardsSSHAgent() {}
+
+// ShareLimit is how many project directories a Fake machine shares before
+// the least recently used is given up: Lima's limit, so that flow tests see
+// the stricter backend by default. A test of a backend with no limit hides the
+// capability by embedding the Fake in a struct that exposes only
+// provider.Provider.
+const ShareLimit = 16
+
+// MountLimit implements provider.MountLimiter.
+func (f *Fake) MountLimit() int { return ShareLimit }
 
 // DefaultHostCapacity is the computer a Fake reports until SetHostCapacity says
 // otherwise: a 10-core, 32 GiB Mac, large enough for every size a test asks
