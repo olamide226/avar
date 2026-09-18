@@ -432,6 +432,19 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 17.7, 5.5, 12.4_
   - _writes: internal/tomlsubset/**, internal/projconfig/config.go, internal/projconfig/config_test.go, internal/projconfig/docsite_test.go, internal/state/config.go, internal/state/config_test.go, internal/state/store.go, internal/session/idle.go, internal/session/session_test.go, internal/types/variable.go, cmd/app.go, cmd/dispatch.go, cmd/dispatch_test.go, cmd/userconfig.go, cmd/userconfig_test.go, cmd/shell.go, cmd/internal_idle.go, README.md, site/syntax/config-toml.md, site/design.md, site/troubleshooting.md, docs/lessons.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
+- [ ] 46. `avr update`: keep avar current from the command itself
+  - **Today there is no built-in way to update** (checked 2026-09-18): no `update` or `upgrade` subcommand, and nothing tells a user a newer release exists. Updating means knowing how avar was installed and running that tool yourself, or downloading a release by hand. The maintainer asked for this as a follow-up.
+  - **Write the requirement first** (a new requirement or 17.x criteria), then the design. The questions it must settle:
+    - **Detect how this `avr` was installed, and never fight the package manager that owns it.** A Homebrew cask (the binary resolves into `Caskroom/avar/…`) is updated with `brew upgrade --cask avar`. A winget portable install (under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\olamide226.avar_…`) is updated with `winget upgrade olamide226.avar`. Choose deliberately between avar running that command and avar printing it. Overwriting a package manager's file leaves its records claiming a version that isn't installed.
+    - **A binary installed from a release archive** can update itself. Fetch the latest release from `github.com/olamide226/avar` over HTTPS, verify the archive against `checksums.txt` before trusting it, and replace the binary atomically. On Windows a running `avr.exe` cannot be overwritten, so it has to be renamed aside first, with clean-up of the old copy on the next run. A failure at any step must leave the working binary in place.
+    - **Only on request.** Nothing is downloaded or replaced unless the user runs the command, matching the rule that nothing happens without being asked. Say plainly when an update needs a package manager, elevation, or a restart of an open shell.
+    - **Whether `avr version` (or anything else) should say a newer release exists.** A network call on every run would break REQ-17.1's warm-path budget. If it is wanted, it needs a cache (for example at most once a day), must be silent offline, and needs an opt-out in `config.toml`.
+    - **What moves with the binary.** The idle-check registration already follows a moved binary: the Windows stamp and the macOS plist are compared on the next run. The editor SSH configuration needs no change. Confirm nothing else records the binary's path.
+    - **`update` becomes a reserved name.** Update the grammar, the README's reserved-names block (it is checked by a test), and the site's command pages, with `avr -- update` as the escape hatch.
+  - Unsigned binaries still apply: say what Gatekeeper or SmartScreen will do after a self-update, as the README does for first installs.
+  - _Requirements: (to be written — spec before build)_
+  - _writes: .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, cmd/update.go, internal/update/*, internal/cli/grammar.go, README.md, site/commands/update.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.
