@@ -445,6 +445,16 @@ here so the phase's history matches what is on `main`.
   - _Requirements: (to be written — spec before build)_
   - _writes: .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, cmd/update.go, internal/update/*, internal/cli/grammar.go, README.md, site/commands/update.md_
 
+- [ ] 47. Run the Windows idle check without a console window
+  - Maintainer report (2026-09-18, confirmed on a real Windows machine): the `avar-idle-check` task ran `avr.exe`, a console program, in the user's session, so a console window appeared, taking focus, every time it ran.
+  - `cmd/avrw` is the idle check alone, linked with `-H windowsgui` by GoReleaser and shipped beside `avr.exe` in both Windows zips; winget's portable manifest gets a second `NestedInstallerFiles` entry. The task runs the helper found beside `avr.exe` (or beside the file a link to it resolves to), never one on PATH. `internal/deps` sets `CREATE_NO_WINDOW` on child processes when avar has no console window, so `wsl.exe` does not open one either.
+  - A non-interactive (S4U) logon was rejected: `wsl.exe` is reported failing from "run whether the user is logged on or not" (design §3.8 has the evidence).
+  - Migration: the stamp now records the helper, so every existing task is re-registered on the next environment-creating `avr`. Without the helper nothing is registered, an existing task is deleted, and the user is told once.
+  - The idle scheduler never registers a binary in the temporary directory on either host, and says so. This guard sits in front of the `App.scheduleIdleCheck` seam, because a spawned test process is outside the seam's reach (docs/lessons.md).
+  - Verified on Windows by the maintainer with the script in the PR; not verifiable in CI.
+  - _Requirements: 18.16, 5.5, 17.1, 18.14, 18.15_
+  - _writes: cmd/avrw/**, cmd/internal_idle.go, cmd/internal_idle_test.go, cmd/idle_task_test.go, internal/deps/exec.go, internal/deps/console_{other,windows}.go, .goreleaser.yaml, README.md, site/design.md, site/troubleshooting.md, docs/lessons.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

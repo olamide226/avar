@@ -64,6 +64,29 @@ builds:
     flags:
       - -trimpath
 
+  # avrw.exe, the program the idle-check scheduled task runs. It is avar's idle
+  # check and nothing else, linked for the Windows GUI subsystem: avr.exe is a
+  # console program, so a task running it in the user's session opened a
+  # console window every time it fired, and a GUI-subsystem program gets no
+  # console at all. `-H windowsgui` is the whole point of this entry; built
+  # without it, avrw.exe opens the same window avr.exe did. It ships in the
+  # same archive as avr.exe, because avar looks for it beside avr.exe.
+  - id: avrw-windows
+    main: ./cmd/avrw
+    binary: avrw
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -H windowsgui -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+
 # A universal binary means `brew install` fetches one artifact that runs on
 # both Apple Silicon and Intel, which keeps the formula simple.
 universal_binaries:
@@ -95,9 +118,13 @@ archives:
   # open without installing anything, and one archive per architecture rather
   # than a combined one, because there is no Windows equivalent of a universal
   # binary to combine them into.
+  #
+  # avrw.exe goes in the same zip, beside avr.exe, which is where avar looks for
+  # it: someone who unzips the archive and keeps the folder together has both.
   - id: avr-windows
     ids:
       - avr-windows
+      - avrw-windows
     formats:
       - zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_windows_{{ .Arch }}"
@@ -262,7 +289,9 @@ release:
 
     winget receives minor releases (x.y.0), each once Microsoft merges its
     manifest, which can lag the release by a day or two. Or download the `windows_amd64` or
-    `windows_arm64` archive below, unzip it, and put `avr.exe` somewhere on your
-    PATH. avar needs WSL 2 and offers to set it up the first time you run it.
+    `windows_arm64` archive below, unzip it, and put `avr.exe` and `avrw.exe`
+    together somewhere on your PATH (`avrw.exe` runs the background idle check
+    without opening a window). avar needs WSL 2 and offers to set it up the
+    first time you run it.
 
     Binaries are unsigned. Windows SmartScreen may warn on first run.

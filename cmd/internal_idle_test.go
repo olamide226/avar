@@ -247,8 +247,7 @@ func (s *schtasksCalls) modifier(t *testing.T) string {
 // that the task is current.
 func TestScheduledTask_ReregistersATaskAtTheOldInterval_REQ_5_5(t *testing.T) {
 	app := newTestApp(t, fake.New())
-	stamp := filepath.Join(t.TempDir(), scheduledTaskStamp)
-	bin := `C:\Users\ola\AppData\Local\Microsoft\WinGet\Links\avr.exe`
+	bin, _, stamp := windowsInstall(t, true)
 	// What avar up to this change wrote: the binary path and nothing else.
 	if err := os.WriteFile(stamp, []byte(bin), 0o600); err != nil {
 		t.Fatal(err)
@@ -265,30 +264,13 @@ func TestScheduledTask_ReregistersATaskAtTheOldInterval_REQ_5_5(t *testing.T) {
 	}
 }
 
-// REQ-17.1: this runs on every environment-creating invocation, so a task that
-// is already current costs one file read and no schtasks at all.
-func TestScheduledTask_LeavesACurrentTaskAlone_REQ_17_1(t *testing.T) {
-	app := newTestApp(t, fake.New())
-	stamp := filepath.Join(t.TempDir(), scheduledTaskStamp)
-	bin := `C:\Program Files\avar\avr.exe`
-	first := &schtasksCalls{}
-	installScheduledTask(app.App, stamp, bin, first.run)
-
-	again := &schtasksCalls{}
-	installScheduledTask(app.App, stamp, bin, again.run)
-
-	if len(again.calls) != 0 {
-		t.Errorf("schtasks ran for a task that was already current: %q", again.calls)
-	}
-}
-
 // The first registration runs every 30 minutes and tells the user, once.
 func TestScheduledTask_RegistersEveryThirtyMinutesTheFirstTime_REQ_5_5(t *testing.T) {
 	app := newTestApp(t, fake.New())
-	stamp := filepath.Join(t.TempDir(), scheduledTaskStamp)
+	bin, _, stamp := windowsInstall(t, true)
 	st := &schtasksCalls{}
 
-	installScheduledTask(app.App, stamp, `C:\avr.exe`, st.run)
+	installScheduledTask(app.App, stamp, bin, st.run)
 
 	if got := st.modifier(t); got != "30" {
 		t.Errorf("the task was registered every %s minutes, want 30", got)

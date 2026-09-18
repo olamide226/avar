@@ -63,6 +63,25 @@ host registration stricter, add the seam first. Once the registration here
 compared content, an unguarded test run would have rewritten the developer's
 real agent to point at the test binary on purpose.
 
+**Addendum, 2026-09-18: the seam does not reach a process a test starts.** The
+test for `avrw.exe`, the windowless idle-check helper, builds it and runs it
+with arguments it must ignore. To prove the test could fail, the helper was
+briefly made to pass its arguments through. The `shell` case then ran a real
+`avr shell` on the developer's Mac. It found the real Lima, ran a command in
+the shared VM, left that VM running, and reached `recordMachine`. The seam is
+a field on an in-process `App`, and the child built its own, so the real
+launchd agent was rewritten to point at the test's temporary binary. The
+permission system then refused the repair, so it went back to the maintainer.
+
+Two things changed, and both are needed. A child process a test starts gets a
+temporary HOME and USERPROFILE and an empty PATH, so a regression that reaches
+for the host finds nothing to load. And `ensureIdleScheduler` refuses any
+binary in the temporary directory, on both hosts, whoever calls it: every test
+binary and every binary a test builds lives there, and so does every
+registration that would outlive its file. A mutation check is itself a run of
+the code under test. When the test spawns a process, the mutation runs with the
+host's full reach, so make that reach safe before mutating.
+
 ## Verification
 
 ### Only tick a check you actually ran
