@@ -348,7 +348,8 @@ func mustSetMounts(t *testing.T, ctx context.Context, fk *fake.Fake, machine str
 
 // A machine that shares too many directories cannot boot at all, and the
 // failure gives no hint that mounts caused it. The cap is what keeps a user
-// who works across many projects from reaching that state.
+// who works across many projects from reaching that state. The Fake reports
+// Lima's limit of sixteen, so this is the macOS shape.
 func TestEnsure_UnsharesTheLeastRecentlyUsedProjectAtTheLimit_REQ_6_1(t *testing.T) {
 	ctx := context.Background()
 	fk := fake.New()
@@ -358,8 +359,8 @@ func TestEnsure_UnsharesTheLeastRecentlyUsedProjectAtTheLimit_REQ_6_1(t *testing
 	// Fill the machine to the cap, oldest first.
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	lastUsed := map[string]time.Time{}
-	applied := make([]types.MountSpec, 0, mounts.MaxMounts)
-	for i := 0; i < mounts.MaxMounts; i++ {
+	applied := make([]types.MountSpec, 0, fake.ShareLimit)
+	for i := 0; i < fake.ShareLimit; i++ {
 		mount := mountFor(fmt.Sprintf("/Users/dev/p%02d", i))
 		applied = append(applied, mount)
 		lastUsed[mount.HostPath] = base.Add(time.Duration(i) * time.Hour)
@@ -379,8 +380,8 @@ func TestEnsure_UnsharesTheLeastRecentlyUsedProjectAtTheLimit_REQ_6_1(t *testing
 	}
 
 	call := fk.AssertCalled(t, fake.OpSetMounts)
-	if len(call.Mounts) > mounts.MaxMounts {
-		t.Errorf("applied %d mounts, over the limit of %d — this machine would not start", len(call.Mounts), mounts.MaxMounts)
+	if len(call.Mounts) > fake.ShareLimit {
+		t.Errorf("applied %d mounts, over the limit of %d — this machine would not start", len(call.Mounts), fake.ShareLimit)
 	}
 
 	// The oldest went, and it is reported so the user is not left wondering
@@ -402,6 +403,43 @@ func TestEnsure_UnsharesTheLeastRecentlyUsedProjectAtTheLimit_REQ_6_1(t *testing
 	}
 	if !kept {
 		t.Error("the project being entered was not shared")
+	}
+}
+
+// unlimitedShares is a backend whose shares are plain mounts with no device
+// limit: the Fake with its mount-limit capability hidden, the way the WSL
+// backend presents itself.
+type unlimitedShares struct{ provider.Provider }
+
+// The limit belongs to the backend. macOS's Virtualization framework caps
+// directory-share devices per machine; WSL shares are ordinary mounts inside
+// the distribution and have no such cap, so a Windows user working across
+// many projects must never have one silently unshared to make room it did not
+// need (REQ-6.1, REQ-6.4).
+func TestEnsure_KeepsEveryProjectWhereTheBackendHasNoLimit_REQ_6_1(t *testing.T) {
+	ctx := context.Background()
+	fk := fake.New()
+	const machine = "avr-ubuntu-24.04-arm64"
+	fk.AddMachine(machine, selector, types.KindShared, types.StateRunning)
+
+	const existing = 20
+	applied := make([]types.MountSpec, 0, existing)
+	for i := 0; i < existing; i++ {
+		applied = append(applied, mountFor(fmt.Sprintf("/Users/dev/p%02d", i)))
+	}
+	mustSetMounts(t, ctx, fk, machine, applied)
+	fk.Reset()
+
+	newProject := mountFor("/Users/dev/new")
+	res, err := mounts.Ensure(ctx, unlimitedShares{fk}, machine, newProject, newProject.GuestPath, 0, nil, types.DiscardProgress)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if len(res.Unshared) != 0 {
+		t.Errorf("unshared %v on a backend with no share limit", res.Unshared)
+	}
+	if call := fk.AssertCalled(t, fake.OpSetMounts); len(call.Mounts) != existing+1 {
+		t.Errorf("applied %d mounts, want all %d", len(call.Mounts), existing+1)
 	}
 }
 

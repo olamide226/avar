@@ -470,6 +470,13 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 12.3, 9.2, 17.3, 18.14_
   - _writes: internal/provider/provider.go, internal/provider/lima/{lima,shell}.go, internal/provider/wsl2/shell{,_test}.go, internal/provider/fake/fake.go, cmd/shell.go, cmd/sshagent_test.go, README.md, site/commands/avr.md, site/syntax/{index,command-line}.md, site/design.md, .kiro/specs/avar-cli/{requirements,design,tasks}.md_
 
+- [ ] 50. Make the project-share limit a backend property
+  - Maintainer decision (2026-09-17): `internal/mounts` capped every machine at sixteen shares (`MaxMounts`, applied by `capMounts` from `Ensure`), but only macOS's Virtualization framework has that limit. WSL shares are plain DrvFS mounts, so a Windows user entering a seventeenth project had one unshared for no reason.
+  - New optional capability `provider.MountLimiter`. Lima reports 16 (the measurement moves into `internal/provider/lima` with the constant); WSL does not implement it; `mounts.Ensure` caps only when the backend reports a limit, so `internal/mounts` stays provider-neutral. The Fake reports Lima's 16.
+  - The limit was never in the spec: design §3.4 and a §6 row now describe it.
+  - _Requirements: 6.1, 6.4, 6.5, 17.3_
+  - _writes: internal/provider/provider.go, internal/provider/lima/{lima,mounts,lima_test}.go, internal/provider/wsl2/wsl2_test.go, internal/provider/fake/fake.go, internal/mounts/mounts{,_test}.go, site/{design,platforms,troubleshooting}.md, .kiro/specs/avar-cli/{design,tasks}.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

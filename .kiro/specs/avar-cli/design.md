@@ -233,7 +233,7 @@ When the file cannot be read exactly:
 
 **Purpose**: Backend abstraction (Req 17.3, 18.14). Command orchestration depends only on this interface; the Resolver depends only on shared types.
 
-The operations are **segregated by capability** rather than gathered into one interface. `Provider` is the core set every backend must implement; `Snapshotter`, `EditorTargetProvider`, `PortDiagnoser`, `MachineSizer`, and `SSHAgentForwarder` describe optional abilities. Callers type-assert for a capability and report plainly when it is absent. Editor launch is modeled by a transport-neutral target, so WSL is not forced through SSH.
+The operations are **segregated by capability** rather than gathered into one interface. `Provider` is the core set every backend must implement; `Snapshotter`, `EditorTargetProvider`, `PortDiagnoser`, `MountLimiter`, `MachineSizer`, and `SSHAgentForwarder` describe optional abilities. Callers type-assert for a capability and report plainly when it is absent. Editor launch is modeled by a transport-neutral target, so WSL is not forced through SSH.
 
 ```go
 type Provider interface {
@@ -295,6 +295,17 @@ type PortDiagnostic struct {
     Reason    string // why not, when !Forwarded
     PID       int    // guest process listening, where determinable (Req 16.1)
     Process   string // its command line; empty when not determinable
+}
+
+// MountLimiter marks a backend that can share only so many project directories
+// with one machine. internal/mounts keeps the set within MountLimit by
+// unsharing the least recently used project (never the one being entered) and
+// reports what it unshared; without the capability the set is applied whole.
+// Lima reports 16: macOS's Virtualization framework caps share devices per VM,
+// measured at nineteen project mounts on Lima 2.2.0. WSL 2 shares are plain
+// DrvFS mounts with no such ceiling and it does not implement this.
+type MountLimiter interface {
+    MountLimit() int // always positive
 }
 
 // MachineSizer marks a backend that gives each machine its own CPU and memory
@@ -849,6 +860,7 @@ _For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host'
 | Avar killed mid-create | pending journal plus backend target and guest marker inspection | Matching journal+marker and healthy target → finish/commit; matching journal and partial target → clean and retry; no journal or mismatched marker → report and never mutate (Properties 6–7). |
 | Mount not possible (network volume, perms) | pre-flight `os.Stat` + mount verification after apply (`test -d` in guest) | Exit 1 with explanation; never drop into a shell at a wrong/empty path (Req 6.5). |
 | Windows path cannot be canonicalized or DrvFS rejects it | final-path resolution or selective mount probe | Exit 1 naming the host path and cause; do not fall back to mounting the containing drive or to a different guest cwd (Req 18.5, Properties 1/5). |
+| Sharing a new project would exceed the backend's share limit | `provider.MountLimiter` asserted in `internal/mounts.Ensure` | Unshare the least recently used projects, never the one being entered, and name them on stderr with "Nothing was deleted" and how to share one back. A backend without the capability (WSL 2) applies the set whole and unshares nothing. Past the limit a Lima machine fails at boot with a bare "Internal Virtualization error", which is why the cap exists (Req 6.4, 6.5). |
 | Mount requires restart while other sessions are live on that machine | `sessions.json` check | Prompt: restart now (disconnects N sessions) or abort. Non-interactive: abort with message. |
 | `avr open` on a port that is not forwarded | `PortDiagnostics` for the selected environment, after `Status` shows it running | Exit 1 naming the port and the environment and why: no environment yet, not running (start the server with `avr <command>`), nothing listening (run `avr ports`, or `avr ports --all` when other environments are running), or listening but unreachable (the backend's reason). Nothing is opened, and no environment is created or started (Req 16.2). |
 | Browser cannot be opened | `browser.Opener` returns an error (`open(1)` non-zero, `ShellExecuteW` failure) | Exit 1 naming the address and telling the user to open it themselves; never report it as opened (Req 16.2). |

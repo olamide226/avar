@@ -567,6 +567,18 @@ func TestHostResources_FallsBackWhenTheProbeFails(t *testing.T) {
 	}
 }
 
+// The Virtualization framework's share limit is the Lima backend's to report:
+// the command layer and internal/mounts no longer carry it. Measured at
+// nineteen project mounts on Lima 2.2.0, reported as sixteen for headroom.
+func TestMountLimit_ReportsTheShareDeviceLimit_REQ_6_1(t *testing.T) {
+	p := newTestProvider(t, newFakeRunner(), newFakeRecords())
+
+	var limiter provider.MountLimiter = p
+	if got := limiter.MountLimit(); got != 16 {
+		t.Errorf("MountLimit() = %d, want 16", got)
+	}
+}
+
 // The capacity a size is checked against is the Mac's own, read exactly.
 func TestHostCapacity_ReadsTheHost_REQ_15_5(t *testing.T) {
 	runner := newFakeRunner()
