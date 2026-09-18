@@ -23,7 +23,7 @@ distributions, mounts, SSH and images are avar's problem, not yours.
 **The choice.** avar is only the `avr` command. Nothing of avar keeps running
 between commands. To stop environments you have stopped using, avar registers
 a scheduled job with your operating system: a launchd agent on macOS, a Task
-Scheduler task on Windows. Every ten minutes it runs `avr internal idle-check`,
+Scheduler task on Windows. Every thirty minutes it runs `avr internal idle-check`,
 which stops any environment that has had no live `avr` session for the idle
 timeout (two hours by default).
 

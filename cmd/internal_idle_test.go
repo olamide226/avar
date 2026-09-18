@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -213,5 +214,108 @@ func TestLaunchdAgent_InstallsAndAnnouncesTheFirstTime_REQ_5_5(t *testing.T) {
 	}
 	if !strings.Contains(app.err.String(), "installed a background idle-check") {
 		t.Error("the first installation did not tell the user")
+	}
+}
+
+// schtasksCalls records what installScheduledTask asked schtasks to do.
+type schtasksCalls struct{ calls [][]string }
+
+func (s *schtasksCalls) run(args ...string) error {
+	s.calls = append(s.calls, args)
+	return nil
+}
+
+// modifier returns the /MO value of the one /Create call, or "".
+func (s *schtasksCalls) modifier(t *testing.T) string {
+	t.Helper()
+	if len(s.calls) != 1 {
+		t.Fatalf("schtasks ran %d times, want exactly one /Create: %q", len(s.calls), s.calls)
+	}
+	args := s.calls[0]
+	for i, a := range args {
+		if a == "/MO" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	t.Fatalf("the /Create call has no /MO: %q", args)
+	return ""
+}
+
+// REQ-5.5: the idle check runs every 30 minutes. A task registered by an older
+// avar at the old interval, whose stamp names the same binary, is registered
+// again at the new one on the next invocation; the binary alone must not decide
+// that the task is current.
+func TestScheduledTask_ReregistersATaskAtTheOldInterval_REQ_5_5(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	stamp := filepath.Join(t.TempDir(), scheduledTaskStamp)
+	bin := `C:\Users\ola\AppData\Local\Microsoft\WinGet\Links\avr.exe`
+	// What avar up to this change wrote: the binary path and nothing else.
+	if err := os.WriteFile(stamp, []byte(bin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := &schtasksCalls{}
+
+	installScheduledTask(app.App, stamp, bin, st.run)
+
+	if got := st.modifier(t); got != "30" {
+		t.Errorf("the task was registered every %s minutes, want 30", got)
+	}
+	if strings.Contains(app.err.String(), "installed a background idle-check") {
+		t.Error("re-registering an existing task announced it again, as though it were new")
+	}
+}
+
+// REQ-17.1: this runs on every environment-creating invocation, so a task that
+// is already current costs one file read and no schtasks at all.
+func TestScheduledTask_LeavesACurrentTaskAlone_REQ_17_1(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	stamp := filepath.Join(t.TempDir(), scheduledTaskStamp)
+	bin := `C:\Program Files\avar\avr.exe`
+	first := &schtasksCalls{}
+	installScheduledTask(app.App, stamp, bin, first.run)
+
+	again := &schtasksCalls{}
+	installScheduledTask(app.App, stamp, bin, again.run)
+
+	if len(again.calls) != 0 {
+		t.Errorf("schtasks ran for a task that was already current: %q", again.calls)
+	}
+}
+
+// The first registration runs every 30 minutes and tells the user, once.
+func TestScheduledTask_RegistersEveryThirtyMinutesTheFirstTime_REQ_5_5(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	stamp := filepath.Join(t.TempDir(), scheduledTaskStamp)
+	st := &schtasksCalls{}
+
+	installScheduledTask(app.App, stamp, `C:\avr.exe`, st.run)
+
+	if got := st.modifier(t); got != "30" {
+		t.Errorf("the task was registered every %s minutes, want 30", got)
+	}
+	if !strings.Contains(app.err.String(), "every 30 minutes") {
+		t.Errorf("the notice does not say how often the check runs:\n%s", app.err.String())
+	}
+}
+
+// REQ-5.5: on macOS a launchd agent written by an older avar at the old
+// interval is rewritten at the new one. The plist's content is compared, so
+// the interval is part of what makes it current.
+func TestLaunchdAgent_RewritesAnAgentAtTheOldInterval_REQ_5_5(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	dir := t.TempDir()
+	path := filepath.Join(dir, launchdPlist)
+	old := strings.Replace(launchdPlistContent("/opt/homebrew/bin/avr"),
+		fmt.Sprintf("<integer>%d</integer>", idleCheckMinutes*60), "<integer>600</integer>", 1)
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lc := &launchctlCalls{loaded: true}
+
+	installLaunchdAgent(app.App, dir, "/opt/homebrew/bin/avr", lc.run)
+
+	got := readPlist(t, path)
+	if !strings.Contains(got, "<key>StartInterval</key>\n\t<integer>1800</integer>") {
+		t.Errorf("the agent does not run every 1800 seconds:\n%s", got)
 	}
 }
