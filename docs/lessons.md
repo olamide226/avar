@@ -285,6 +285,35 @@ implemented forwarding, which the Lima backend now does.
 When a feature crosses a layer, the test that proves it belongs at the far side: assert
 the backend *acts*, not that the caller *asked*.
 
+### A comment saying a thing cannot be done is not evidence that it cannot
+
+`--env`, `--env-file`, `forward_env` and approved project variables reached
+`avr <command>` and were dropped from `avr`. The Lima backend composed the
+guest environment in the function that builds a one-shot argv, and the
+interactive shape passed no argv at all. Beside it, in the same file, a comment
+explained why: *"The interactive form has no equivalent, because Lima builds
+`exec <shell> -l` with nowhere to put a prefix."* It had been read by reviewers
+several times. It was wrong — `limactl shell <machine> -- <argv>` runs that argv
+under the same login shell, so an interactive session can carry an `env` prefix
+exactly as a command does — and finding that out took one read of Lima's own
+`cmd/limactl/shell.go` and one run against a real machine.
+
+The defect is the `--ssh-agent` one from a different direction: there a field was
+set and never read, here a mechanism was built for one shape of execution and
+declared impossible for the other. Both are invisible to tests that assert what
+avar *asks for*, because in both cases avar asked for exactly what its author
+meant it to.
+
+Two things to take from it. A comment that closes off a possibility is a claim
+about an external tool, and claims about external tools are checked against the
+tool, not against the reviewer's memory of one (the same rule as *"verify against
+the real tool, not against priors or documentation"*, which this file already
+records — it applies to claims about what the tool *cannot* do as much as to what
+it can). And where a feature has two shapes — interactive and one-shot, TTY and
+pipe, cold and warm — the test suite needs one test per shape, or the untested
+shape is where the feature is missing. The e2e suite here had nine tests and every
+one of them ran a one-shot command.
+
 ### A lenient reader turns every mistake into a setting that silently does not apply
 
 `config.toml` was read by two small readers, one per key, both lenient by design:

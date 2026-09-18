@@ -74,10 +74,9 @@ overrides an earlier one for the same name:
 
 Grants on the command line apply to an interactive shell or a one-shot
 command. Management commands start no guest session, so they forward nothing.
+An interactive shell receives them before your login profile runs, so a
+profile that assigns the same name unconditionally wins over the grant.
 
 {: .warning }
 > **Known gaps, today.**
-> - On macOS, granted variables reach a one-shot command (`avr <command>`)
->   but not an interactive `avr` shell, which receives only `TERM`, `LANG`
->   and `LC_*`.
 > - On Windows, `--ssh-agent` is accepted and has no effect.
