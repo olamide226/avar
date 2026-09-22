@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -305,5 +306,48 @@ func TestLaunchdAgent_RewritesAnAgentAtTheOldInterval_REQ_5_5(t *testing.T) {
 	got := readPlist(t, path)
 	if !strings.Contains(got, "<key>StartInterval</key>\n\t<integer>1800</integer>") {
 		t.Errorf("the agent does not run every 1800 seconds:\n%s", got)
+	}
+}
+
+// REQ-5.5: a binary in any of the host's temporary directories is refused
+// registration, not only one under os.TempDir().
+//
+// On macOS os.TempDir() is $TMPDIR, a per-user directory under /var/folders,
+// so a binary built into /private/tmp — which `go build -o /tmp/...` and any
+// scratch directory produce — passed the guard and registered itself. It then
+// vanished, leaving a scheduled job pointing at nothing: the failure
+// docs/lessons.md records, twice.
+func TestIdleScheduler_RefusesABinaryInAnyTemporaryDirectory_REQ_5_5(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("locate the home directory: %v", err)
+	}
+	cases := []struct {
+		path string
+		temp bool
+	}{
+		{filepath.Join(os.TempDir(), "go-build123", "avr"), true},
+		{filepath.Join(home, "bin", "avr"), false},
+	}
+	if runtime.GOOS != "windows" {
+		cases = append(cases,
+			struct {
+				path string
+				temp bool
+			}{"/tmp/avar-scratch/avr", true},
+			struct {
+				path string
+				temp bool
+			}{"/private/tmp/avar-scratch/avr", true},
+			struct {
+				path string
+				temp bool
+			}{"/opt/homebrew/bin/avr", false},
+		)
+	}
+	for _, c := range cases {
+		if got := inTemporaryDir(c.path); got != c.temp {
+			t.Errorf("inTemporaryDir(%q) = %t, want %t", c.path, got, c.temp)
+		}
 	}
 }

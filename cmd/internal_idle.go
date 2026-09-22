@@ -164,7 +164,7 @@ func ensureIdleScheduler(app *App) {
 	if err != nil {
 		return
 	}
-	if withinDir(bin, os.TempDir()) {
+	if inTemporaryDir(bin) {
 		fmt.Fprintf(app.Err, "avr: idle auto-stop is not set up, because avr is running from a temporary folder (%s).\n", filepath.Dir(bin))
 		fmt.Fprintf(app.Err, "     Install it somewhere permanent and it is set up on the next `avr`.\n")
 		return
@@ -599,6 +599,36 @@ func runSchtasks(args ...string) error {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// inTemporaryDir reports whether bin lies in any directory this host clears
+// out, which is every directory a scheduled job must never point into.
+//
+// os.TempDir() alone is not that set. On macOS it is $TMPDIR, a per-user
+// directory under /var/folders, so a binary built into /private/tmp passed the
+// guard, registered itself, and left a job pointing at nothing once it was
+// deleted — twice, in this repository's own history (docs/lessons.md). The
+// roots below are the ones a build or a scratch directory actually lands in.
+func inTemporaryDir(bin string) bool {
+	for _, root := range temporaryRoots() {
+		if root != "" && withinDir(bin, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// temporaryRoots is every directory this host treats as temporary.
+func temporaryRoots() []string {
+	roots := []string{os.TempDir()}
+	if runtime.GOOS == "windows" {
+		// Windows programs read these in this order, and a service or a
+		// different shell can give each a different value.
+		return append(roots, os.Getenv("TEMP"), os.Getenv("TMP"), filepath.Join(os.Getenv("SystemRoot"), "Temp"))
+	}
+	// /private/tmp is what /tmp is on macOS; naming both costs nothing and
+	// means neither spelling depends on resolveLinks having succeeded.
+	return append(roots, "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp")
 }
 
 // withinDir reports whether path is dir or lies beneath it, comparing the two
