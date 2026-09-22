@@ -515,6 +515,13 @@ here so the phase's history matches what is on `main`.
   - _Properties: 11_
   - _writes: e2e/harness_test.go, e2e/isolated_darwin_test.go, e2e/userconfig_darwin_test.go, e2e/projsize_darwin_test.go, e2e/confirm_darwin_test.go, e2e/init_darwin_test.go, e2e/idle_darwin_test.go, e2e/wsl_sshagent_test.go, docs/lessons.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
+- [ ] 55. Name the Windows user in the state directory's access rules
+  - Reported with diagnostics by the maintainer (2026-09-22): every `avr` on Windows failed with `open %LocalAppData%\avar\projects.json: Access is denied`. `Get-Acl` showed the directory owned by the user but `projects.json` owned by `BUILTIN\Administrators`, and the list on both was OWNER RIGHTS, Administrators, SYSTEM. An earlier elevated `avr` had created those five files, so an ordinary shell matched no entry.
+  - The list now names the account avar runs as by SID (`internal/state/perm_windows.go`), and avar re-stamps a list that does not name it, which repairs the directory without anybody reaching for icacls. Windows propagates the new inheritable entries to the files beneath that inherit them; a file owned by somebody else still needs an administrator once, which the error now says.
+  - Not verifiable on macOS: the new tests run in the Windows CI job. The maintainer's machine is the check that the repair lands (task 43).
+  - _Requirements: 9.3, 17.5, 18.13_
+  - _writes: internal/state/perm_windows.go, internal/state/perm_windows_test.go, internal/state/permhint_{windows,other}.go, internal/state/permhint_unix_test.go, internal/state/store.go, site/troubleshooting.md, docs/lessons.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

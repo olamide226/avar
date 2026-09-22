@@ -203,7 +203,7 @@ Layout:
   logs/              # provisioning logs (referenced in error messages)
 ```
 
-Windows uses `ReplaceFile`/`MoveFileEx` semantics for atomic replacement rather than assuming POSIX `rename`; directory creation grants only the current Windows user and administrators access. State schema v2 migrates existing `Mounts []string` entries into `MountSpec{HostPath: p, GuestPath: p}` and `VMType` into `Runtime`, assigning `Provider: "lima"` to pre-Windows records.
+Windows uses `ReplaceFile`/`MoveFileEx` semantics for atomic replacement rather than assuming POSIX `rename`; directory creation grants only the current Windows user and administrators access. The user is named by SID, not by an OWNER RIGHTS entry: the owner of a file is not always the person running avar, because one `avr` in an elevated shell creates files owned by `BUILTIN\Administrators`, after which an ordinary shell matches no entry and avar's own records become unreadable (observed 2026-09-22). avar re-stamps a list that does not name the account it is running as, which repairs such a directory; it cannot change a file whose owner is someone else, so the error for an unreadable state file says what to run (§6). State schema v2 migrates existing `Mounts []string` entries into `MountSpec{HostPath: p, GuestPath: p}` and `VMType` into `Runtime`, assigning `Provider: "lima"` to pre-Windows records.
 
 `operations.json` records intent before an external create, restore, or destructive unregister. A reconciler may adopt or remove an unrecorded backend environment only when a matching pending operation and on-guest avar marker prove ownership. A name prefix alone never authorizes mutation.
 

@@ -809,6 +809,9 @@ func readJSON(path string, value any) error {
 		return nil
 	}
 	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("read avar state file %s: %w%s", path, err, permissionRemedy(path))
+		}
 		return fmt.Errorf("read avar state file %s: %w", path, err)
 	}
 	if len(bytes.TrimSpace(data)) == 0 {

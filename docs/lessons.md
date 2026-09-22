@@ -146,6 +146,22 @@ Hosts have several: `$TMPDIR`, `/tmp`, `/var/tmp`, and on Windows `TEMP`,
 `TMP` and the system's own. Enumerate them, and test the ones the API does
 not return.
 
+### A permission rule that names a role instead of an account locks somebody out
+
+avar sets its own access-control list on its Windows state directory, granting
+full control to OWNER RIGHTS, Administrators and SYSTEM. OWNER RIGHTS means
+"whoever owns this file", which reads like "the user" and is not. One `avr` run
+from an elevated PowerShell creates files owned by `BUILTIN\Administrators`;
+from then on an ordinary shell matched none of the three entries, and every
+command failed with `Access is denied` on avar's own records. The rule meant to
+keep other people out kept the owner's user out.
+
+Name the account. A role — owner, creator, the current process — is evaluated
+later, in conditions the code that wrote the rule did not choose. And when a
+program restricts access to its own files, the failure to read them afterwards
+has to say what to run: "Access is denied" alone leaves the user guessing at a
+rule they never saw.
+
 ## Verification
 
 ### Only tick a check you actually ran
