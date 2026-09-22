@@ -209,6 +209,26 @@ avr: <project> has no Linux-native copy yet, so there is nothing to synchronize;
 
 `avr sync` works on the copy `avr --native-fs` creates. Run that first.
 
+### "Access is denied" reading avar's own state (Windows)
+
+```text
+avr: read avar's project records to resolve C:\Users\you: read avar state file
+C:\Users\you\AppData\Local\avar\projects.json: open ...: Access is denied.
+```
+
+One `avr` run from an elevated PowerShell creates avar's files owned by
+`BUILTIN\Administrators`, and an ordinary shell afterwards cannot read them.
+Current versions of avar name your account in the rules they set and repair the
+directory themselves, but a file already owned by somebody else needs an
+administrator once:
+
+```powershell
+icacls "$env:LOCALAPPDATA\avar" /grant "$($env:USERDOMAIN)\$($env:USERNAME):(OI)(CI)F" /T /C
+```
+
+Run avar as yourself, not elevated. It never needs administrator rights, and
+`wsl --install` is the one step that does, which avar asks about before acting.
+
 ## Environments
 
 ### Snapshots are not supported
