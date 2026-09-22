@@ -4,7 +4,7 @@ package state
 
 import (
 	"fmt"
-	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -51,13 +51,13 @@ func stateDirSDDL(userSID string) string {
 	return "D:PAI(A;OICI;FA;;;" + userSID + ")(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)"
 }
 
-// currentUserSID is the account avar is running as, in the form SDDL uses.
-func currentUserSID() (string, error) {
+// currentUserSID is the account avar is running as.
+func currentUserSID() (*windows.SID, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return user.User.Sid.String(), nil
+	return user.User.Sid, nil
 }
 
 // tightenPerm gives the directory avar's own access-control list, unless it
@@ -82,7 +82,7 @@ func tightenPerm(dir string) error {
 		return nil
 	}
 
-	descriptor, err := windows.SecurityDescriptorFromString(stateDirSDDL(sid))
+	descriptor, err := windows.SecurityDescriptorFromString(stateDirSDDL(sid.String()))
 	if err != nil {
 		return fmt.Errorf("build the access rules for avar's state directory %s: %w", dir, err)
 	}
@@ -106,7 +106,13 @@ func tightenPerm(dir string) error {
 // names this account, which is both halves of "avar has already been here":
 // a list it did not set may name nobody useful, and its own older list named
 // only OWNER RIGHTS.
-func daclNamesUser(dir, sid string) (bool, error) {
+//
+// The entries are walked rather than rendered to SDDL and searched, because
+// SECURITY_DESCRIPTOR.String asks the system for every kind of security
+// information, including the audit list this descriptor was not fetched with,
+// and returns an empty string when that fails — a check against which passes
+// nothing and quietly reported every list as wrong.
+func daclNamesUser(dir string, sid *windows.SID) (bool, error) {
 	descriptor, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return false, err
@@ -118,5 +124,21 @@ func daclNamesUser(dir, sid string) (bool, error) {
 	if control&windows.SE_DACL_PROTECTED == 0 {
 		return false, nil
 	}
-	return strings.Contains(descriptor.String(), sid), nil
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil {
+		return false, err
+	}
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			return false, err
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			continue
+		}
+		if (*windows.SID)(unsafe.Pointer(&ace.SidStart)).Equals(sid) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
