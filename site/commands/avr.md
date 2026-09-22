@@ -60,6 +60,8 @@ Management commands:
   open <port>                    Open http://localhost:<port> in your browser
   init                           Propose a .avr.toml from this project's
                                  manifests, and write it if you confirm
+  update                         Update avar to the latest release, or name the
+                                 command that updates this installation
   help [command]                 Show general or command-specific help
   version                        Print the avr version
 

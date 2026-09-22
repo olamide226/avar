@@ -71,6 +71,31 @@ On both hosts the command answers to `avr` and to `avar`. The shorter `avr` is
 the canonical name and is what this guide, avar's help and its error messages
 use.
 
+### Update
+
+```bash
+avr update
+```
+
+If you installed avar with Homebrew or winget, that package manager owns the
+binary and keeps its own record of the version it put there, so `avr update`
+prints the one command that updates it — `brew upgrade --cask avar` or
+`winget upgrade olamide226.avar` — and changes nothing itself. Overwriting a
+file a package manager owns would leave its records describing a version that
+is not installed.
+
+If you installed avar by unpacking a release archive, `avr update` does the
+work: it fetches the latest release, checks the archive against the checksums
+that release published, and only then replaces the binary. On Windows it
+replaces `avar.exe` and `avrw.exe` at the same time and from the same archive,
+and keeps each file it replaced as `<name>.avr-old` until a later run deletes
+it — Windows cannot replace the file of a running program. If anything fails,
+the avar you have is still installed.
+
+Nothing is downloaded or replaced unless you run `avr update`, and no other
+command checks whether a newer release exists: that would put a network round
+trip on every `avr`.
+
 ### Uninstall
 
 avar registers one background job with your system, the idle check that stops
@@ -187,6 +212,7 @@ Linux — whose own flags avar never reads.
 | `avr ports --all` | The same, for every running environment |
 | `avr open <port>` | Open `http://localhost:<port>` in your browser, or say why that port is not forwarded |
 | `avr init` | Propose a `.avr.toml` from the project's manifests, and write it only if you confirm. Installs nothing |
+| `avr update` | Update avar itself, or print the one command that updates the way you installed it |
 | `avr version`, `avr help` | Also spelled `--version` and `--help` |
 
 Use `avr help <command>` or `avr <command> --help` for the exact arguments and
@@ -201,7 +227,7 @@ command to run in Linux. So these names belong to avar and will not reach the
 guest:
 
 <!-- reserved-names:begin — checked against cli.Subcommands() by a test; keep both markers -->
-`code` `cursor` `destroy` `help` `init` `internal` `isolate` `open` `ports` `reset` `restore` `snapshot` `status` `stop` `sync` `version` `zed`
+`code` `cursor` `destroy` `help` `init` `internal` `isolate` `open` `ports` `reset` `restore` `snapshot` `status` `stop` `sync` `update` `version` `zed`
 <!-- reserved-names:end -->
 
 (`internal` carries avar's own scheduled idle check and is not a command you run.)
@@ -215,6 +241,7 @@ avr -- open file.txt # runs the guest's own open, not avar's
 avr -- status        # runs the guest's own status, not avar's
 avr -- zed           # runs a zed installed inside Linux, not avar's editor command
 avr -- init          # runs a program called init inside Linux, not avr init
+avr -- update        # runs your project's update script, not avr update
 ```
 
 `sync` and `open` are the ones worth knowing about. `sync` is a standard Unix
@@ -223,8 +250,9 @@ installed, and both are words a macOS hand types without thinking — and the
 failure mode is quiet: without `--`, avar answers instead of your command,
 rather than running it. `cursor` and `zed` are the editors' own command names,
 so a copy of either installed inside the Linux environment is reached with
-`avr -- cursor` or `avr -- zed`. The other reserved names are unlikely to
-collide with anything you would run.
+`avr -- cursor` or `avr -- zed`. `update` is a plausible name for a script in a
+project, and `avr -- update` runs yours. The other reserved names are unlikely
+to collide with anything you would run.
 
 Snapshots do not work in every environment — see [Limitations](#limitations).
 
@@ -449,7 +477,9 @@ quietly. Deleting the environment deletes the Linux copy with it, so run
 quarantine attribute after install, so that route is unaffected; a tarball
 downloaded directly from the releases page will be stopped by Gatekeeper until
 you clear it yourself. On Windows, SmartScreen may warn the first time you run
-`avr.exe`.
+`avr.exe`. A binary `avr update` installs is downloaded by avar rather than by
+a browser, so it carries neither the quarantine attribute nor the mark of the
+web, and neither Gatekeeper nor SmartScreen stops it.
 
 ## Platform support
 

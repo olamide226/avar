@@ -33,6 +33,7 @@ the errors you are likely to meet.
 | [`avr status`]({% link commands/status.md %}) | <code>avr status</code> |
 | [`avr stop`]({% link commands/stop.md %}) | <code>avr [selector flags] stop [--all]</code> |
 | [`avr sync`]({% link commands/sync.md %}) | <code>avr [selector flags] sync [--to-host &#124; --to-guest] [--yes]</code> |
+| [`avr update`]({% link commands/update.md %}) | <code>avr update</code> |
 | [`avr version`]({% link commands/version.md %}) | <code>avr version</code> |
 | [`avr zed`]({% link commands/zed.md %}) | <code>avr [selector flags] zed</code> |
 

@@ -107,7 +107,7 @@ subcommands, so they never reach Linux as the start of a command:
 
 <!-- generated:reserved-names:begin — written by `make docs` from cli.Subcommands(); edit internal/cli/grammar.go, not this section -->
 
-`code` `cursor` `destroy` `help` `init` `internal` `isolate` `open` `ports` `reset` `restore` `snapshot` `status` `stop` `sync` `version` `zed`
+`code` `cursor` `destroy` `help` `init` `internal` `isolate` `open` `ports` `reset` `restore` `snapshot` `status` `stop` `sync` `update` `version` `zed`
 
 <!-- generated:reserved-names:end -->
 
@@ -119,8 +119,9 @@ To run a program in Linux whose name is on that list, put `--` first:
 avr -- sync          # the guest's sync(1), or your project's ./sync
 avr -- open file.txt # a program called open inside Linux
 avr -- init          # a program called init inside Linux
+avr -- update        # your project's update script, not avr update
 ```
 
 The ones most likely to catch you are `sync`, a standard Unix command, and
-`open`, a common name for a project script. Without `--`, avar runs its own
-command instead of yours.
+`open` and `update`, common names for a project script. Without `--`, avar runs
+its own command instead of yours.

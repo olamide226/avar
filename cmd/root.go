@@ -135,6 +135,8 @@ const commandIndex = `Management commands:
   open <port>                    Open http://localhost:<port> in your browser
   init                           Propose a .avr.toml from this project's
                                  manifests, and write it if you confirm
+  update                         Update avar to the latest release, or name the
+                                 command that updates this installation
   help [command]                 Show general or command-specific help
   version                        Print the avr version
 
@@ -206,6 +208,14 @@ var publicCommandHelp = map[string]commandHelp{
 		usage:       "avr [selector flags] stop [--all]",
 		description: "Stop the selected environment, or every Linux environment avar manages.",
 		flags:       "  --all   stop every Linux environment avar manages",
+	},
+	"update": {
+		usage: "avr update",
+		description: "Bring avar up to date.\n\n" +
+			"If this avar was installed with Homebrew or with winget, that package manager owns the file and keeps its own record of the version it installed, so avar prints the one command that updates it — `brew upgrade --cask avar` or `winget upgrade olamide226.avar` — and changes nothing itself.\n\n" +
+			"Otherwise avar updates itself: it asks github.com/olamide226/avar for the latest release, downloads the archive for this computer, checks it against the checksums that release published, and only then replaces this binary. On Windows every program the archive ships — `avr.exe`, `avar.exe` and the windowless `avrw.exe` that runs the background idle check — is replaced from that one archive or none of them is, and the files replaced are kept beside them until a later run removes them.\n\n" +
+			"Nothing is downloaded or replaced unless you run this command: no other avar command asks whether a newer release exists. If anything fails, the avar you have now is still installed.\n\n" +
+			"`update` is an avar command, so it does not reach the guest: to run a program called `update` in Linux, use `avr -- update`.",
 	},
 	"sync": {
 		usage:       "avr [selector flags] sync [--to-host | --to-guest] [--yes]",

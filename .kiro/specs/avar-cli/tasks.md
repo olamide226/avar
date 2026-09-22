@@ -453,7 +453,7 @@ here so the phase's history matches what is on `main`.
   - Not done: `avr update` does not offer to run the package manager's command, and there is no `--check` flag.
   - _Requirements: 19.1-19.10, 2.6, 17.1, 18.16_
   - _Properties: 26_
-  - _writes: .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md, internal/update/**, internal/cli/grammar.go, internal/cli/grammar_test.go, cmd/update.go, cmd/update_test.go, cmd/root.go, cmd/internal_idle.go, README.md, site/commands/update.md, site/commands/index.md, site/syntax/command-line.md_
+  - _writes: .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md, internal/update/**, internal/cli/grammar.go, cmd/update.go, cmd/update_test.go, cmd/app.go, cmd/root.go, cmd/internal_idle.go, README.md, site/commands/update.md, site/commands/index.md, site/commands/avr.md, site/syntax/command-line.md_
 
 - [x] 47. Run the Windows idle check without a console window  _(PR #100; the windowless helper; the maintainer's Windows check is in task 43)_
   - Maintainer report (2026-09-18, confirmed on a real Windows machine): the `avar-idle-check` task ran `avr.exe`, a console program, in the user's session, so a console window appeared, taking focus, every time it ran.

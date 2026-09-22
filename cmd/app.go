@@ -71,6 +71,13 @@ type App struct {
 	// can see what `avr open` would have opened without opening anything. Nil
 	// means the host's own.
 	browser browser.Opener
+
+	// updateHost replaces what `avr update` learns about this computer and
+	// what it does to it: the running binary's path, the HTTPS client, and
+	// the filesystem it renames files in. A flow test must set it, or a
+	// test of the successful path would download a release and replace the
+	// developer's own avr. Nil means this computer.
+	updateHost *updateHost
 }
 
 // newApp returns an App writing to the real streams.

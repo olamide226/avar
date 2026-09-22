@@ -62,6 +62,12 @@ func runInternal(ctx context.Context, app *App, inv cli.Invocation) error {
 // and the next interactive `avr` names the line (REQ-17.7). Auto-stop resumes
 // on the first check after the file is fixed.
 func runIdleCheck(ctx context.Context, app *App) error {
+	// Windows cannot delete the image of a running program, so the file
+	// `avr update` renamed aside has to go on some later run. This is the
+	// one avar that runs regularly and never on the warm path REQ-17.1
+	// budgets (REQ-19.7).
+	sweepUpdateLeftovers(app)
+
 	store, err := app.Store()
 	if err != nil {
 		return err
