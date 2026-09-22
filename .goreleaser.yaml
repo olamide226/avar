@@ -316,15 +316,24 @@ winget:
       - wsl
       - developer-tools
     commit_msg_template: "New version: {{ .PackageIdentifier }} {{ .Version }}"
-    # Submitted for minor and major releases only (x.y.0). Every `feat:` or
-    # `fix:` merge releases, and on 16 September that opened five pull
-    # requests on microsoft/winget-pkgs in 45 minutes for a package still in
-    # its first review. Each is reviewed by people, so avar submits a version
-    # worth their time rather than every patch. Patch releases still reach
-    # GitHub and Homebrew. Without the WINGET_TOKEN secret nothing is
-    # submitted, so a release never fails for want of it; `auto` keeps
-    # prereleases out.
-    skip_upload: '{{ if and (isEnvSet "WINGET_TOKEN") (eq .Patch 0) }}auto{{ else }}true{{ end }}'
+    # PAUSED (2026-09-22, maintainer's decision). olamide226.avar is a new
+    # package and its first submission is still waiting for a moderator. Every
+    # minor release opened another pull request beside it, and the only way to
+    # keep one submission in the queue was to close the previous one — twice so
+    # far, each time spending a moderator's attention on churn rather than on
+    # the package.
+    #
+    # So nothing is submitted until the package is accepted. Releases still
+    # reach GitHub and Homebrew, and the manifests are still generated into
+    # dist/winget/ on every release, so the packaging stays exercised and a
+    # mistake in it still surfaces here rather than in front of Microsoft.
+    #
+    # To resume, restore the line kept below. It submits a minor or major
+    # release (x.y.0) when WINGET_TOKEN is set, and `auto` keeps prereleases
+    # out:
+    #
+    #   skip_upload: '{{ if and (isEnvSet "WINGET_TOKEN") (eq .Patch 0) }}auto{{ else }}true{{ end }}'
+    skip_upload: "true"
     repository:
       owner: olamide226
       name: winget-pkgs
