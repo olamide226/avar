@@ -131,6 +131,21 @@ written around one directory answers for that directory only; "a binary that wil
 not be there later" is the property, and `/tmp`, a worktree and `go build -o ./avr`
 all have it.
 
+### A guard against "the temporary directory" has to mean every one of them
+
+The guard added after a test binary registered itself with launchd asked
+`withinDir(bin, os.TempDir())`. On macOS `os.TempDir()` is `$TMPDIR`, a
+per-user directory under `/var/folders`. A binary built into `/private/tmp`
+— what `go build -o /tmp/...` and most scratch directories give you — is not
+under it, so the guard let it through, and the developer's launchd agent was
+rewritten to point at a binary that was deleted minutes later. The same
+failure the guard existed to prevent, with the guard in place.
+
+A check phrased as "is this in the temporary directory" invites the singular.
+Hosts have several: `$TMPDIR`, `/tmp`, `/var/tmp`, and on Windows `TEMP`,
+`TMP` and the system's own. Enumerate them, and test the ones the API does
+not return.
+
 ## Verification
 
 ### Only tick a check you actually ran
