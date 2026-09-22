@@ -976,6 +976,13 @@ _For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host'
 - `env` in guest shows no leaked host secret var (Property 4).
 - Server in guest on :3000 reachable from host (Req 7.1).
 - Warm-path attach overhead measured < 500 ms budget (Req 17.1).
+- A `config.toml` with a misspelt key refuses an ordinary command before any machine work, naming the file, the line and the key that was meant, while `status`, `stop` and `destroy` run with a notice and `help` and `version` are unaffected (Req 17.7).
+- A `.avr.toml` asking for more cpus or memory than this computer has is refused before any machine work, naming the file, the line and what the computer has; the sizes are derived from the host at run time rather than written into the test (Req 15.5).
+- `reset` and `destroy` with a piped answer rather than a terminal print their summary, delete nothing and exit non-zero; the environment still runs commands afterwards (Req 5.6, Req 10.3).
+- `avr init` without a terminal shows the proposal, writes nothing and says why, and never replaces an existing `.avr.toml` (Req 15.2).
+- Idle auto-stop against a real machine: an idle environment is stopped, one with a live `avr` session is not, and one with a process shaped like a connected VS Code window — a real program inside `~/.vscode-server` carrying `--type=extensionHost` — is kept and then stopped once that process ends (Req 5.5, Req 5.10, Req 5.11, Property 11).
+
+These last five run against a state directory *and* a Lima home of their own (`AVR_HOME` and `LIMA_HOME`). `AVR_HOME` alone does not isolate a test from this computer's environments: reconciliation adopts machines by avar's `avr-` prefix rather than by the records it holds, so a fresh state directory takes in every `avr-` machine the host has — which a test that runs the idle check would then stop.
 
 **End-to-end tests — real WSL 2** (the same `make e2e`, which selects this half by build tag; runs locally on Windows with WSL 2, and in CI on a GitHub-hosted Windows runner nightly and on demand, not on ordinary pull requests):
 
@@ -986,6 +993,7 @@ _For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host'
 - Snapshot/restore and isolated reset restore guest package state while host project hashes remain unchanged; interrupt a restore after the unregister and verify that re-running the same command recovers, since restore is retryable rather than rolled back (Properties 7, 10, 16).
 - Guest server on port 3000 is reachable from Windows localhost; a forced conflict remains diagnostic-only (Property 19).
 - Assert guest environment lacks a Windows secret marker and Windows PATH entries (Property 4).
+- `avr --ssh-agent` is refused with exit 2 before any machine work, and the guest command it carried does not run — the flag is a credential grant, and WSL is the host where it cannot be honoured, so this half is where the refusal is worth asserting against a real backend (Req 12.3).
 
 **Build tests**: GoReleaser/cross-compilation produces Windows x64 and Arm64 `avr.exe` artifacts; smoke `avr --help` and grammar tests run on Windows CI. Release checks verify archive checksums and prohibit a Lima runtime dependency in Windows packaging.
 

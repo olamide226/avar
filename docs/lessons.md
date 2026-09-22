@@ -42,6 +42,35 @@ sentence came out.
 
 ---
 
+### `AVR_HOME` is not isolation, because ownership is decided by the prefix
+
+The WSL end-to-end tests give avar a state directory of its own, and that reads
+like isolation: a fresh `AVR_HOME` has no `machines.json`, so the tests start
+from nothing. Writing the Lima tests for idle auto-stop — which run
+`avr internal idle-check`, whose whole job is stopping machines — made it worth
+checking rather than assuming. One `avr status` against an empty state directory
+produced a `machines.json` describing all three of the developer's shared
+machines.
+
+Reconciliation adopts a machine on the `avr-` prefix alone, without a record,
+and it has to: the missing record is the damage it repairs
+(`internal/state/reconcile.go`). So an empty state directory is not a smaller
+world, it is the same world with the bookkeeping rebuilt. A test that had gone
+on to run the idle check would have stopped whatever it adopted — during a full
+`make e2e`, the shared machine every other test is using, mid-suite.
+
+What isolates is `LIMA_HOME`, because it moves the *backend*: a Lima home of its
+own contains only what the test created, and `limactl list` for the developer is
+unchanged from the first line of such a test to the last. It costs a cold
+provision, measured at about thirteen seconds, because the image cache lives
+outside it.
+
+The general form is that a state directory isolates what a tool *remembers*,
+never what it can *find*. Any tool that can rediscover its own resources —
+by a name prefix, a label, a port range, a tag — will rediscover the ones
+belonging to whoever else is on the machine. Isolate the thing being discovered,
+not the record of it.
+
 ### A test that registers something with the host outlives the test
 
 Creating an environment registers avar's idle check with the host scheduler.
@@ -81,6 +110,26 @@ binary and every binary a test builds lives there, and so does every
 registration that would outlive its file. A mutation check is itself a run of
 the code under test. When the test spawns a process, the mutation runs with the
 host's full reach, so make that reach safe before mutating.
+
+**Addendum, 2026-09-22: the guard is bounded by `os.TempDir()`, and scratch
+directories are not all under it.** While working out how the end-to-end idle
+tests should drive `avr internal idle-check`, a build was placed in a session
+scratch directory under `/private/tmp` and run by hand against a real project.
+On macOS `os.TempDir()` is `$TMPDIR`, which is a per-user directory under
+`/var/folders`, so `withinDir(bin, os.TempDir())` was false, `ensureIdleScheduler`
+ran, and the maintainer's `com.avar.idle-check` agent was rewritten to point at a
+binary that was deleted minutes later — the original failure of this entry,
+reproduced by the person who had just read it. The permission system refused to
+write the plist back, so the repair was to unload and delete the agent, which
+avar reinstalls on the next real `avr`.
+
+The suite itself was never at risk: `TestMain` builds into `os.MkdirTemp("", …)`,
+which is exactly what the guard covers. Two things follow. Exploratory runs of a
+locally built `avr` are not exempt from the rules the tests are held to — build
+where the guard can see it, or expect to have to repair the host. And a guard
+written around one directory answers for that directory only; "a binary that will
+not be there later" is the property, and `/tmp`, a worktree and `go build -o ./avr`
+all have it.
 
 ## Verification
 

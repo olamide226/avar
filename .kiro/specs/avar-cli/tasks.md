@@ -503,6 +503,18 @@ here so the phase's history matches what is on `main`.
   - _Properties: 11_
   - _writes: internal/provider/editors/**, internal/provider/provider.go, internal/provider/lima/editorprobe.go, internal/provider/lima/editorprobe_test.go, internal/provider/lima/portdiag.go, internal/provider/wsl2/editorprobe.go, internal/provider/wsl2/editorprobe_test.go, internal/provider/wsl2/wsl2_test.go, internal/provider/fake/fake.go, internal/session/session.go, internal/session/session_test.go, cmd/internal_idle.go, cmd/idle_editors.go, cmd/idle_editors_test.go, cmd/code.go, site/commands/{code,cursor,zed}.md, site/design.md, site/syntax/config-toml.md, site/troubleshooting.md, docs/lessons.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
+- [ ] 54. Cover the recently shipped behaviour end to end
+  - Tasks 47–53 shipped with unit and integration coverage only. The end-to-end suite still described the product as it was before them: nine Lima tests, every one of them a guest command. This adds the behaviour a user meets for each, against the real backend.
+  - Lima half: strict `config.toml` (which commands refuse, which carry on, that `help` and `version` are untouched); an oversized `.avr.toml` refused before any machine work, with the host's real CPU count and memory read at run time rather than written down; `reset` and `destroy` refusing a piped answer and leaving the environment running; `avr init` writing nothing without a terminal and never replacing an existing file; and idle auto-stop — idle stopped, live session never stopped, editor window kept and then released.
+  - WSL half: `--ssh-agent` refused with exit 2 and the guest command not run. It belongs here rather than on macOS because Lima forwards the agent and has nothing to refuse.
+  - **`AVR_HOME` is not isolation.** Reconciliation adopts machines by the `avr-` prefix rather than by avar's records (deliberately — the missing record is the damage it repairs), so a fresh state directory takes in every `avr-` machine the host has. The tests that run the idle check would have stopped the developer's environments, and during a full run the suite's own shared machine. They take a `LIMA_HOME` of their own as well, which costs a cold provision (~13 s, the image cache being outside it) and buys a backend containing only what the test created. Measured, and recorded in `docs/lessons.md`.
+  - The editor is a real process, not a fixture: a copy of `/bin/sh` at `~/.vscode-server/bin/e2e/node`, run with `--type=extensionHost`, which is the shape avar's rule matches. Proven by mutation — moved out of `.vscode-server`, the environment is stopped and the test fails.
+  - Adds about 100 s to `make e2e` on an M-series Mac (6 s for the four cheap groups, 79 s for the three idle tests, 15 s for the confirmation test).
+  - Not covered: the strict-config, size, confirmation and `init` behaviour on the WSL half, which is host-independent but could not be run here; Cursor and Zed window shapes, which have no captured real layout to plant.
+  - _Requirements: 17.7, 15.5, 15.2, 5.5, 5.6, 5.10, 5.11, 10.3, 12.3_
+  - _Properties: 11_
+  - _writes: e2e/harness_test.go, e2e/isolated_darwin_test.go, e2e/userconfig_darwin_test.go, e2e/projsize_darwin_test.go, e2e/confirm_darwin_test.go, e2e/init_darwin_test.go, e2e/idle_darwin_test.go, e2e/wsl_sshagent_test.go, docs/lessons.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.
