@@ -51,6 +51,16 @@ that already exists is fine as it is.
 
 ## winget
 
+**Submissions are paused** (2026-09-22): `skip_upload` in `.goreleaser.yaml`
+is `true`, so no release opens a pull request on `microsoft/winget-pkgs`. The
+package's first submission is still queued for a moderator, and every minor
+release opened another beside it. Restore the commented line in that file when
+the package is accepted, and the paragraph below describes what happens again.
+
+Until then, each release still generates the manifests into `dist/winget/`,
+so a mistake in the packaging shows up in the release run rather than in front
+of Microsoft.
+
 Every stable minor or major release (x.y.0) pushes manifests for
 `olamide226.avar` to a branch
 `avar-<version>` of `olamide226/winget-pkgs`, a fork of
