@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -71,6 +72,17 @@ func TestMain(m *testing.M) {
 // the same one a script or a pipeline gets (REQ-2.3).
 func avr(t *testing.T, dir string, env []string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
+	return avrWithInput(t, dir, env, "", args...)
+}
+
+// avrWithInput is avr with something waiting on standard input.
+//
+// It exists for the commands that ask a question: what they must do with an
+// answer that arrives on a pipe is different from what they do with one typed
+// at a terminal, and only one of the two can be expressed by leaving stdin
+// empty (REQ-5.6, REQ-10.3).
+func avrWithInput(t *testing.T, dir string, env []string, input string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
@@ -78,6 +90,9 @@ func avr(t *testing.T, dir string, env []string, args ...string) (stdout, stderr
 	cmd := exec.CommandContext(ctx, avrBinary, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
