@@ -85,6 +85,18 @@ also refused before anything is downloaded, because WSL 2 cannot emulate
 another processor. The message names the one architecture that host
 supports.
 
+### "The term 'avar' is not recognized" (Windows)
+
+```text
+avar : The term 'avar' is not recognized as the name of a cmdlet, function, script file, or operable program.
+```
+
+avar answers to `avr` and to `avar`, but Windows packages before 0.12.13
+shipped only `avr.exe`. Upgrade with `winget upgrade olamide226.avar`, or
+download the newer archive and keep `avar.exe` beside `avr.exe` in the folder
+you put on your `PATH`; open a new terminal afterwards. Until then, use `avr`,
+which is the canonical name everywhere in avar's own output.
+
 ### A command in my project has the same name as an avar command
 
 `avr sync`, `avr open`, `avr init` and the other

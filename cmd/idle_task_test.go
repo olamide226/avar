@@ -488,3 +488,65 @@ func TestIdleCheckWanted_FollowsIdleTimeout_REQ_5_9(t *testing.T) {
 		})
 	}
 }
+
+// REQ-18.17: `avar` is the same program as `avr`, so a run started under the
+// alias finds the registration its other name made and leaves it alone.
+//
+// Windows ships avar.exe beside avr.exe, and os.Executable reports whichever
+// name was typed. The stamp records that path, so without canonicalBinary the
+// alias found a stamp naming avr.exe, took it for a registration to replace,
+// and ran /Query and /Create — two subprocesses, on the path REQ-17.1 budgets
+// at 500 ms — then wrote its own name back for the next `avr` to undo.
+func TestScheduledTask_TheAliasLeavesTheRegistrationAlone_REQ_18_17(t *testing.T) {
+	app := newTestApp(t, fake.New())
+	bin, _, stamp := windowsInstall(t, true)
+	alias := filepath.Join(filepath.Dir(bin), "avar.exe")
+	touch(t, alias)
+
+	installScheduledTask(app.App, stamp, canonicalBinary(bin), (&schtasksRecorder{}).run)
+	app.err.Reset()
+
+	again := &schtasksRecorder{}
+	installScheduledTask(app.App, stamp, canonicalBinary(alias), again.run)
+
+	if len(again.calls) != 0 {
+		t.Errorf("`avar` re-registered the task `avr` had registered: %q", again.calls)
+	}
+	if app.err.Len() != 0 {
+		t.Errorf("`avar` printed something about a registration that was current:\n%s", app.err.String())
+	}
+}
+
+// REQ-18.17: an alias registers as the program it aliases, so both names of one
+// installation keep one registration between them. A copy of the alias with no
+// canonical binary beside it registers as itself: there is nothing else to
+// name, and its own name is at least stable.
+func TestCanonicalBinary_AnAliasRegistersAsAvr_REQ_18_17(t *testing.T) {
+	dir := t.TempDir()
+	lone := t.TempDir()
+	for _, name := range []string{"avr", "avr.exe", "avar", "avar.exe", "avrw.exe"} {
+		touch(t, filepath.Join(dir, name))
+	}
+	touch(t, filepath.Join(lone, "avar.exe"))
+
+	cases := []struct {
+		name string
+		bin  string
+		want string
+	}{
+		{"the alias, beside the canonical name", filepath.Join(dir, "avar"), filepath.Join(dir, "avr")},
+		{"the alias on Windows", filepath.Join(dir, "avar.exe"), filepath.Join(dir, "avr.exe")},
+		{"the alias however it is spelled", filepath.Join(dir, "AVAR.EXE"), filepath.Join(dir, "avr.exe")},
+		{"the canonical name itself", filepath.Join(dir, "avr"), filepath.Join(dir, "avr")},
+		{"the canonical name on Windows", filepath.Join(dir, "avr.exe"), filepath.Join(dir, "avr.exe")},
+		{"the alias alone", filepath.Join(lone, "avar.exe"), filepath.Join(lone, "avar.exe")},
+		{"any other program", filepath.Join(dir, "avrw.exe"), filepath.Join(dir, "avrw.exe")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := canonicalBinary(c.bin); got != c.want {
+				t.Errorf("canonicalBinary(%q) = %q, want %q", c.bin, got, c.want)
+			}
+		})
+	}
+}

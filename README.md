@@ -45,7 +45,6 @@ your Mac from the [releases page](https://github.com/olamide226/avar/releases)
 and put `avr` somewhere on your `PATH`.
 
 Homebrew installs both `avr` and its `avar` alias; they run the same command.
-The shorter `avr` name remains canonical and is used throughout this guide.
 
 **Windows.** winget is the recommended route:
 
@@ -53,19 +52,24 @@ The shorter `avr` name remains canonical and is used throughout this guide.
 winget install olamide226.avar
 ```
 
-winget picks the build for your processor and puts `avr` on your `PATH`; open a
-new terminal afterwards so it is found. winget receives each minor release
-(x.y.0) once Microsoft has reviewed and merged it, usually within a day or two
-of it appearing on the [releases page](https://github.com/olamide226/avar/releases),
-so it can trail the newest patch release. To skip
-the wait, download the `windows_amd64` or `windows_arm64` archive from there,
-unzip it, and put the folder's `avr.exe` and `avrw.exe` together somewhere on
-your `PATH`. `avrw.exe` runs avar's background idle check without opening a
-window; without it beside `avr.exe`, avar says so and does not set up idle
-auto-stop.
+winget picks the build for your processor and puts `avr` on your `PATH`, with
+`avar` beside it as the same command; open a new terminal afterwards so they are
+found. winget receives each minor release (x.y.0) once Microsoft has reviewed
+and merged it, usually within a day or two of it appearing on the
+[releases page](https://github.com/olamide226/avar/releases), so it can trail
+the newest patch release. To skip the wait, download the `windows_amd64` or
+`windows_arm64` archive from there, unzip it, and put the whole folder
+somewhere on your `PATH`. It holds `avr.exe`, `avar.exe` — the same program
+under the longer name — and `avrw.exe`, which runs avar's background idle check
+without opening a window; without `avrw.exe` beside `avr.exe`, avar says so and
+does not set up idle auto-stop.
 
 Either way, avar checks for WSL 2 on first run and offers to set it up. The
 binaries are unsigned, so SmartScreen may warn the first time.
+
+On both hosts the command answers to `avr` and to `avar`. The shorter `avr` is
+the canonical name and is what this guide, avar's help and its error messages
+use.
 
 ### Uninstall
 

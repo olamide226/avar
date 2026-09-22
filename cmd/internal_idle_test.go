@@ -183,6 +183,33 @@ func TestLaunchdAgent_RepairsWithoutReloadingAnAgentTheUserUnloaded_REQ_5_5(t *t
 	}
 }
 
+// REQ-18.17: the macOS cask links the one executable as `avr` and again as
+// `avar`, and os.Executable returns the symlink the user typed rather than what
+// it points at (measured with go1.26 on macOS). The plist names that path and
+// is compared with what this binary would write, so before canonicalBinary each
+// name rewrote and reloaded the other's agent: three launchctl subprocesses on
+// every alternation, on the path REQ-17.1 budgets at 500 ms.
+func TestLaunchdAgent_TheAliasLeavesTheAgentAlone_REQ_18_17(t *testing.T) {
+	installed := t.TempDir()
+	bin := filepath.Join(installed, "avr")
+	alias := filepath.Join(installed, "avar")
+	for _, path := range []string{bin, alias} {
+		if err := os.WriteFile(path, nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := newTestApp(t, fake.New())
+	dir := t.TempDir()
+	writePlist(t, dir, canonicalBinary(bin))
+	lc := &launchctlCalls{loaded: true}
+
+	installLaunchdAgent(app.App, dir, canonicalBinary(alias), lc.run)
+
+	if len(lc.calls) != 0 {
+		t.Errorf("`avar` rewrote the agent `avr` had installed: %q", lc.calls)
+	}
+}
+
 // REQ-17.1: this runs on every `avr`, warm or cold, so an agent that is already
 // right costs one read and no launchctl at all.
 func TestLaunchdAgent_LeavesACurrentAgentAlone_REQ_17_1(t *testing.T) {

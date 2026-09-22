@@ -522,6 +522,15 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 9.3, 17.5, 18.13_
   - _writes: internal/state/perm_windows.go, internal/state/perm_windows_test.go, internal/state/permhint_{windows,other}.go, internal/state/permhint_unix_test.go, internal/state/store.go, site/troubleshooting.md, docs/lessons.md_
 
+- [ ] 56. Ship the `avar` command alias on Windows
+  - Maintainer report (2026-09-22): `avar true` on Windows answered "The term 'avar' is not recognized". The macOS cask has linked the binary twice since the first release, so `avar` worked there and only there, and the README said so.
+  - REQ-18.17 added. The Windows archives ship a second copy of the binary as `avar.exe` (GoReleaser build `avar-windows`), which gives winget a third `NestedInstallerFiles` entry, alias `avar`, and gives the command to anyone who unzips the archive onto their PATH. Measured: the amd64 zip grows 5.11 MiB → 7.66 MiB, the arm64 zip 4.58 MiB → 6.87 MiB; `avar.exe` and `avr.exe` are byte-identical.
+  - A second manifest entry for one file was rejected on evidence: winget's own validation raises `DuplicateRelativeFilePath` at error level, the `.\avr.exe` spelling that evades it rests on an open winget-cli bug, GoReleaser cannot write either, and none of it reaches the archive download. A `.bat` shim and avar editing PATH were rejected too (design §1).
+  - `canonicalBinary` maps an alias name to the canonical binary beside it before the idle check registers anything, so `avr` and `avar` keep one registration between them instead of undoing each other's on every alternation — on macOS as well, where `os.Executable` returns the cask's symlink rather than its target.
+  - Not verifiable here: that `winget install` creates the `avar` command on a real Windows host, and that Microsoft's validation accepts the manifest. The three generated manifests validate against their 1.12.0 JSON schemas; add both to task 43's list.
+  - _Requirements: 18.17, 18.14, 18.15, 17.1, 5.5_
+  - _writes: .goreleaser.yaml, cmd/internal_idle.go, cmd/internal_idle_test.go, cmd/idle_task_test.go, README.md, site/design.md, site/troubleshooting.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.
