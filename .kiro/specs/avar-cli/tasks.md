@@ -183,14 +183,14 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 17.2, 8.5_
   - _writes: docs/releasing.md, .goreleaser.yaml (only if the dry run finds a defect)_
 
-- [ ] 32. Public-facing documentation
+- [x] 32. Public-facing documentation  _(32.1 PR #41, #42, #46; 32.2 PR #92)_
   - [x] 32.1 Rewrite the README for a public audience  _(PR #41, #42, #46)_
     - It currently reads as a project-status note. Needs: one-line pitch, install (Homebrew and direct), a sixty-second quickstart, a command table covering the whole surface, requirements, how it works, honest limitations, contributing, licence.
     - **Platform support must be stated honestly.** macOS is supported today; Windows via WSL 2 is Requirement 18, Phase 4, and not started. The two must be visibly separated so no reader concludes Windows works. *(Superseded by Phase 4: Windows now works and the README says so, stating that it has had far less mileage than the macOS path rather than claiming parity. The rule this bullet expresses — describe each platform as it actually is — is what kept the README honest through the whole of Phase 4, in both directions.)*
     - Limitations to state rather than omit: snapshots need an emulated environment (Lima's snapshots are QEMU-only), sixteen project directories per environment, unsigned binaries.
     - _Requirements: 17.2_
     - _writes: README.md, CONTRIBUTING.md_
-  - [ ] 32.2 Publish a documentation site  _(after v0.1.0)_
+  - [x] 32.2 Publish a documentation site  _(PR #92; live at https://olamide226.github.io/avar/, Pages source set to GitHub Actions and first deploy run 2026-09-17)_
     - GitHub Pages with the just-the-docs Jekyll theme: free for public repositories, no build toolchain beyond what Pages provides, and no third-party service.
     - The README stays canonical for install and quickstart; the site carries what outgrows one page — command reference, configuration, troubleshooting, the environment matrix.
     - **On a custom subdomain:** Pages serves `<owner>.github.io/avar` free, and a `CNAME` subdomain is free to configure — but only against a domain that is already owned and paid for. If there is no domain, the `github.io` URL costs nothing and needs no decision.
@@ -264,7 +264,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
     - _Requirements: 15.2, 15.3, 2.6_
     - _Properties: 24 (second clause)_
     - _writes: internal/projconfig/detect.go, internal/projconfig/detect_test.go, internal/projconfig/render.go, cmd/init.go, cmd/init_test.go, cmd/app.go, cmd/root.go, internal/cli/grammar.go, README.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
-  - [ ] 22.4 Refuse cpus and memory larger than the host
+  - [x] 22.4 Refuse cpus and memory larger than the host  _(PR #91)_
     - Maintainer decision (2026-09-17): a `.avr.toml` whose `cpus` exceed the host's logical CPUs or whose `memory` exceeds its physical memory is refused where the size would apply (creating the project's isolated environment on a `MachineSizer`), before any machine work, in one message naming the file, lines, values and what the host has. Where the size cannot apply (shared environment, existing isolated environment, WSL) it blocks nothing, and the existing one-time notice says it also exceeds the host.
     - `provider.MachineSizer` reports `HostCapacity` instead of being a bare marker; LimaProvider reuses its `sysctl hw.memsize` probe without the fallback; `types.HostCapacity`; `projconfig.Config.ExceedsHost` and the line each size was set on; the check wired into the shell, editor, `sync` and `reset` paths. Callers: `runGuest`, `openInEditor`, `runSync`, `runReset`.
     - Also recorded in design §3.11: the maintainer's confirmation that project configuration is read only from the Project's own `.avr.toml` and the global `config.toml`, with no parent search.
@@ -428,7 +428,7 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 5.2, 5.9, 5.10, 5.11, 13.5, 13.6, 15.1, 15.3, 16.2, 18.9, 18.16_
   - _writes: e2e/** (tests that capture what was verified), this file_
 
-- [ ] 44. Read `config.toml` with the strict reader
+- [x] 44. Read `config.toml` with the strict reader  _(PR #93)_
   - Maintainer decision (2026-09-17): replace the lenient `state.parseConfigList` and `session.parseTOMLKey` with the strict TOML-subset reader `.avr.toml` uses. Each silently misread a file: a misspelt key was ignored, `idle_timeout="0"` without spaces left auto-stop on, and a comma inside a quoted `forward_env` name split it into two grants. A failing flow test for each was written against the old code first.
   - Extract `.avr.toml`'s lexical layer into `internal/tomlsubset` (no avar imports; closed `Schema`, near-miss key suggestions, unquoted-string hint, `ReadFile` with the 64 KiB cap) without changing what `.avr.toml` accepts. `config.toml`'s schema (`idle_timeout`, `forward_env`) lives in `internal/state` as `Store.Config`/`ParseConfig`; `distro`, `arch`, `cpus`, `memory` and `packages` are refused as not supported there. `types.CheckVariableName` is shared by both files. The `tomllib` agreement test covers both files through `internal/tomlsubset/tomltest`.
   - A file that cannot be read exactly refuses every command in `cmd` dispatch before resolving or machine work, except `status`, `stop` and `destroy`, which say so and run; `help` and `version` never read it. The scheduled idle check stops nothing and exits non-zero. Callers: `dispatch` (`checkUserConfig`), `runGuest` (`forward_env`), `runIdleCheck` (`idle_timeout`).
