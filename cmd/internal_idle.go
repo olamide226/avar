@@ -156,6 +156,9 @@ func runIdleCheck(ctx context.Context, app *App) error {
 // both hosts, and not only behind the App.scheduleIdleCheck seam tests use:
 // the seam protects the tests that remember it, and this protects the host
 // from the ones that do not.
+//
+// The binary is taken under its canonical name first, because avar is installed
+// under two (canonicalBinary).
 func ensureIdleScheduler(app *App) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		return
@@ -164,6 +167,7 @@ func ensureIdleScheduler(app *App) {
 	if err != nil {
 		return
 	}
+	bin = canonicalBinary(bin)
 	if inTemporaryDir(bin) {
 		fmt.Fprintf(app.Err, "avr: idle auto-stop is not set up, because avr is running from a temporary folder (%s).\n", filepath.Dir(bin))
 		fmt.Fprintf(app.Err, "     Install it somewhere permanent and it is set up on the next `avr`.\n")
@@ -179,6 +183,53 @@ func ensureIdleScheduler(app *App) {
 	case "windows":
 		ensureScheduledTask(app, bin, wanted)
 	}
+}
+
+// aliasNames maps each name avar is installed under besides `avr` to the
+// canonical one that sits beside it. It is lower-cased on both sides: Windows
+// compares file names without regard to case, and so does the volume a Mac is
+// formatted with by default.
+var aliasNames = map[string]string{
+	"avar":     "avr",
+	"avar.exe": "avr.exe",
+}
+
+// canonicalBinary answers "which program is this" for a run started under one
+// of avar's alias names.
+//
+// Both packages install the command twice: the macOS cask links the one
+// executable as `avr` and again as `avar`, and the Windows archive ships
+// avar.exe beside avr.exe. os.Executable reports the name the user typed — on
+// macOS it returns the symlink itself rather than its target (measured with
+// go1.26 on this host), and on Windows the two names are two real files — so the
+// same installation has two paths for one program.
+//
+// Everything the idle scheduler writes down is keyed by that path: the launchd
+// plist runs it, and the Windows stamp records it. Left alone, a user who types
+// both names has each invocation undo the other's registration — on macOS
+// rewriting and reloading the agent, on Windows querying and re-creating the
+// same task — which is three or two subprocesses on the warm path REQ-17.1
+// budgets at 500 ms in total, every time they alternate. Nothing is duplicated
+// (both hosts key the entry by a fixed label, not by the binary), but nothing
+// settles either.
+//
+// An alias is the same program, so it registers as the program it aliases. The
+// canonical name has to be there to be registered: a lone avar.exe someone
+// copied out of the archive is registered as itself, which is still stable.
+//
+// This costs one stat, and only for a run started under an alias; `avr` itself
+// returns on the map lookup.
+func canonicalBinary(bin string) string {
+	dir, name := filepath.Split(bin)
+	canonical, ok := aliasNames[strings.ToLower(name)]
+	if !ok {
+		return bin
+	}
+	target := filepath.Join(dir, canonical)
+	if !fileExists(target) {
+		return bin
+	}
+	return target
 }
 
 // idleCheckWanted reports whether the user's configuration wants idle stopping

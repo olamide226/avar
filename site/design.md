@@ -255,3 +255,30 @@ Microsoft. Submitting every patch release once opened five pull requests in
 - To get a patch release on Windows sooner, download the `windows_amd64` or
   `windows_arm64` archive from the
   [releases page](https://github.com/olamide226/avar/releases).
+
+## Two names for one command, and a second copy on Windows
+
+**The choice.** avar answers to `avr` and to `avar` on both hosts. `avr` is the
+canonical name: it is what the help, the error messages and this site use, and
+`avar` is only there for people who reach for the product's own name. On macOS
+the Homebrew cask links the one executable twice. On Windows the archive ships
+a second copy of the binary, `avar.exe`, beside `avr.exe`.
+
+**Why a copy rather than a link.** There are two ways to install avar on
+Windows and both have to give both names. winget's portable package puts one
+command on your `PATH` for each file listed in the package manifest, and the
+manifest is generated from the files in the archive; someone who unzips the
+archive onto their `PATH` gets exactly the files in it. A name that is not a
+file in the zip is not a command either way. A `.bat` shim was rejected: it is
+another process in front of every command you run in Linux, and it is not found
+when something other than a shell starts `avar`. avar editing your `PATH` was
+rejected too — avar changes nothing on your machine that you did not ask for.
+
+**The trade-off.**
+- Each Windows archive is about 2.5 MiB larger (6.4 MiB unpacked). The two
+  files are byte-for-byte identical, and a zip stores each one separately.
+- `winget uninstall` and deleting the unzipped folder still remove everything:
+  there is no link or registry entry pointing anywhere else.
+- avar's background idle check registers once for both names. It records the
+  canonical binary whichever name you typed, so `avr` and `avar` do not undo
+  each other's registration.

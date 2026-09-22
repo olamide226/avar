@@ -2,7 +2,10 @@
 #
 # avar ships as a single self-contained binary per host (REQ-17.2, REQ-18.14):
 # a macOS universal binary installable with Homebrew, and an avr.exe archive for
-# each Windows architecture, installable with winget (REQ-18.15).
+# each Windows architecture, installable with winget (REQ-18.15). Each host
+# offers the command under both `avr` and `avar` (REQ-18.17): macOS by linking
+# the one executable twice, Windows by shipping a second copy of it, because
+# Windows has no link a package manager will make for you.
 #
 # The two declare their backend differently because their dependency stories
 # are different. Lima is a package Homebrew can install, so the cask declares it
@@ -51,6 +54,60 @@ builds:
   - id: avr-windows
     main: .
     binary: avr
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+
+  # avar.exe, the same program under the product's own name. On macOS the cask
+  # links one executable twice, so both `avr` and `avar` work there; Windows had
+  # only `avr`, and `avar true` on a real Windows host answered "The term 'avar'
+  # is not recognized" (maintainer, 2026-09-22).
+  #
+  # It is a second build rather than a second name for one file because both
+  # ways a Windows user installs avar have to give both commands. winget's
+  # portable installer puts one command on PATH per entry in
+  # NestedInstallerFiles, and GoReleaser generates those entries from the
+  # binaries in the archive — so anything that is not a file in the zip is not a
+  # command. Someone who unzips the archive onto their PATH gets exactly the
+  # files in it, and no manifest can help them at all.
+  #
+  # Two manifest entries for one file was the cheaper route and does not work.
+  # The 1.12.0 schema does allow it (NestedInstallerFiles has no uniqueItems
+  # and nothing requires RelativeFilePath to be distinct), but winget's own
+  # validation, which the microsoft/winget-pkgs pipeline runs, refuses it:
+  # ManifestValidation.cpp keys a set on ToLower(RelativeFilePath) and raises
+  # DuplicateRelativeFilePath, "Duplicate relative file path found.", at error
+  # level. Because it compares the literal string, `.\avr.exe` slips past it
+  # (winget-cli issue #2887, open since 2023; Fly-io.flyctl shipped 19 versions
+  # that way), and GoReleaser cannot write such an entry in any case: its winget
+  # pipe maps one entry per archive binary with no field to add another.
+  #
+  # The cost is measured, not estimated: the amd64 zip grows from 5.11 MiB to
+  # 7.66 MiB and the arm64 zip from 4.58 MiB to 6.87 MiB, about 2.5 MiB each for
+  # 6.4 MiB unpacked. avar.exe is byte-for-byte the same file as avr.exe (the
+  # same package, flags and ldflags produce the same hash), and a zip stores each
+  # entry on its own, so the copy is paid for twice on disk.
+  #
+  # A .bat or .cmd shim was rejected — it is a second process and a
+  # second exit-code hop in front of every guest command (REQ-2.4, REQ-17.1),
+  # and cmd.exe shims do not work when a command is invoked from another program
+  # rather than a shell. avar putting a name on PATH itself was rejected too: the
+  # guest gets nothing the user did not grant, and neither does the host.
+  #
+  # `avr` stays canonical. This entry changes the file name and nothing else:
+  # help output, error messages and the documentation all say `avr`.
+  - id: avar-windows
+    main: .
+    binary: avar
     env:
       - CGO_ENABLED=0
     goos:
@@ -121,9 +178,12 @@ archives:
   #
   # avrw.exe goes in the same zip, beside avr.exe, which is where avar looks for
   # it: someone who unzips the archive and keeps the folder together has both.
+  # avar.exe is in the same zip for the same reason: the folder is the unit a
+  # user puts on their PATH, and it carries every command avar offers.
   - id: avr-windows
     ids:
       - avr-windows
+      - avar-windows
       - avrw-windows
     formats:
       - zip
@@ -308,9 +368,10 @@ release:
 
     winget receives minor releases (x.y.0), each once Microsoft merges its
     manifest, which can lag the release by a day or two. Or download the `windows_amd64` or
-    `windows_arm64` archive below, unzip it, and put `avr.exe` and `avrw.exe`
-    together somewhere on your PATH (`avrw.exe` runs the background idle check
-    without opening a window). avar needs WSL 2 and offers to set it up the
-    first time you run it.
+    `windows_arm64` archive below, unzip it, and put the whole folder somewhere
+    on your PATH: `avr.exe` is the command, `avar.exe` is the same program under
+    the longer name, and `avrw.exe` runs the background idle check without
+    opening a window. avar needs WSL 2 and offers to set it up the first time
+    you run it.
 
     Binaries are unsigned. Windows SmartScreen may warn on first run.
