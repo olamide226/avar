@@ -149,7 +149,7 @@ than adding behaviour, so they are one coherent change, not a per-package guess.
   - _Requirements: 12.1, 12.2, 12.3, 12.4, 9.2_
   - _writes: internal/envpolicy/policy.go, internal/envpolicy/policy_test.go, cmd/root.go_
 
-- [ ] 45. Forward the granted environment into an interactive shell on macOS
+- [x] 45. Forward the granted environment into an interactive shell on macOS  _(PR #94; verified against real Lima)_
   - `--env`, `--env-file`, `forward_env` and approved `.avr.toml` variables reached `avr <command>` and were silently dropped from `avr`. `internal/provider/lima.shellArgv` returned `limactl shell --workdir … <machine>` with no argv when `ShellOpts.Argv` was empty, and the environment was composed only in `guestArgv`, which that shape never reached. A code comment asserted the interactive form "has no equivalent", so the gap read as a decision rather than a defect.
   - Interactive sessions now pass an argv of their own: `sh -c 'exec env -- "$@" "$SHELL" -l' sh NAME=value …`. Assignments are positional arguments to a constant script, so no value is ever parsed as shell syntax; `"$SHELL"` is expanded before the grant applies, so the account's own login shell is exec'd (REQ-1.1) even when the grant names SHELL; `-l` keeps it a login shell.
   - Verified against Lima 2.2.0 and Ubuntu 24.04 through a pseudo-terminal, before and after. Lima runs any argv as `exec "$SHELL" -l -c '<argv>'`, so the profile is read by that shell and again by the interactive one — which means a profile that assigns a granted name unconditionally wins in an interactive session. That is stated in design §3.5 and on the site rather than worked around.
@@ -420,8 +420,12 @@ here so the phase's history matches what is on `main`.
   - **WSL loopback probing (task 23, REQ-18.9).** Listeners bound only to guest loopback are now probed on the strength of Microsoft's `localhostForwarding` documentation, and that has not been measured on real WSL. Add a WSL e2e test for `avr ports` while doing it.
   - **Emulated Lima machines and the host agent (task 41).** Find out whether killing `limactl hostagent` also ends `qemu-system-*` on an `--arch amd64` machine. It needs a host with QEMU installed. Task 41's own text says how to settle it, and a second detector predicate is only warranted if the process survives.
   - **`.avr.toml` packages on Fedora and on WSL (task 22.2, REQ-15.1, REQ-15.3).** The approval prompt, `apt-get` install, isolated sizing and the no-terminal refusal were run on real Lima 2.2.0 (PR #85). `dnf install` on Fedora 43 has only been unit-tested for its shape. On WSL, packages and forward_env have never been run, and WSL2Provider has no `MachineSizer`, so check that cpus/memory produce the "cannot apply" notice there instead of being ignored silently.
+  - **The windowless idle check on Windows (task 47, REQ-18.16).** Run the script in #100: after an `avr` that creates an environment, the task's action must end in `avrw.exe`; `schtasks /Run /TN avar-idle-check` must open no window; `LastTaskResult` must be 0; and with a short `idle_timeout` an idle environment must still be stopped. avar cannot test this itself: no CI runner shows a desktop.
+  - **The idle-check lifecycle on Windows (task 48, REQ-5.9).** `idle_timeout = "0"` removes the task; setting a timeout again restores it on the next `avr`; a task the user deletes is not re-created by an upgrade that moves `avr.exe`.
+  - **Editor detection off macOS (task 53, REQ-5.10, REQ-5.11).** VS Code's WSL layout, Zed through `wsl.exe`, and Cursor on either host are matched from constructed fixtures, not captured ones. Open each editor on a real environment and confirm `avr internal idle-check` keeps it running, then closes correctly once the window is gone.
+  - **Uninstall (task 48).** `brew uninstall --zap avar` removes the launchd agent; a plain `brew uninstall` leaves it, as intended; on Windows the documented `schtasks /Delete` before `winget uninstall` leaves nothing behind.
   - Tick each item as it is checked, with the host and versions used. A failure found here becomes its own fix task.
-  - _Requirements: 13.5, 13.6, 15.1, 15.3, 16.2, 18.9, 5.2_
+  - _Requirements: 5.2, 5.9, 5.10, 5.11, 13.5, 13.6, 15.1, 15.3, 16.2, 18.9, 18.16_
   - _writes: e2e/** (tests that capture what was verified), this file_
 
 - [ ] 44. Read `config.toml` with the strict reader
@@ -445,7 +449,7 @@ here so the phase's history matches what is on `main`.
   - _Requirements: (to be written — spec before build)_
   - _writes: .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, cmd/update.go, internal/update/*, internal/cli/grammar.go, README.md, site/commands/update.md_
 
-- [ ] 47. Run the Windows idle check without a console window
+- [x] 47. Run the Windows idle check without a console window  _(PR #100; the windowless helper; the maintainer's Windows check is in task 43)_
   - Maintainer report (2026-09-18, confirmed on a real Windows machine): the `avar-idle-check` task ran `avr.exe`, a console program, in the user's session, so a console window appeared, taking focus, every time it ran.
   - `cmd/avrw` is the idle check alone, linked with `-H windowsgui` by GoReleaser and shipped beside `avr.exe` in both Windows zips; winget's portable manifest gets a second `NestedInstallerFiles` entry. The task runs the helper found beside `avr.exe` (or beside the file a link to it resolves to), never one on PATH. `internal/deps` sets `CREATE_NO_WINDOW` on child processes when avar has no console window, so `wsl.exe` does not open one either.
   - A non-interactive (S4U) logon was rejected: `wsl.exe` is reported failing from "run whether the user is logged on or not" (design §3.8 has the evidence).
@@ -455,7 +459,7 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 18.16, 5.5, 17.1, 18.14, 18.15_
   - _writes: cmd/avrw/**, cmd/internal_idle.go, cmd/internal_idle_test.go, cmd/idle_task_test.go, internal/deps/exec.go, internal/deps/console_{other,windows}.go, .goreleaser.yaml, README.md, site/design.md, site/troubleshooting.md, docs/lessons.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
-- [ ] 48. Keep the idle-check registration in step with the user
+- [x] 48. Keep the idle-check registration in step with the user  _(PR #102; idle_timeout, a deleted task, and uninstall)_
   - `idle_timeout = "0"` left the scheduler running every half hour to stop nothing. `ensureIdleScheduler` now reads the timeout through `App.Config`. With "0" it removes the launchd agent or the scheduled task and says so once, and a timeout set again registers the check at the next `avr`. A config it cannot read leaves registration alone.
   - On Windows, a task the user deleted came back whenever the stamp stopped matching (avr.exe moved, or an upgrade changed the stamp, which task 47 does to every stamp). On that path only, avar runs `schtasks /Query` first, and a missing task is recorded as removed by the user and never re-created.
   - Uninstall: the cask removes the agent in `zap`, not `uninstall`, because Homebrew runs `uninstall` on every upgrade. Its caveat names `--zap`. winget runs nothing of avar's at uninstall, so its installation notes and the README's Uninstall section give the `schtasks /Delete` command.
@@ -463,34 +467,34 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 5.9, 5.5, 17.1, 18.15_
   - _writes: cmd/internal_idle.go, cmd/internal_idle_test.go, cmd/idle_task_test.go, .goreleaser.yaml, README.md, site/design.md, site/syntax/config-toml.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
-- [ ] 49. Refuse `--ssh-agent` where the backend cannot forward an agent
+- [x] 49. Refuse `--ssh-agent` where the backend cannot forward an agent  _(PR #97; the WSL refusal path runs in the nightly Windows job)_
   - Maintainer decision (2026-09-17): on Windows `avr --ssh-agent` was accepted and did nothing, because nothing in `internal/provider/wsl2` reads `ShellOpts.ForwardSSHAgent`. Refuse it clearly for now rather than implement forwarding.
   - New optional capability `provider.SSHAgentForwarder`, following `MachineSizer`/`NativeWorkspacer`: Lima implements it, WSL does not. `runGuest` asserts it before any machine work and exits 2 saying agent forwarding is not supported in this environment yet. The WSL backend's `Shell` also refuses `ForwardSSHAgent` with `ErrUnsupportedCapability`, so a caller that forgets to ask cannot drop the grant.
   - REQ-12.3 amended with the refusal clause; design §3.4 and a §6 row added.
   - _Requirements: 12.3, 9.2, 17.3, 18.14_
   - _writes: internal/provider/provider.go, internal/provider/lima/{lima,shell}.go, internal/provider/wsl2/shell{,_test}.go, internal/provider/fake/fake.go, cmd/shell.go, cmd/sshagent_test.go, README.md, site/commands/avr.md, site/syntax/{index,command-line}.md, site/design.md, .kiro/specs/avar-cli/{requirements,design,tasks}.md_
 
-- [ ] 50. Make the project-share limit a backend property
+- [x] 50. Make the project-share limit a backend property  _(PR #98)_
   - Maintainer decision (2026-09-17): `internal/mounts` capped every machine at sixteen shares (`MaxMounts`, applied by `capMounts` from `Ensure`), but only macOS's Virtualization framework has that limit. WSL shares are plain DrvFS mounts, so a Windows user entering a seventeenth project had one unshared for no reason.
   - New optional capability `provider.MountLimiter`. Lima reports 16 (the measurement moves into `internal/provider/lima` with the constant); WSL does not implement it; `mounts.Ensure` caps only when the backend reports a limit, so `internal/mounts` stays provider-neutral. The Fake reports Lima's 16.
   - The limit was never in the spec: design §3.4 and a §6 row now describe it.
   - _Requirements: 6.1, 6.4, 6.5, 17.3_
   - _writes: internal/provider/provider.go, internal/provider/lima/{lima,mounts,lima_test}.go, internal/provider/wsl2/wsl2_test.go, internal/provider/fake/fake.go, internal/mounts/mounts{,_test}.go, site/{design,platforms,troubleshooting}.md, .kiro/specs/avar-cli/{design,tasks}.md_
 
-- [ ] 51. Say "this computer", not "this Mac", in the command layer
+- [x] 51. Say "this computer", not "this Mac", in the command layer  _(PR #99)_
   - Maintainer decision (2026-09-17): `avr destroy` told Windows users their project files "on this Mac" were not touched, in its summary and its result. Both now say "this computer", as `cmd/ports.go` does.
   - A sweep of `cmd/` for other host-specific wording found `explainUnsupported` in `cmd/snapshot.go`, which replaced every `ErrUnsupportedCapability` from a snapshot operation with the macOS reason ("Apple's virtualization framework … `avr --arch amd64`"). The WSL backend returns that sentinel for a WSL 1 distribution, so a Windows user was told something false and lost the `wsl --set-version` remedy REQ-18.4 requires. The command layer now wraps the backend's reason; Lima's reason is the old text, without a machine name, so macOS output is unchanged.
   - _Requirements: 18.1, 18.4, 10.1, 10.2, 1.5, 5.6_
   - _writes: cmd/destroy.go, cmd/destroy_test.go, cmd/snapshot.go, cmd/snapshot_test.go, internal/provider/lima/snapshot.go, internal/provider/lima/snapshot_test.go, site/commands/snapshot.md, site/troubleshooting.md, .kiro/specs/avar-cli/tasks.md_
 
-- [ ] 52. `avr reset` and `avr destroy` confirm only at a terminal
+- [x] 52. `avr reset` and `avr destroy` confirm only at a terminal  _(PR #101)_
   - Reported, investigated and confirmed (2026-09-18): neither command checked for a terminal before reading its typed confirmation. Without one, end of input made `reset` fail with `reading confirmation: EOF` (exit 1, no mention of `--yes`) and made `destroy` exit 0; a correct name piped on stdin made both delete; and at a terminal, Ctrl-D was an error for `reset` and a cancellation for `destroy`.
   - Maintainer decision (2026-09-17, conditional on confirmation): make them consistent. Without a terminal and without `--yes`, both print the summary, delete nothing, say to use `--yes`, and exit 1, whatever stdin holds. At a terminal, end of input cancels like any other wrong answer, exit 0. Shared as `App.requireConfirmer`; `reset` now uses `App.confirmByTyping` as `destroy` does, and its own `confirmReset` is removed.
   - REQ-5.6 and REQ-10.3 amended with the refusal clause; design §6 row added.
   - _Requirements: 5.6, 5.7, 5.8, 10.3_
   - _writes: cmd/app.go, cmd/destroy.go, cmd/reset.go, cmd/confirm_test.go, cmd/destroy_test.go, cmd/reset_test.go, site/commands/{destroy,reset}.md, .kiro/specs/avar-cli/{requirements,design,tasks}.md_
 
-- [ ] 53. Keep an environment running while an editor window is connected to it
+- [x] 53. Keep an environment running while an editor window is connected to it  _(PR #103; the WSL and Cursor detection paths are in task 43)_
   - `avr code`, `avr cursor` and `avr zed` launch the editor and exit, and the editor then works in the guest through its own remote server, so no avar session existed while somebody worked only in their editor. The idle check read only avar's session records and stopped the environment under them once the timeout passed, on both hosts. REQ-5.10 and REQ-5.11 are added, REQ-5.5 and the Idle_Timeout glossary entry are amended to cite them, PROP-11 is extended, §6 gains two rows, and design §3.8 gains "Editors connected without a session".
   - **Detection rule:** a guest process whose program lies in the editor's server directory and which exists once per connected window — VS Code's and Cursor's remote extension host (`--type=extensionHost`), Zed's `proxy`. A server with no window does not count. VS Code and Zed were measured in a throwaway Lima 2.2.0 guest against real 1.135.0 and 1.20.2 servers, with a real window attached, closed and dropped; Zed runs its server by a relative path (`.zed_server/…`), which a match on `/.zed_server/` would have missed. Cursor, and every WSL layout, are constructed from the editors' sources and labelled so in the fixtures.
   - `provider.EditorProber`, implemented by both backends through one shared guest probe, `internal/provider/editors` (the `internal/provider/listeners` pattern). The idle check asks only a running machine it is about to stop; a probe that fails keeps that machine, leaves its idle clock alone and makes the check exit 1; a window found restarts the idle clock; `avr code`, `avr cursor` and `avr zed` restart it when they open the editor, so a first connection that downloads the server is not stopped mid-install.
