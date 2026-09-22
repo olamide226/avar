@@ -128,6 +128,7 @@ avr [selector flags] init                              (Post-MVP, §3.11)
 avr snapshot [NAME] | restore NAME | reset [--yes]     (Phase 2)
 avr isolate off [--yes]                                (Phase 2)
 avr destroy [--yes] [--all | --orphaned]               (Phase 2)
+avr update                                             (Post-MVP, Req 19, §3.12)
 
 Selector flags: --arch arm64|amd64   --distro NAME[:VERSION]   --isolate | --shared
 Forwarding flags (Phase 2): --env NAME[=V] (repeatable)  --env-file PATH  --ssh-agent
@@ -718,6 +719,62 @@ func Detect(projectDir string) ([]Finding, error)
 func Propose(findings []Finding, choice Choice, fallback types.Distro) Proposal // choice: the selector flags
 ```
 
+### 3.12 Self-update (`cmd/update.go`, `internal/update`) — Post-MVP
+
+**Purpose**: Req 19. `avr update` is the one command that brings avar up to date whatever route it arrived by. Everything it decides — which Install_Method this is, which archive belongs to this host, whether a download is the file the release says it is, and what order files are moved in — is a pure function in `internal/update`, so all of it is tested without a network and without replacing a binary. The command layer supplies the host: the real executable path, an `*http.Client`, and the real filesystem.
+
+#### Which install this is
+
+`update.Detect(goos, path, resolved)` reads the *resolved* path of the running executable, because both package managers put their real file somewhere else and link to it: Homebrew links `avr` from `<prefix>/bin` into `<prefix>/Caskroom/avar/<version>/`, and winget links `avr.exe` from `…\WinGet\Links` into `…\WinGet\Packages\olamide226.avar_…\`. Matching on the invoked path alone would call both of them a manual install and overwrite a file the package manager believes it owns.
+
+| Resolved path contains | Install_Method | What `avr update` does |
+|---|---|---|
+| a `Caskroom` directory (macOS) | `MethodHomebrewCask` | Prints `brew upgrade --cask avar` |
+| `…\WinGet\Packages\…`, or the file sits in `…\WinGet\Links` (Windows) | `MethodWinget` | Prints `winget upgrade olamide226.avar` |
+| anything else | `MethodArchive` | Verifies and replaces the binary itself |
+
+**avar prints those commands; it does not run them.** The reason is not squeamishness about `exec`:
+
+- On Windows the delegation cannot work from inside avar at all. `winget upgrade` replaces `avr.exe`, and a running image cannot be replaced, so winget run as a child of `avr update` would be asked to overwrite its own parent. avar would have to exit first, which is exactly "print the command".
+- Both commands can need elevation, can prompt for their own agreements, and take minutes with progress of their own. Wrapping them means either swallowing that or adding nothing to it, and Req 18.3's rule — say what needs elevation before acting — argues for the user starting it.
+- When it fails, the user sees Homebrew's or winget's own error rather than avar's account of it, which is the error that names the fix.
+
+The cost is one extra copy-and-paste, and the benefit is that avar never leaves a package manager's records describing a version that is not installed. Where the distinction matters to a script, delegating still exits 0: avar was asked how to update and answered.
+
+#### Updating an archive install
+
+```
+LatestRelease  →  pick archive  →  download checksums.txt  →  download archive (streamed through SHA-256)
+                                                                       ↓
+                       replace  ←  extract into the install directory  ←  compare
+```
+
+- **The release** comes from `https://api.github.com/repos/olamide226/avar/releases/latest` (`releases/latest` is the newest non-prerelease, non-draft release, so a prerelease never offers itself as an update). Bodies are read through an `io.LimitReader`; a non-200 is reported with its status, and 403 says the rate limit is the likely cause.
+- **The archive for this host** is `avar_<version>_darwin_all.tar.gz` on macOS and `avar_<version>_windows_<arch>.zip` on Windows, with the version written without its leading `v` — the naming `.goreleaser.yaml` produces. The expected name is computed and then *looked up in the release's asset list* rather than turned straight into a URL, so a release that stopped publishing this host's archive is an error naming what was looked for instead of a 404 later on.
+- **Verification happens before anything is unpacked.** `checksums.txt` is `<64 hex>  <name>` per line, and the archive is hashed as it is written to a temporary file, so nothing is held in memory and a truncated transfer fails the same comparison a tampered one does. An archive whose name is absent from `checksums.txt`, or whose line is malformed, is refused as loudly as a mismatch: an unverifiable download and a bad download are the same thing to a program that is about to execute it.
+- **Extraction takes named members only** — `avr` on macOS; `avr.exe`, `avar.exe` and `avrw.exe` on Windows — by exact base name, and writes each as `<installed path>.avr-new` in the *installed* directory, not in a temporary one. That is what makes the final rename atomic (same filesystem) and what makes a read-only or permission-denied install directory fail before any file has moved, with a message that says administrative rights may be what is missing (Req 19.8).
+- **Replacement** is `update.Replace`, whose only view of the filesystem is a four-method `FileOps`, so every ordering and every failure is a unit test.
+
+  - macOS renames the staged file over the installed one. `rename(2)` is atomic, and the running process keeps the old inode, so the update cannot leave a moment with no `avr` on the host.
+  - Windows cannot rename over a running image, so each target is renamed aside to `<name>.avr-old` first and the staged file is renamed into the freed name. All three Windows programs are done as one transaction — every target aside, then every replacement in — because a new `avr.exe` beside a stale `avrw.exe` is the broken idle check of Req 18.16 (#100), and beside a stale `avar.exe` it is Req 18.17's second command silently left on the old version. **Any failure is undone**: replacements already made are removed and every aside is renamed back, so the failed update leaves the version that was working.
+  - The aside file is removed by a *later* run, not by the one that created it, because the old image may still be mapped. `avr update` sweeps `*.avr-old` from the install directory before it starts, and so does the scheduled idle check, which is the one avar that runs regularly and never on the warm path.
+
+- **Refusals that come before any of this**: a version string that is not an exact release version (`dev`, or `git describe`'s `v0.12.12-3-gabc`) means this binary is not a release and is not avar's to replace; a binary under any temporary directory (`inTemporaryDir`, the guard from task 47) is one that will not be there later. Both exit non-zero naming the reason (Req 19.9).
+
+#### What moves with the binary
+
+A member whose name matches the running binary replaces that file under whatever name it is installed as, which is not always the archive's — somebody may have saved it as something else — and the rest are installed beside it under their own names, which is where avar looks for `avrw.exe`.
+
+The idle-check registration is the only thing on either host that records where `avr` lives, and it already follows a moved binary: `ensureIdleScheduler` compares the stamp against the current executable on the next environment-creating invocation and re-registers when it differs (§3.8). A self-update in place does not change the path at all, so on that path there is nothing to re-register. Editor SSH material names an alias and a host, never avar; the state store names machines and projects. Nothing else on the host holds the path.
+
+#### Signing
+
+Released binaries are unsigned (README). A file fetched by avar itself carries no `com.apple.quarantine` attribute — that is set by the downloading application, and Homebrew strips it for the cask — so a self-updated `avr` is not stopped by Gatekeeper the way a tarball downloaded in a browser is; likewise a file avar writes on Windows gets no mark of the web, so SmartScreen does not intervene. This is a statement about how the file arrived, not a claim that the binary is signed, and the README says so in both places.
+
+#### Not built
+
+Nothing tells the user a newer release exists except `avr update` (Req 19.8). A check on any other command would put an HTTPS round trip on the warm path Req 17.1 budgets at 500 ms; doing it safely needs a cache, an offline-silent path and an opt-out in `config.toml`, which is a feature of its own rather than a line in this one.
+
 ## 4. Data Models
 
 ```go
@@ -890,6 +947,12 @@ _For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host'
 
 *Added with Requirement 15.5.* The third clause is not decoration. A property stating only "oversized sizes are refused before machine work" is satisfied by refusing everywhere, which would lock a user out of an environment that exists, or out of WSL, over a setting that does nothing there (docs/lessons.md, "A property that quantifies over part of the design gives false confidence").
 
+### Property 26: Update integrity and ownership
+_For any_ release response and _for any_ archive bytes, `avr update` SHALL write no file into the install directory unless the archive's SHA-256 equals the checksum that release's `checksums.txt` records for that archive's exact name; a missing, malformed or differing checksum, and a body that ends early, SHALL each leave the host byte-for-byte as it was. _For any_ Install_Method a package manager owns, `avr update` SHALL make no network request and no filesystem change. _For any_ failure during replacement, the set of installed binaries afterwards SHALL be exactly the set that was installed before, and on Windows `avr.exe`, `avar.exe` and `avrw.exe` SHALL all come from the same archive or all be unchanged.
+**Validates: 19.2, 19.3, 19.5, 19.6, 19.7**
+
+*Added with Requirement 19.* The second clause is the one worth stating separately: verifying a download well and then unpacking it over a cask's file is still the failure Req 19.2 exists to prevent, and a property that quantified over the self-update path alone would be green while it happened.
+
 ## 6. Error Handling
 
 **Principles**: every failure names (what avar was doing) + (underlying cause, with the tail of the relevant log) + (one suggested next step). Guest command failures are *not* avar errors — stderr and exit code pass through untouched.
@@ -945,6 +1008,13 @@ _For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host'
 | `avr reset` or `avr destroy` without `--yes`, and stdin is not a terminal | `App.interactive` (the same check `init` and the grants review use), after the summary is printed | Print the summary; delete nothing; exit 1 saying a confirmation must be typed at a terminal and to add `--yes` otherwise. A name piped on stdin does not confirm, because nobody can have read the summary it answers. At a terminal, end of input cancels exactly as a wrong answer does: "Nothing was changed/destroyed", exit 0 (Req 5.6, 5.7, 10.3). |
 | `avr init` without a terminal, or the user does not confirm | TTY check / answer | Print the proposal; write nothing. Exit 1 without a terminal, saying to run `avr init` from one; exit 0 when declined (Req 15.2, Property 24). |
 | Ctrl-C during provisioning | context cancellation | Stop the provider subprocess, reconcile/clean only the journaled partial target, and exit 130. |
+| `avr update` where a package manager owns the binary | resolved executable path under `Caskroom` or `WinGet\Packages`/`WinGet\Links` | Name the owner, print `brew upgrade --cask avar` or `winget upgrade olamide226.avar`, and exit 0. Run no package-manager command, make no network request, change no file: overwriting a managed file leaves its records claiming a version that is not installed (Req 19.2, 19.3, Property 26). |
+| The latest release cannot be fetched | non-200 from the releases API, or a transport error | Exit 1 naming the repository and the status or cause; for 403 say the API rate limit is the usual reason and that the release page can be downloaded by hand. Nothing is downloaded or changed (Req 19.9). |
+| No archive in the release for this host | the computed name is absent from the release's asset list | Exit 1 naming the version, the archive looked for, and the assets the release does carry. Never guess a URL (Req 19.9). |
+| Downloaded archive does not match `checksums.txt`, or has no line there | SHA-256 computed while streaming to a temporary file, compared with the parsed `checksums.txt` | Exit 1 saying the download was discarded and avar was not changed, naming the archive and both hashes. A body that ended early fails the same comparison. Never unpack an archive that was not verified (Req 19.5, Property 26). |
+| The install directory cannot be written | staging `<name>.avr-new` beside the installed binary fails | Exit 1 naming the directory and the cause, and saying that a directory owned by an administrator needs an elevated shell. Nothing has moved at this point (Req 19.6, 19.8). |
+| Replacement fails part-way (Windows rename aside or rename in) | `FileOps.Rename` returns an error | Undo: remove replacements already made, rename every aside back, and exit 1 saying which version is still installed and that the host's programs were left in step. If an aside cannot be renamed back, say exactly which file is where, because that is the one case a user must repair by hand (Req 19.6, 19.7). |
+| `avr update` from a development build or a temporary directory | version string is not an exact release version; `inTemporaryDir` | Exit 1 saying this build is not a release avar may replace, or that a binary in a temporary folder is not one to install into, and how to install a release instead. Nothing is downloaded (Req 19.9). |
 
 ## 7. Testing Strategy
 
@@ -964,12 +1034,14 @@ _For any_ `.avr.toml` and _for any_ host capacity, when `cpus` exceeds the host'
 - EditorTarget rendering proves WSL emits `wsl+<name>` with no SSH material and Lima behavior remains unchanged (Property 17).
 - Editor argument construction for VS Code, Cursor and Zed, including Zed's ssh:// URL surviving paths with spaces, `#`, `?` and non-ASCII, and the host in that URL resolving through avar's Include to the stanza's endpoint with the real `ssh -G` (Req 13.5–13.8).
 - Native-workspace advisory heuristic and dismissal persistence (Property 20).
+- Update: Install_Method detection over real cask, winget package, winget link and plain paths for both hosts; the archive name for each (goos, goarch); `checksums.txt` parsing including a missing and a malformed line; a download that ends early; and `update.Replace` driven through a `FileOps` double that fails each step in turn, asserting the undo leaves exactly the binaries that were there (Property 26). No test makes a network request or touches the running binary.
 - Editor-window detection against real process listings from a Lima guest with VS Code 1.135.0 and Zed 1.20.2 windows attached, closed, and dropped, plus a fixture labelled as constructed for the WSL and Cursor layouts nobody has captured; flow tests for keeping, probing only about-to-stop machines, probe failure, and the idle clock (Req 5.10, 5.11, Property 11).
 
 **Integration tests — FakeProvider/FakeRunner**:
 
 - Full provider-neutral command flows (`avr` first-run, mount-add flow, `stop --all`, isolation remembering, reset scoping, editor launch) assert call sequences without a VM. Project-configuration flows assert that unapproved packages and variables never reach `Shell`, that approval is never recorded without a terminal, and that sizes reach `EnsureMachine` only for an isolated environment on a `MachineSizer` (Property 23); that a size over the host's capacity is refused with no provider operation but `HostCapacity` in the shell and editor flows, and with no delete or create in `reset`, and blocks nothing where it cannot apply (Property 25). Editor flows put the test binary on PATH under the editor's name and assert the argv it was actually executed with.
 - WSL2Provider tests run on ordinary Windows CI against a fake `wsl.exe` runner and temporary State_Dir, asserting exact argv arrays for import, selective mounts, shell, terminate, export/import and unregister. Tests reject any use of `wsl --shutdown` and any operation against a non-recorded distro.
+- `avr update` flows against a recorded HTTP double and a temporary install directory: the two package-manager installs print their command and make no request and no write; an archive install up to date downloads no archive; a newer one is verified, unpacked and replaced; and a mismatched checksum leaves the directory unchanged (Property 26).
 - Static import/lint rules fail if WSL-specific packages appear in `cmd/` or `internal/resolve` (Property 21).
 
 **End-to-end tests — real Lima** (`make e2e` on a Mac with virtualization and `limactl`; not in CI):
@@ -1005,4 +1077,4 @@ These last five run against a state directory *and* a Lima home of their own (`A
 
 Windows hosts through avar-owned WSL 2 distributions (Req 18) and Linux-native workspace mode on the WSL backend (Req 14) have shipped. Still out of scope on Windows: Windows Server, Windows 10, WSL 1 execution, adoption or management of user-owned WSL distributions, automatic mutation of global `%UserProfile%\.wslconfig`, Docker Desktop integration, and Windows-native containers.
 
-Not planned: Linux-native workspace mode on Lima, which already shares projects at native speed (Req 14.4); further providers (OrbStack, SSH, cloud), since WSL 2 already showed a second backend fits behind the Provider interface; and a VS Code terminal-picker extension, which has no requirement yet. Out of scope on any host: Linux hosts and GUI (Req 17.6).
+Not planned for now: a background or on-command check for a newer release, which Req 19.8 forbids because it would put a network call on the warm path Req 17.1 budgets (§3.12). Not planned: Linux-native workspace mode on Lima, which already shares projects at native speed (Req 14.4); further providers (OrbStack, SSH, cloud), since WSL 2 already showed a second backend fits behind the Provider interface; and a VS Code terminal-picker extension, which has no requirement yet. Out of scope on any host: Linux hosts and GUI (Req 17.6).

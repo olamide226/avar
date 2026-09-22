@@ -135,6 +135,7 @@ var subcommands = []string{
 	"status",
 	"stop",
 	"sync",
+	"update",
 	"version",
 	"zed",
 }

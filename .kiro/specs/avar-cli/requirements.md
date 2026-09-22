@@ -16,7 +16,7 @@ On macOS, avar is a thin product/UX layer over [Lima](https://lima-vm.io) (Apach
 
 avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or a VM manager. It competes on the mental model, not on virtualization.
 
-**Scope phases** (traceability for tasks): Requirements 1–9 are **MVP Phase 1**, Requirements 10–13 are **MVP Phase 2**, Requirements 14–16 and 18 are **Post-MVP**. Requirement 17 (non-functional) applies to all phases. These labels record delivery order, not current support: the MVP has shipped, and so has Windows host support (Requirement 18).
+**Scope phases** (traceability for tasks): Requirements 1–9 are **MVP Phase 1**, Requirements 10–13 are **MVP Phase 2**, Requirements 14–16, 18 and 19 are **Post-MVP**. Requirement 17 (non-functional) applies to all phases. These labels record delivery order, not current support: the MVP has shipped, and so has Windows host support (Requirement 18).
 
 ## Glossary
 
@@ -36,6 +36,7 @@ avar is explicitly **not** a Docker wrapper, a Dev Container implementation, or 
 - **Provider**: The backend that implements environment lifecycle and execution operations. LimaProvider serves macOS hosts and WSL2Provider serves Windows hosts.
 - **State_Dir**: avar's private metadata directory on the host (`~/.avr/` on macOS; a platform-appropriate per-user application-data directory on Windows) containing project records, environment registry, generated connection configuration, and logs.
 - **Idle_Timeout**: The period with no active avar sessions and no connected editor window (5.10) after which a machine is automatically stopped.
+- **Install_Method**: How this copy of avar was put on the host — a Homebrew cask, a winget portable package, or a release archive unpacked by hand — determined from the resolved path of the running executable (Requirement 19).
 
 ---
 
@@ -391,3 +392,31 @@ unaffected and works on every environment.
 18.16 WHILE avar's scheduled idle check runs on Windows THE system SHALL NOT show a window or take keyboard focus, and SHALL NOT require elevation or a stored password to register it; an existing registration that would show a window SHALL be replaced on the next environment-creating invocation, and WHEN avar cannot register a check that shows no window THEN it SHALL register none, remove one that would, and tell the user once that idle auto-stop is off and how to turn it on. *(Added 2026-09-18, maintainer report: the check opened a console window on every run.)*
 
 18.17 THE Windows distribution SHALL make the command available as `avar` as well as `avr` — from the winget package and from the downloadable archive alike — with `avr` remaining the canonical name in help output, error messages and documentation; and WHERE avar is invoked under either name THE CLI SHALL make and keep one idle-check registration between them rather than one per name. *(Added 2026-09-22, maintainer report: `avar true` on Windows answered "The term 'avar' is not recognized", while the macOS cask has linked both names since the first release.)*
+
+### Requirement 19: Keeping avar Up To Date (`avr update`) — *Post-MVP*
+
+**User Story:** As a user, I want one command that brings avar up to date, so that I do not have to remember how I installed it, and so that I am never handed a binary nobody checked.
+
+#### Acceptance Criteria
+
+19.1 WHEN a user runs `avr update` THEN THE CLI SHALL determine the Install_Method from the resolved path of the running executable, name it in its output, and take no action other than the one this requirement gives for that method.
+
+19.2 WHERE the running executable resolves inside a Homebrew cask's staged directory (`…/Caskroom/avar/…`) THE CLI SHALL report that Homebrew owns this installation, print `brew upgrade --cask avar` as the command to run, execute no package-manager command itself, download nothing, replace nothing, and exit 0.
+
+19.3 WHERE the running executable resolves inside the Windows Package Manager's package directory (`…\Microsoft\WinGet\Packages\olamide226.avar_…`), including when it was reached through a link in `…\WinGet\Links`, THE CLI SHALL report that winget owns this installation, print `winget upgrade olamide226.avar`, execute no package-manager command itself, download nothing, replace nothing, and exit 0.
+
+19.4 WHERE avar was installed from a release archive THE CLI SHALL query the latest release of `github.com/olamide226/avar` over HTTPS; and IF that release is not newer than the running version THEN THE CLI SHALL say avar is up to date, naming the version, download no archive and exit 0.
+
+19.5 WHEN a newer release is to be installed THEN THE CLI SHALL download the release archive for this host's operating system and architecture together with that release's `checksums.txt`, SHALL compare the SHA-256 of what it downloaded against the checksum that file records for that archive, and SHALL NOT unpack or install an archive whose checksum is missing, unreadable or different — which is also how a truncated or altered download is refused.
+
+19.6 WHEN a verified archive has been unpacked THEN THE CLI SHALL put the new binary in place by renaming a completely written file over the installed one; and WHERE the host cannot overwrite the image of a running program (Windows) THE CLI SHALL first rename the installed file aside and SHALL put it back if the replacement cannot be completed. IF any step fails THEN a working avar SHALL remain installed and THE CLI SHALL say what was changed and what was not.
+
+19.7 WHERE the release ships more than one program for this host — `avrw.exe`, the windowless idle check (Requirement 18.16), and `avar.exe`, the command under the product's own name (Requirement 18.17), beside `avr.exe` — THE CLI SHALL replace all of them from the same verified archive or none of them, and SHALL remove files left aside by an earlier replacement on a later run rather than while they may still be in use.
+
+19.8 THE CLI SHALL contact the network, download, verify, unpack or replace nothing except while the user is running `avr update`; no other command SHALL make a network request to learn whether a newer release exists. WHERE an update needs a package manager, administrative rights, or a shell restarted before the new version is found, THE CLI SHALL say so rather than attempt it.
+
+19.9 IF THE CLI cannot establish which release is current, which archive belongs to this host, or that this installation is one it may replace — including a build with no release version, and a binary running from a temporary directory — THEN THE CLI SHALL refuse with a non-zero exit, name what it could not establish, and change nothing.
+
+19.10 THE name `update` SHALL be an avar subcommand (Requirement 2.6), so `avr update` never reaches the guest and `avr -- update` runs a guest command of that name.
+
+*(Added 2026-09-22, maintainer request: there was no built-in way to update avar, and no way to learn that a newer release existed. A newer-release notice on other commands is deliberately not part of this requirement: 19.8 forbids it, because a network call on the warm path would break 17.1.)*
