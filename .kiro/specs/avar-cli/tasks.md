@@ -426,6 +426,7 @@ here so the phase's history matches what is on `main`.
   - **Editor detection off macOS (task 53, REQ-5.10, REQ-5.11).** VS Code's WSL layout, Zed through `wsl.exe`, and Cursor on either host are matched from constructed fixtures, not captured ones. Open each editor on a real environment and confirm `avr internal idle-check` keeps it running, then closes correctly once the window is gone.
   - **Uninstall (task 48).** `brew uninstall --zap avar` removes the launchd agent; a plain `brew uninstall` leaves it, as intended; on Windows the documented `schtasks /Delete` before `winget uninstall` leaves nothing behind.
   - Tick each item as it is checked, with the host and versions used. A failure found here becomes its own fix task.
+  - **Issue #112** restates every WSL-dependent item here as something an engineer with a Windows host can pick up one at a time, and adds the end-to-end tests this half is missing (design §7). The issue is where somebody with the hardware will look; this list stays the spec's own record. Tick in both.
   - _Requirements: 5.2, 5.9, 5.10, 5.11, 13.5, 13.6, 15.1, 15.3, 16.2, 18.9, 18.16_
   - _writes: e2e/** (tests that capture what was verified), this file_
 
@@ -510,7 +511,7 @@ here so the phase's history matches what is on `main`.
   - _Properties: 11_
   - _writes: internal/provider/editors/**, internal/provider/provider.go, internal/provider/lima/editorprobe.go, internal/provider/lima/editorprobe_test.go, internal/provider/lima/portdiag.go, internal/provider/wsl2/editorprobe.go, internal/provider/wsl2/editorprobe_test.go, internal/provider/wsl2/wsl2_test.go, internal/provider/fake/fake.go, internal/session/session.go, internal/session/session_test.go, cmd/internal_idle.go, cmd/idle_editors.go, cmd/idle_editors_test.go, cmd/code.go, site/commands/{code,cursor,zed}.md, site/design.md, site/syntax/config-toml.md, site/troubleshooting.md, docs/lessons.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
-- [ ] 54. Cover the recently shipped behaviour end to end
+- [x] 54. Cover the recently shipped behaviour end to end  _(PR #106; full `make e2e` run against real Lima, 915.8 s, exit 0. The WSL half's own test is written but has never executed — issue #112)_
   - Tasks 47–53 shipped with unit and integration coverage only. The end-to-end suite still described the product as it was before them: nine Lima tests, every one of them a guest command. This adds the behaviour a user meets for each, against the real backend.
   - Lima half: strict `config.toml` (which commands refuse, which carry on, that `help` and `version` are untouched); an oversized `.avr.toml` refused before any machine work, with the host's real CPU count and memory read at run time rather than written down; `reset` and `destroy` refusing a piped answer and leaving the environment running; `avr init` writing nothing without a terminal and never replacing an existing file; and idle auto-stop — idle stopped, live session never stopped, editor window kept and then released.
   - WSL half: `--ssh-agent` refused with exit 2 and the guest command not run. It belongs here rather than on macOS because Lima forwards the agent and has nothing to refuse.
