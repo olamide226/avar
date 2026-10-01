@@ -1060,14 +1060,31 @@ These last five run against a state directory *and* a Lima home of their own (`A
 
 **End-to-end tests — real WSL 2** (the same `make e2e`, which selects this half by build tag; runs locally on Windows with WSL 2, and in CI on a GitHub-hosted Windows runner nightly and on demand, not on ordinary pull requests):
 
-- Record `wsl --list --quiet` before and after; verify non-avar distributions are byte-for-byte the same set and state after every test (Properties 6, 16).
-- Cold `avr true`, warm exit-42 propagation, interactive smoke, Ctrl-C, and piped stdio (Properties 3, 8).
-- Invoke from nested `C:\...` paths with spaces/Unicode, verify guest cwd mapping, and modify files from both sides (Properties 1, 14).
-- Confirm automatic drives are not mounted by avar configuration and only registered project mappings appear (Property 5).
-- Snapshot/restore and isolated reset restore guest package state while host project hashes remain unchanged; interrupt a restore after the unregister and verify that re-running the same command recovers, since restore is retryable rather than rolled back (Properties 7, 10, 16).
-- Guest server on port 3000 is reachable from Windows localhost; a forced conflict remains diagnostic-only (Property 19).
-- Assert guest environment lacks a Windows secret marker and Windows PATH entries (Property 4).
+Written, and run whenever this half runs:
+
+- Prerequisites: a host with no WSL, and one whose WSL is too old, are both refused with the command to run, and nothing is registered on the way to refusing (Req 18.3).
+- Cold `avr true` provisions and runs; the guest's exit status is avar's, over the table 0/1/42/255 (Properties 3, 8).
+- The session's account is the user's rather than root, with passwordless sudo (Req 1.4).
+- The guest starts in the project at the Linux path the provider planned, no translated Windows path; the share is live in both directions (Req 18.5, Property 1).
+- Automatic drives are not mounted and only registered project mappings appear, read from real `/proc/mounts` rather than through avar's own filter (Req 9.3, Property 5).
+- The guest environment lacks a Windows secret marker and Windows PATH entries, and an explicitly forwarded variable does arrive (Property 4, Req 12.1).
+- The command reaches the guest as the arguments the user typed, unsplit and unquoted (Req 2.5).
+- A second project is registered without restarting the environment, and the first stays registered (Req 6.4).
+- A foreign architecture is refused, naming the one that is supported (Req 18.6).
+- `avr status` names the environment and the project; `avr stop --all` leaves a distribution avar does not own running, held open by a real process for the duration so the check cannot pass by accident (Req 5.1, Property 6).
+- Linux-native workspaces: the session runs off the Windows filesystem, changes sync back only after review, a conflict overwrites neither copy, build output does not travel, and native mode adds no mounts (Req 14.1–14.3, Property 5).
+- `avr destroy --all --yes` removes the distribution from WSL itself and leaves host project files intact (Req 10.3, Properties 10, 16).
 - `avr --ssh-agent` is refused with exit 2 before any machine work, and the guest command it carried does not run — the flag is a credential grant, and WSL is the host where it cannot be honoured, so this half is where the refusal is worth asserting against a real backend (Req 12.3).
+
+Specified for this half and **not yet written** — tracked in issue #112, which also carries the Windows behaviour that has no end-to-end coverage at all:
+
+- Record `wsl --list --quiet` before and after *every* test and verify non-avar distributions are byte-for-byte the same set and state (Properties 6, 16). Today one test proves this for `avr stop --all`, which is the command most able to reach too far, rather than the suite proving it throughout.
+- Interactive smoke, Ctrl-C and piped stdio (Property 8). The Lima half drives a pseudo-terminal through `script(1)`; nothing here does, and `docs/lessons.md` records that an untested *shape* of execution is where a feature turns out to be missing.
+- Invocation from nested `C:\...` paths with spaces and Unicode (Properties 1, 14). Every project directory the suite makes is plain ASCII with no spaces, so the canonicalization these properties are about is exercised only by unit tests.
+- Snapshot/restore and isolated reset, including a restore interrupted after the unregister (Properties 7, 10, 16).
+- A guest server on port 3000 reachable from Windows localhost, and a forced conflict staying diagnostic-only (Property 19).
+- Strict `config.toml`, the `reset`/`destroy` confirmation, `avr init`, and idle auto-stop with a live session, all of which the Lima half now covers and which are host-independent by design (Req 17.7, 5.5, 5.6, 10.3, 15.2, Property 11). Isolating them needs an answer this half does not have: `wsl --list` is global, so there is no `LIMA_HOME` equivalent to hide the developer's own distributions from a test that stops things.
+- `.avr.toml` `cpus`/`memory` blocking nothing here, since WSL2Provider is not a `MachineSizer`, while the one-time notice still says the setting cannot apply (Req 15.5, Property 25).
 
 **Build tests**: GoReleaser/cross-compilation produces Windows x64 and Arm64 `avr.exe` artifacts; smoke `avr --help` and grammar tests run on Windows CI. Release checks verify archive checksums and prohibit a Lima runtime dependency in Windows packaging.
 
