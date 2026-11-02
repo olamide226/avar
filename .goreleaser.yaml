@@ -235,8 +235,27 @@ homebrew_casks:
       - avr
     # Keep `avr` as the canonical command, but also link the same executable
     # under the product name for people who naturally type `avar`.
+    #
+    # The quarantine removal is here rather than in `hooks.post.install`
+    # because GoReleaser renders that hook as a `postflight` stanza, which
+    # Homebrew deprecated in 5.1.14 (May 2026) in favour of `postflight_steps`
+    # and warns about on every install. There is no GoReleaser setting for the
+    # newer stanza, so the block is written out here instead. `run` and the
+    # `{{ "{{staged_path}}" }}` token are Homebrew's declarative step
+    # vocabulary; the command and its arguments are the same ones the hook
+    # used. GoReleaser renders this block as a Go template, so Homebrew's own
+    # `{{ "{{...}}" }}` token has to be escaped to survive it.
+    #
+    # Released binaries are unsigned, so the quarantine attribute has to go or
+    # Gatekeeper refuses the first run.
     custom_block: |
       binary "avr", target: "avar"
+
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-d", "-r", "com.apple.quarantine", "{{ "{{staged_path}}" }}/avr"]
+        end
+      end
     homepage: https://github.com/olamide226/avar
     description: Run your current directory in Linux
     # Lima is avar's virtualization backend. Declaring it here is what
@@ -261,14 +280,6 @@ homebrew_casks:
       avar registers a background idle check (launchd agent com.avar.idle-check)
       the first time it creates an environment. `brew uninstall --zap avar`
       removes it with avar; see the README's Uninstall section.
-    # Released binaries are unsigned, so strip the quarantine attribute that
-    # would otherwise make Gatekeeper refuse the first run.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system "xattr", "-d", "-r", "com.apple.quarantine", "#{staged_path}/avr"
-          end
 
 # The Windows Package Manager. `winget install olamide226.avar` installs the
 # same zip archives the release publishes, as a portable package: winget unpacks

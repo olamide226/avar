@@ -540,6 +540,16 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 18.17, 18.14, 18.15, 17.1, 5.5_
   - _writes: .goreleaser.yaml, cmd/internal_idle.go, cmd/internal_idle_test.go, cmd/idle_task_test.go, README.md, site/design.md, site/troubleshooting.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
 
+- [ ] 57. Stop the Homebrew cask printing a deprecation warning on every install
+  - Maintainer report (2026-11-02): `brew` warns ``Calling `postflight` is deprecated! Use `postflight_steps` instead.`` and names `Casks/avar.rb:25`, which is the quarantine removal.
+  - The stanza comes from GoReleaser's `hooks.post.install`, which it renders as `postflight`. Homebrew replaced that with a declarative `postflight_steps` block in 5.1.14 (May 2026, read from the local Homebrew checkout); GoReleaser has no setting for the newer stanza, so the block is written through `custom_block` instead and the hook is dropped.
+  - The step is `run "/usr/bin/xattr", args: [...]` with Homebrew's `{{staged_path}}` token. GoReleaser renders `custom_block` as a Go template, so the token is escaped to survive it.
+  - Same command, same arguments, so behaviour is unchanged. `xattr -d -r` exits 0 when the attribute is absent (measured), so the step's default "must succeed" does not turn a missing attribute into a failed install the way it would for a missing path.
+  - Verified without touching the installed cask: `brew style` on the generated file no longer reports `Cask/InstallSteps` (its only non-autocorrectable offence), and a throwaway cask in a scratch tap proved `postflight_steps`, `run` and `{{staged_path}}` execute — the step's marker file landed in the Caskroom. The scratch cask and tap were removed. Left behind: `Cask/StanzaOrder`, autocorrectable and invisible to users, because `custom_block` is emitted above `version`.
+  - Done when a release has updated the tap and `brew upgrade --cask avar` prints no deprecation warning.
+  - _Requirements: 8.5_
+  - _writes: .goreleaser.yaml_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.
