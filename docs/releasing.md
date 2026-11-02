@@ -73,7 +73,29 @@ passes and the pull request merges. The first submission of the package also
 gets a human review. If validation fails, the pull request says why: fix the
 cause in `.goreleaser.yaml`, and the next release submits a corrected manifest.
 Do not edit manifests by hand in the fork, because the next release overwrites
-them.
+them — unless submissions are paused and an already-open pull request needs a
+fix, which is the one case where the hand edit is not overwritten. Say in a
+comment what changed, so a reviewer does not have to diff it.
+
+### The manifest version is GoReleaser's, not ours
+
+`ManifestVersion` in the generated files is hardcoded in GoReleaser's winget
+pipe; `.goreleaser.yaml` has no field for it. Microsoft deprecates older
+manifest versions on their own schedule, and when a submission uses a
+deprecated one their bot labels the pull request `Manifest-Version-Deprecated`
+and `Needs-Author-Feedback` and stops validating it.
+
+This happened on 2026-10-30 to the 0.14.0 submission, which GoReleaser v2.17.1
+had written at 1.12.0 against a repository that now requires 1.28.0. The fix
+was to edit the three files in the fork branch — bump `ManifestVersion` and the
+three `$schema` comment lines, change nothing else — and confirm each file
+still validates against its 1.28.0 schema.
+
+Before restoring submissions, check which manifest version the GoReleaser in
+use emits and whether `microsoft/winget-pkgs` still accepts it. At the time of
+writing, 1.28.0 appears only in a GoReleaser v2.20.0 nightly, so an automated
+submission would be generated at a deprecated version and need the same hand
+edit.
 
 Patch releases are not submitted. Each submission is reviewed by people at
 Microsoft, and releasing on every `fix:` merge once opened five pull requests
