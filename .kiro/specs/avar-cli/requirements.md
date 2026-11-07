@@ -393,6 +393,8 @@ unaffected and works on every environment.
 
 18.17 THE Windows distribution SHALL make the command available as `avar` as well as `avr` — from the winget package and from the downloadable archive alike — with `avr` remaining the canonical name in help output, error messages and documentation; and WHERE avar is invoked under either name THE CLI SHALL make and keep one idle-check registration between them rather than one per name. *(Added 2026-09-22, maintainer report: `avar true` on Windows answered "The term 'avar' is not recognized", while the macOS cask has linked both names since the first release.)*
 
+18.18 WHERE the host's `wsl.exe` does not offer the option avar's platform-only install depends on THE CLI SHALL NOT run that install, SHALL instead offer `wsl --update`, which installs WSL from the Microsoft Store and creates no distribution of its own, and SHALL NOT fall back to a bare `wsl --install`, which on such a build would also install a Linux distribution the user did not ask for; AND the manual instructions avar prints when it does not act SHALL name first a command that host's `wsl.exe` accepts. *(Added 2026-11-07, winget moderator report during manual validation of the package submission: on a Windows image whose `wsl.exe` predates `--no-distribution`, avar offered exactly that flag, the tool answered "unrecognized option: no-distribution", avar printed its entire usage text and failed with `exit status 0xffffffff`, and then advised running the same command again.)*
+
 ### Requirement 19: Keeping avar Up To Date (`avr update`) — *Post-MVP*
 
 **User Story:** As a user, I want one command that brings avar up to date, so that I do not have to remember how I installed it, and so that I am never handed a binary nobody checked.

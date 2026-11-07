@@ -550,6 +550,16 @@ here so the phase's history matches what is on `main`.
   - _Requirements: 8.5_
   - _writes: .goreleaser.yaml_
 
+- [ ] 58. Offer only the WSL setup command the host's `wsl.exe` accepts
+  - **Found outside the project, on a machine nobody here has.** A winget moderator ran manual validation of the package submission on 2026-11-07 and pasted the transcript into PR #438967: `avar` → "WSL is not installed, or is too old" → `y` → `--install: unrecognized option: no-distribution`, the whole of `wsl --help`, and `avr: wsl --install failed: exit status 0xffffffff`. avar then told him to run `wsl --install --no-distribution`, the command that had just failed. His question was "Is this expected?".
+  - **The bug is that the remedy ships inside the thing being installed.** `--no-distribution` belongs to the `wsl.exe` Microsoft distributes as a Store package; the copy in System32 on a machine that has never updated WSL predates it. That machine is exactly the one the "cannot report a version" branch exists for, so the flag was missing in precisely the case that reached for it (REQ-18.18).
+  - The install branch now reads `wsl --help` first and picks the action that build advertises: `--install --no-distribution` where the option is listed, `--update` where it is not, because every build carrying `--install` has `--update` and `--update` installs the Store package. An unreadable help text takes the `--update` route: a bare `wsl --install` is never the fallback, since on these builds it installs a Linux distribution avar does not own (REQ-18.7). The probe is one subprocess, on a path that is already about to change the machine, and never on the warm path.
+  - The manual instructions are no longer one constant. `WSLNotInstalledError.Instructions` carries the text that fits the host, and the older-build text leads with `wsl --update`, naming the install only as the step to try afterwards with the `wsl.exe` the update brings.
+  - **Not verified on the machine that found it**, and it cannot be from here: the fix is exercised by unit tests over both help texts (the inbox fixture is the moderator's own output) and by three end-to-end cases that stub a `wsl.exe` whose `--help` decides the route. Confirmation that the real message is right on a real old-WSL host belongs to task 43 and issue #112.
+  - `docs/lessons.md` records why twenty-nine green unit tests missed this: the fake `wsl.exe` accepted any argv, so it could not express "this build does not have that option".
+  - _Requirements: 18.18, 18.3, 18.7_
+  - _writes: internal/deps/wsl.go, internal/deps/wsl_test.go, e2e/wsl_prereq_test.go, README.md, site/platforms.md, site/troubleshooting.md, docs/lessons.md, .kiro/specs/avar-cli/requirements.md, .kiro/specs/avar-cli/design.md, .kiro/specs/avar-cli/tasks.md_
+
 ## Notes
 
 - Each task includes a `_writes:` manifest for file conflict detection.

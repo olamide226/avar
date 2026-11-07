@@ -38,6 +38,37 @@ func versionOutput(version string) []byte {
 		"Windows version: 10.0.26200.8875\r\n")
 }
 
+// modernWSLHelp is `wsl --help` on a build that can install the WSL platform
+// without a distribution. Only the one flag matters to avar; the rest is here so
+// the fixture is recognisably the real output and not the string being searched
+// for.
+const modernWSLHelp = "Usage: wsl.exe [Argument] [Options...] [CommandLine]\r\n" +
+	"\r\n" +
+	"    --install [Options]\r\n" +
+	"        Install additional Windows Subsystem for Linux distributions.\r\n" +
+	"        Options:\r\n" +
+	"            --distribution, -d [Argument]\r\n" +
+	"            --no-launch, -n\r\n" +
+	"            --no-distribution\r\n" +
+	"    --update [Options]\r\n"
+
+// inboxWSLHelp is `wsl --help` on the Windows component that predates that flag:
+// its --install offers a distribution, a launch switch, and nothing else.
+//
+// This is not invented. It is the install section of the usage text a winget
+// moderator's Windows image printed on 2026-11-07 when avar ran
+// `wsl --install --no-distribution` on it, trimmed to the part avar reads.
+const inboxWSLHelp = "Usage: wsl.exe [Argument] [Options...] [CommandLine]\r\n" +
+	"\r\n" +
+	"    --install [Options]\r\n" +
+	"        Install additional Windows Subsystem for Linux distributions.\r\n" +
+	"        For a list of valid distributions, use 'wsl --list --online'.\r\n" +
+	"        Options:\r\n" +
+	"            --distribution, -d [Argument]\r\n" +
+	"            --no-launch, -n\r\n" +
+	"    --update [Options]\r\n" +
+	"        If no options are specified, download and install WSL from the Microsoft Store.\r\n"
+
 // utf16LE encodes s the way wsl.exe writes to a redirected stream: UTF-16
 // little-endian with no byte-order mark.
 func utf16LE(s string) []byte {
@@ -73,6 +104,11 @@ type fakeWSL struct {
 	afterSetupErr error
 	// setupErr fails the install or update itself.
 	setupErr error
+	// helpOut is what `wsl --help` writes. Nil means modernWSLHelp: most tests
+	// are not about the age of wsl.exe, and every current Windows has the flag.
+	helpOut []byte
+	// helpErr fails `wsl --help`, modelling a build avar cannot interrogate.
+	helpErr error
 
 	interactive   bool
 	confirmAnswer bool
@@ -92,6 +128,20 @@ func (f *fakeWSL) Output(_ context.Context, name string, args ...string) ([]byte
 
 func (f *fakeWSL) Stream(_ context.Context, w io.Writer, name string, args ...string) error {
 	f.calls = append(f.calls, wslCall{kind: "stream", argv: append([]string{name}, args...)})
+
+	// `wsl --help` is a question, not a change. It comes through Stream only
+	// because usage text goes to stdout on some builds and stderr on others.
+	if len(args) == 1 && args[0] == "--help" {
+		help := f.helpOut
+		if help == nil && f.helpErr == nil {
+			help = utf16LE(modernWSLHelp)
+		}
+		if _, err := w.Write(help); err != nil {
+			return err
+		}
+		return f.helpErr
+	}
+
 	f.setupRan = true
 	if f.setupErr != nil {
 		return f.setupErr
@@ -153,13 +203,21 @@ func (f *fakeWSL) ran(args ...string) bool {
 }
 
 // assertNoSetup fails if avar changed the machine.
+//
+// The capability probe is excluded by name rather than by kind: `wsl --help`
+// runs through Stream, and it writes nothing and installs nothing.
 func assertNoSetup(t *testing.T, f *fakeWSL) {
 	t.Helper()
 	for _, c := range f.calls {
-		if c.kind == "stream" {
+		if c.kind == "stream" && !isHelpProbe(c) {
 			t.Errorf("avar changed the machine without a usable consent: %s", c)
 		}
 	}
+}
+
+// isHelpProbe reports whether c is the read-only `wsl --help` capability check.
+func isHelpProbe(c wslCall) bool {
+	return len(c.argv) == 2 && c.argv[1] == "--help"
 }
 
 // REQ-18.2: a WSL that meets the minimum is used directly, with no prompt, no
@@ -364,6 +422,181 @@ func TestEnsureWSL_NonInteractiveNeverInstalls_REQ_18_3(t *testing.T) {
 	assertNoSetup(t, f)
 	if len(f.confirmed) != 0 {
 		t.Errorf("a prompt was written with no terminal to read the answer from: %v", f.confirmed)
+	}
+}
+
+// REQ-18.18: the setup action is chosen by asking the wsl.exe that will run it,
+// not by assuming the flags a current Windows would have.
+//
+// This is the defect a winget moderator found on 2026-11-07 during manual
+// validation: on an image whose inbox wsl.exe predates --no-distribution, avar
+// offered exactly that flag, wsl.exe answered "unrecognized option", printed its
+// whole usage text, and failed with exit status 0xffffffff.
+func TestEnsureWSL_NeverOffersAFlagThisWslExeDoesNotHave_REQ_18_18(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeWSL{
+		versionErr:    errors.New("exit status 1"),
+		helpOut:       utf16LE(inboxWSLHelp),
+		afterSetup:    versionOutput(supportedWSL),
+		interactive:   true,
+		confirmAnswer: true,
+	}
+
+	if _, err := f.manager(t).EnsureWSL(context.Background()); err != nil {
+		t.Fatalf("EnsureWSL after a confirmed update: %v", err)
+	}
+
+	if f.ran(noDistributionFlag) {
+		t.Errorf("avar ran %s on a wsl.exe whose help does not offer it: %v", noDistributionFlag, f.argvs())
+	}
+	// Not the fallback either: a bare `wsl --install` on this build installs a
+	// Linux distribution avar does not own (REQ-18.7).
+	if f.ran("--install") {
+		t.Errorf("avar ran `wsl --install`, which here would create a distribution: %v", f.argvs())
+	}
+	if !f.ran("--update") {
+		t.Errorf("want `wsl --update`, the one install this build supports, got %v", f.argvs())
+	}
+}
+
+// REQ-18.18, REQ-18.3: the user is asked before that update, and the question
+// says what it will do and why it is not the other command.
+func TestEnsureWSL_TheOlderRouteStillAsksAndSaysWhy_REQ_18_18(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeWSL{
+		versionErr:    errors.New("exit status 1"),
+		helpOut:       utf16LE(inboxWSLHelp),
+		afterSetup:    versionOutput(supportedWSL),
+		interactive:   true,
+		confirmAnswer: true,
+	}
+
+	if _, err := f.manager(t).EnsureWSL(context.Background()); err != nil {
+		t.Fatalf("EnsureWSL: %v", err)
+	}
+
+	if len(f.confirmed) != 1 {
+		t.Fatalf("the user was asked %d times, want once: %v", len(f.confirmed), f.confirmed)
+	}
+	question := f.confirmed[0]
+	for _, want := range []string{"wsl --update", "Microsoft", "approve", "restart"} {
+		if !strings.Contains(question, want) {
+			t.Errorf("the update offer does not mention %q:\n%s", want, question)
+		}
+	}
+	// Promising a flag this wsl.exe does not have is how the user ends up
+	// typing it themselves after avar gives up.
+	if strings.Contains(question, noDistributionFlag) {
+		t.Errorf("the offer names %s although this build has no such option:\n%s", noDistributionFlag, question)
+	}
+}
+
+// REQ-18.18: the probe decides what avar reads the help for, and reading it must
+// survive either encoding wsl.exe writes. The tool writes UTF-16LE to a
+// redirected stream on the builds avar has measured and UTF-8 on others.
+func TestEnsureWSL_ReadsTheHelpTextInEitherEncoding_REQ_18_18(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		help []byte
+	}{
+		{"utf-16le", utf16LE(modernWSLHelp)},
+		{"utf-8", []byte(modernWSLHelp)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := &fakeWSL{
+				versionErr:    errors.New("exit status 1"),
+				helpOut:       tc.help,
+				afterSetup:    versionOutput(supportedWSL),
+				interactive:   true,
+				confirmAnswer: true,
+			}
+
+			if _, err := f.manager(t).EnsureWSL(context.Background()); err != nil {
+				t.Fatalf("EnsureWSL: %v", err)
+			}
+			if !f.ran("--install", noDistributionFlag) {
+				t.Errorf("a build whose help offers %s was not given the platform-only install: %v", noDistributionFlag, f.argvs())
+			}
+		})
+	}
+}
+
+// REQ-18.18: a help text avar cannot read is not a licence to guess. The
+// unsupported route is the safe one, because it is the only one whose failure
+// mode is "nothing happened" rather than "a distribution was created".
+func TestEnsureWSL_UnreadableHelpDoesNotRunTheFlag_REQ_18_18(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeWSL{
+		versionErr:    errors.New("exit status 1"),
+		helpErr:       errors.New("exit status 1"),
+		afterSetup:    versionOutput(supportedWSL),
+		interactive:   true,
+		confirmAnswer: true,
+	}
+
+	if _, err := f.manager(t).EnsureWSL(context.Background()); err != nil {
+		t.Fatalf("EnsureWSL: %v", err)
+	}
+	if f.ran(noDistributionFlag) || f.ran("--install") {
+		t.Errorf("avar installed with flags it could not confirm the tool has: %v", f.argvs())
+	}
+}
+
+// REQ-18.18: and the instructions avar leaves behind name the commands in the
+// order this machine can run them.
+//
+// The old text led with `wsl --install --no-distribution`, so a user whose
+// wsl.exe had just rejected that command was told to run it again.
+func TestEnsureWSL_OlderWslExeInstructionsLeadWithUpdate_REQ_18_18(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		f    *fakeWSL
+	}{
+		{"declined", &fakeWSL{
+			versionErr:    errors.New("exit status 1"),
+			helpOut:       utf16LE(inboxWSLHelp),
+			interactive:   true,
+			confirmAnswer: false,
+		}},
+		{"nobody to ask", &fakeWSL{
+			versionErr:  errors.New("exit status 1"),
+			helpOut:     utf16LE(inboxWSLHelp),
+			interactive: false,
+		}},
+		{"the update failed", &fakeWSL{
+			versionErr:    errors.New("exit status 1"),
+			helpOut:       utf16LE(inboxWSLHelp),
+			setupErr:      errors.New("Error code: Wsl/0x80070005"),
+			interactive:   true,
+			confirmAnswer: true,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := tc.f.manager(t).EnsureWSL(context.Background())
+			if err == nil {
+				t.Fatal("EnsureWSL succeeded although WSL was never made usable")
+			}
+
+			msg := err.Error()
+			update := strings.Index(msg, "wsl --update")
+			if update < 0 {
+				t.Fatalf("the message never names `wsl --update`, the only install this build has:\n%s", msg)
+			}
+			if install := strings.Index(msg, "wsl --install"); install >= 0 && install < update {
+				t.Errorf("the message leads with `wsl --install`, which this wsl.exe rejects:\n%s", msg)
+			}
+		})
 	}
 }
 

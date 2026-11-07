@@ -91,6 +91,12 @@ needs WSL 2.0.0 or newer.
 - If WSL is missing, or too old, avar offers `wsl --install --no-distribution`
   or `wsl --update` and acts only on a yes. The install creates no Linux
   distribution of its own. Windows may ask you to approve it.
+- **Which one it offers depends on your `wsl.exe`.** `--no-distribution` exists
+  only in the WSL that Microsoft ships through the Store, so avar reads
+  `wsl --help` first and, on an older `wsl.exe` that does not list the option,
+  offers `wsl --update` — which installs WSL from the Store — rather than a
+  command your build would reject. A plain `wsl --install` is never offered,
+  because on those builds it installs a Linux distribution too.
 - If Windows must restart before WSL can be used, avar says so and stops.
   Nothing has been created, so running the same command after the restart is
   all that is left to do.

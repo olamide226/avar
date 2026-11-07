@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -87,6 +88,110 @@ func main() {
 }
 `
 
+// helpfulWSL is a wsl.exe that fails `--version` — the state that sends avar down
+// the install path — and answers `--help` with the usage text given, in the
+// UTF-16LE the real tool writes to a redirected stream.
+//
+// That usage text is the whole input to the test below. Which install avar
+// offers is decided by what this build says it can do (REQ-18.18), so a stub
+// that advertises --no-distribution must be offered it and one that does not
+// must not be.
+func helpfulWSL(help string) string {
+	return `package main
+
+import (
+	"os"
+	"unicode/utf16"
+)
+
+const help = ` + strconv.Quote(help) + `
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--help" {
+		out := []byte{}
+		for _, u := range utf16.Encode([]rune(help)) {
+			out = append(out, byte(u), byte(u>>8))
+		}
+		os.Stdout.Write(out)
+		return
+	}
+	os.Exit(1)
+}
+`
+}
+
+// modernInstallHelp is the `wsl --help` of a build that can install the platform
+// alone.
+const modernInstallHelp = "Usage: wsl.exe [Argument] [Options...] [CommandLine]\r\n" +
+	"    --install [Options]\r\n" +
+	"            --no-launch, -n\r\n" +
+	"            --no-distribution\r\n" +
+	"    --update [Options]\r\n"
+
+// inboxInstallHelp is the `wsl --help` of the Windows component that predates
+// that option: its --install can only install a distribution.
+//
+// Copied in shape from the usage text a winget moderator's Windows image printed
+// on 2026-11-07, when avar ran --no-distribution against it anyway.
+const inboxInstallHelp = "Usage: wsl.exe [Argument] [Options...] [CommandLine]\r\n" +
+	"    --install [Options]\r\n" +
+	"            --distribution, -d [Argument]\r\n" +
+	"            --no-launch, -n\r\n" +
+	"    --update [Options]\r\n" +
+	"        If no options are specified, download and install WSL from the Microsoft Store.\r\n"
+
+// REQ-18.18: the command avar tells a user to run has to be one their own
+// wsl.exe accepts, and the real binary reading a real tool's real usage text is
+// the only place that is end-to-end true.
+//
+// The message leads with the command to run first, so what is asserted is the
+// order: an older build is sent to `wsl --update`, and only a build that
+// advertises --no-distribution is sent to `wsl --install`.
+func TestWSLMissing_NamesOnlyCommandsThisWslExeAccepts_REQ_18_18(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stub  string
+		first string
+	}{
+		{"advertises the flag", helpfulWSL(modernInstallHelp), "wsl --install " + noDistributionFlagE2E},
+		{"predates the flag", helpfulWSL(inboxInstallHelp), "wsl --update"},
+		{"no readable help", unusableWSL, "wsl --update"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := project(t, "wsl-flags-"+strings.ReplaceAll(tc.name, " ", "-"))
+			env := stubWSL(t, tc.stub)
+
+			stdout, stderr, code := avr(t, dir, env, "true")
+			if code == 0 {
+				t.Fatalf("avr succeeded with no usable WSL\nstdout:\n%s", stdout)
+			}
+
+			message := stdout + stderr
+			got := firstNamed(message, "wsl --install "+noDistributionFlagE2E, "wsl --update")
+			if got != tc.first {
+				t.Errorf("the message leads with %q, want %q:\n%s", got, tc.first, message)
+			}
+		})
+	}
+}
+
+// noDistributionFlagE2E is deps.noDistributionFlag spelled out: this package
+// tests the built binary and does not import avar's internals.
+const noDistributionFlagE2E = "--no-distribution"
+
+// firstNamed reports which of candidates appears earliest in message, or "" if
+// none of them do.
+func firstNamed(message string, candidates ...string) string {
+	first, at := "", -1
+	for _, candidate := range candidates {
+		i := strings.Index(message, candidate)
+		if i >= 0 && (at < 0 || i < at) {
+			first, at = candidate, i
+		}
+	}
+	return first
+}
+
 // REQ-18.3: a WSL that cannot report a version is one avar cannot drive. With
 // nobody to ask for consent — which is what a test, a script, or a CI job is —
 // avar must refuse rather than change the machine, and say what to run by hand.
@@ -100,6 +205,9 @@ func TestWSLMissing_RefusesAndSaysWhatToRun_REQ_18_3(t *testing.T) {
 	}
 
 	message := stdout + stderr
+	// This stub fails `--help` as well, so avar cannot establish that its
+	// wsl.exe has --no-distribution and names the update first (REQ-18.18).
+	// Both commands still appear: the question is only which one leads.
 	for _, want := range []string{
 		// What is wrong.
 		"WSL",
