@@ -18,7 +18,11 @@ jobs:
       github.event.workflow_run.head_branch == 'main'
     # Builds must run on macOS: the macOS universal binary is produced with
     # Apple's lipo. The Windows archives cross-compile from here (REQ-18.14).
-    runs-on: macos-14
+    #
+    # Pinned, and see the note on CI's test job: a retired pin is handed no
+    # runner and the job is reported cancelled. This one would have taken the
+    # next release with it.
+    runs-on: macos-15
     concurrency:
       group: release-main
       cancel-in-progress: false

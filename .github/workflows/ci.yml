@@ -22,8 +22,16 @@ jobs:
   # (REQ-17.6), and the only job with the race detector. The Lima E2E suite is
   # not in CI: it provisions real virtual machines and runs via `make e2e` on a
   # developer machine. Windows has its own jobs below.
+  #
+  # The label is pinned rather than `macos-latest`, which GitHub migrates to a
+  # new OS underneath you. The cost of pinning is that the pin eventually
+  # retires: `macos-14` did, and from 2026-11-06 this job was handed no runner
+  # at all. GitHub reports that as a *cancelled* job with zero steps and the
+  # annotation "The configuration 'macos-14-arm64-us-default' is not
+  # supported", which reads like somebody pressed cancel rather than like a
+  # broken workflow. When this pin retires, that is the symptom.
   test:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
