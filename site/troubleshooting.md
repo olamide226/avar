@@ -53,6 +53,10 @@ avr: WSL was set up, but Windows needs to restart before avar can use it.
 
 avar needs WSL 2.0.0 or newer. From a terminal it offers
 `wsl --install --no-distribution` or `wsl --update`, and acts only on a yes.
+Which of the two it offers depends on your `wsl.exe`: `--no-distribution` only
+exists in the WSL that Microsoft ships through the Store, so on an older
+`wsl.exe` avar offers `wsl --update` first and tells you to run the install
+afterwards, with the newer `wsl.exe` that the update brings.
 When the install needs a restart, restart Windows and run the same `avr`
 command again. Nothing was created, so there is nothing to clean up first.
 

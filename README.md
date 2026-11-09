@@ -395,6 +395,10 @@ One of:
   first run and offers `wsl --install --no-distribution`, which installs the
   platform only and creates no Linux distribution of its own. Windows may ask
   you to approve the change and may need a restart; avar says so before acting.
+  That option belongs to the WSL that Microsoft ships through the Store, so on a
+  machine whose `wsl.exe` is older than it avar offers `wsl --update` instead,
+  which installs WSL from the Store. avar never runs a plain `wsl --install`:
+  that would also install a Linux distribution you did not ask for.
 
 Nothing else: `avr` is a single self-contained Go binary.
 

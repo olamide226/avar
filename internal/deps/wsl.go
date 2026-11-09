@@ -97,6 +97,14 @@ var ErrRestartRequired = errors.New("WSL needs Windows to restart before it can 
 // make (REQ-18.4, PROP-15).
 var ErrWSL1 = errors.New("distribution is registered as WSL 1")
 
+// noDistributionFlag is the `wsl --install` option that installs the WSL
+// platform and creates no Linux distribution.
+//
+// It is named once because two things depend on the exact spelling: the argv
+// avar runs, and the help text avar searches to find out whether this wsl.exe
+// has it at all.
+const noDistributionFlag = "--no-distribution"
+
 // wslInstallQuestion is the consent avar must have before installing anything,
 // and it states the cost before the user agrees rather than after: this may
 // prompt for administrator approval and may need a restart (REQ-18.3).
@@ -112,6 +120,22 @@ const wslInstallQuestion = "WSL is not installed, or is too old for avar to use.
 const wslUpdateQuestion = "WSL is installed but older than avar supports.\n" +
 	"avar can update it with `wsl --update`, which updates the WSL platform and\n" +
 	"leaves your distributions untouched.\n" +
+	"Update it now?"
+
+// wslStoreUpdateQuestion is the consent for reaching the same place by the only
+// route an older wsl.exe offers.
+//
+// It is not wslUpdateQuestion with different words. That one is for a WSL that
+// works and is merely behind, and it promises the user's distributions are left
+// alone. This one is for a WSL that cannot report a version at all, on a build
+// that predates noDistributionFlag: `wsl --update` is being used to install the
+// Store package rather than to refresh it, and the user is told that the copy of
+// wsl.exe they have is why avar is asking for this and not an install.
+const wslStoreUpdateQuestion = "WSL is not installed, or is too old for avar to use.\n" +
+	"This copy of wsl.exe is itself older than the option avar installs WSL with,\n" +
+	"so avar can only offer `wsl --update`, which installs WSL from the Microsoft\n" +
+	"Store and creates no Linux distribution of its own.\n" +
+	"Windows may ask you to approve the change, and may need to restart afterwards.\n" +
 	"Update it now?"
 
 // WSL describes a usable WSL installation.
@@ -194,7 +218,31 @@ func (m *WSLManager) EnsureWSL(ctx context.Context) (WSL, error) {
 		// the optional component with no Store package behind it, or the
 		// platform disabled — either way an install, not an update. There is no
 		// version to name in a refusal, so there is no better one to give.
-		return m.offerSetup(ctx, path, wslInstallQuestion, "install", nil, "--install", "--no-distribution")
+		//
+		// Which install depends on the wsl.exe doing the installing, so avar
+		// asks it before it acts (REQ-18.18).
+		if m.platformOnlyInstallSupported(ctx, path) {
+			return m.offerSetup(ctx, path, wslSetupOffer{
+				question: wslInstallQuestion,
+				action:   "install",
+				args:     []string{"--install", noDistributionFlag},
+			})
+		}
+		// This wsl.exe predates the flag, so the install avar wants cannot be
+		// asked for here. `wsl --update` can be: every build carrying
+		// `--install` has it, and it installs WSL from the Microsoft Store,
+		// which is the piece a machine in this state is missing.
+		//
+		// A bare `wsl --install` is deliberately not the fallback. On this build
+		// it would install a Linux distribution as well — one avar does not own
+		// and the user did not ask for — which is the thing noDistributionFlag
+		// exists to prevent (REQ-18.7).
+		return m.offerSetup(ctx, path, wslSetupOffer{
+			question:     wslStoreUpdateQuestion,
+			action:       "update",
+			args:         []string{"--update"},
+			instructions: wslStoreUpdateInstructions,
+		})
 	case version.AtLeast(minWSL):
 		return WSL{Path: path, Version: version}, nil
 	default:
@@ -202,7 +250,12 @@ func (m *WSLManager) EnsureWSL(ctx context.Context) (WSL, error) {
 		// nobody to ask, should be told which version they have and which one
 		// avar needs — "WSL 2 is not usable" is true and useless.
 		tooOld := &WSLVersionTooOldError{Found: version, Minimum: minWSL, Path: path}
-		return m.offerSetup(ctx, path, wslUpdateQuestion, "update", tooOld, "--update")
+		return m.offerSetup(ctx, path, wslSetupOffer{
+			question: wslUpdateQuestion,
+			action:   "update",
+			args:     []string{"--update"},
+			refusal:  tooOld,
+		})
 	}
 }
 
@@ -240,6 +293,64 @@ func (m *WSLManager) probeVersion(ctx context.Context, path string) (Version, er
 	return version, nil
 }
 
+// platformOnlyInstallSupported reports whether this wsl.exe has
+// noDistributionFlag, which is the only `wsl --install` avar will run.
+//
+// The question is not academic, and the answer is "no" more often than the
+// obvious reading suggests. noDistributionFlag belongs to the wsl.exe Microsoft
+// ships as a Store package; the copy in System32 on a machine that has never
+// updated WSL predates it. That is exactly the machine the caller is looking at
+// — one whose wsl.exe cannot report a version — so the remedy avar reaches for
+// is missing in precisely the case that calls for it. avar ran it anyway until
+// 2026-11-07, which on such a host printed wsl's entire usage text and failed
+// with exit status 0xffffffff, after which avar advised running the same command
+// again (REQ-18.18).
+//
+// Asking costs one subprocess, on a path that is already about to change the
+// user's machine and ask permission first. It is never on the warm path, so it
+// is outside REQ-17.1's budget.
+//
+// What is matched is the flag's spelling in the help text, because a flag name is
+// the one part of that output Windows does not localize. The text is collected
+// with Stream rather than Output because builds differ on whether usage goes to
+// stdout or stderr, and avar should not have to guess which; Stream takes both.
+// A help text that cannot be read, or that does not name the flag, answers "no":
+// avar does not run an option it has not seen the tool offer.
+func (m *WSLManager) platformOnlyInstallSupported(ctx context.Context, path string) bool {
+	var help bytes.Buffer
+	// A non-zero exit is not itself an answer — some builds print usage and
+	// exit non-zero — so the error matters only when nothing was written.
+	if err := m.runner().Stream(ctx, &help, path, "--help"); err != nil && help.Len() == 0 {
+		return false
+	}
+	return strings.Contains(DecodeWSLOutput(help.Bytes()), noDistributionFlag)
+}
+
+// wslSetupOffer is one setup action avar can put to the user: the question that
+// has to be answered yes first, the wsl.exe argv that follows, and what to say
+// if avar ends up not acting.
+//
+// It is a struct because the two installs and the update differ in four
+// independent ways, and a positional parameter list of that shape is read wrong
+// exactly once.
+type wslSetupOffer struct {
+	// question is the consent prompt. It states the cost — elevation, a
+	// restart — before the user agrees rather than after (REQ-18.3).
+	question string
+	// action names the command in messages: "install" or "update".
+	action string
+	// args is the argv passed to wsl.exe, without the executable.
+	args []string
+	// refusal, when non-nil, replaces the generic message where avar knows
+	// something more specific to say: the version the user actually has, for
+	// instance, rather than "WSL 2 is not usable".
+	refusal error
+	// instructions is what to run by hand when avar will not or cannot act.
+	// Empty means wslManualInstructions, which is right wherever avar has not
+	// established that this wsl.exe is older than noDistributionFlag.
+	instructions string
+}
+
 // offerSetup runs the consent-then-act-then-reverify flow shared by installing
 // WSL and updating it.
 //
@@ -249,17 +360,14 @@ func (m *WSLManager) probeVersion(ctx context.Context, path string) (Version, er
 // tool again is how avar tells "set up and ready" from "set up, restart pending"
 // without reading a localized sentence (REQ-18.3).
 //
-// refusal, when non-nil, is what the user is told if avar does not act: because
-// they said no, or because there is nobody to ask. It exists so that a refusal
-// can be specific where avar knows something specific: "WSL 1.2.5 is too old,
-// avar needs 2.0.0" rather than "WSL 2 is not usable". Passing nil falls back to
-// the generic message, which is right when there is nothing more to say.
-func (m *WSLManager) offerSetup(ctx context.Context, path, question, action string, refusal error, args ...string) (WSL, error) {
+// Everything that differs between the three offers avar can make is in the
+// wslSetupOffer, including what the user is told when avar does not act.
+func (m *WSLManager) offerSetup(ctx context.Context, path string, offer wslSetupOffer) (WSL, error) {
 	declineWith := func(reason WSLNotInstalledReason) error {
-		if refusal != nil {
-			return refusal
+		if offer.refusal != nil {
+			return offer.refusal
 		}
-		return &WSLNotInstalledError{Reason: reason}
+		return &WSLNotInstalledError{Reason: reason, Instructions: offer.instructions}
 	}
 
 	// A script, a CI job, or a hook has nobody to answer the prompt. Waiting
@@ -269,20 +377,25 @@ func (m *WSLManager) offerSetup(ctx context.Context, path, question, action stri
 		return WSL{}, declineWith(WSLReasonNonInteractive)
 	}
 
-	confirmed, err := m.confirm()(ctx, question)
+	confirmed, err := m.confirm()(ctx, offer.question)
 	if err != nil {
-		return WSL{}, fmt.Errorf("asking whether to %s WSL: %w", action, err)
+		return WSL{}, fmt.Errorf("asking whether to %s WSL: %w", offer.action, err)
 	}
 	if !confirmed {
 		return WSL{}, declineWith(WSLReasonDeclined)
 	}
 	if err := ctx.Err(); err != nil {
-		return WSL{}, fmt.Errorf("setting WSL up with wsl %s: %w", strings.Join(args, " "), err)
+		return WSL{}, fmt.Errorf("setting WSL up with wsl %s: %w", strings.Join(offer.args, " "), err)
 	}
 
-	fmt.Fprintf(m.out(), "Running wsl %s. This can take a few minutes.\n", strings.Join(args, " "))
-	if err := m.runner().Stream(ctx, m.out(), path, args...); err != nil {
-		return WSL{}, &WSLNotInstalledError{Reason: WSLReasonSetupFailed, Action: action, Err: err}
+	fmt.Fprintf(m.out(), "Running wsl %s. This can take a few minutes.\n", strings.Join(offer.args, " "))
+	if err := m.runner().Stream(ctx, m.out(), path, offer.args...); err != nil {
+		return WSL{}, &WSLNotInstalledError{
+			Reason:       WSLReasonSetupFailed,
+			Action:       offer.action,
+			Err:          err,
+			Instructions: offer.instructions,
+		}
 	}
 
 	version, err := m.probeVersion(ctx, path)
@@ -367,6 +480,14 @@ type WSLNotInstalledError struct {
 	Action string
 	// Err is the underlying failure, where there was one.
 	Err error
+	// Instructions is what to run by hand, when what avar knows about this
+	// host makes the default wrong. Empty means wslManualInstructions.
+	//
+	// It exists because the commands that fix WSL are not the same on every
+	// machine: a wsl.exe older than noDistributionFlag cannot run the first
+	// line of the default text, and printing it there sent the user back to
+	// the command that had just failed (REQ-18.18).
+	Instructions string
 }
 
 func (e *WSLNotInstalledError) Error() string {
@@ -383,7 +504,11 @@ func (e *WSLNotInstalledError) Error() string {
 	default:
 		headline = "WSL 2 is not usable."
 	}
-	return headline + "\n\n" + wslManualInstructions
+	instructions := e.Instructions
+	if instructions == "" {
+		instructions = wslManualInstructions
+	}
+	return headline + "\n\n" + instructions
 }
 
 func (e *WSLNotInstalledError) Unwrap() error { return e.Err }
@@ -464,10 +589,30 @@ func (e *WSL1Error) Unwrap() error { return ErrWSL1 }
 // set WSL up itself. It names the exact commands to run.
 const wslManualInstructions = "Set up WSL " + MinWSLVersion + " or newer, then run avr again:\n" +
 	"\n" +
-	"    wsl --install --no-distribution\n" +
+	"    wsl --install " + noDistributionFlag + "\n" +
 	"    wsl --update\n" +
 	"\n" +
 	"Both may ask you to approve the change, and the first may need a restart.\n" +
+	"Microsoft's instructions: https://learn.microsoft.com/windows/wsl/install"
+
+// wslStoreUpdateInstructions is the manual fallback for a wsl.exe older than
+// noDistributionFlag. It names only commands that build actually has.
+//
+// It leads with `wsl --update` because that is the step that has to come first
+// on such a machine: it installs WSL from the Microsoft Store, and the wsl.exe
+// that arrives with it is the one that understands the second command. Naming
+// them in the other order — which avar did until 2026-11-07 — tells the user to
+// start with the option their tool will reject (REQ-18.18).
+const wslStoreUpdateInstructions = "Set up WSL " + MinWSLVersion + " or newer, then run avr again:\n" +
+	"\n" +
+	"    wsl --update\n" +
+	"\n" +
+	"That installs WSL from the Microsoft Store. It may ask you to approve the\n" +
+	"change, and may need a restart. Your wsl.exe has no " + noDistributionFlag + "\n" +
+	"option, so run `wsl --install " + noDistributionFlag + "` only after the update,\n" +
+	"with the newer wsl.exe it installs, and only if WSL is still unusable. avar\n" +
+	"will not run a plain `wsl --install`, which on this build would also install\n" +
+	"a Linux distribution you did not ask for.\n" +
 	"Microsoft's instructions: https://learn.microsoft.com/windows/wsl/install"
 
 // DecodeWSLOutput turns the bytes wsl.exe wrote into text, decoding UTF-16 when

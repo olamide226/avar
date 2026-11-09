@@ -162,6 +162,32 @@ program restricts access to its own files, the failure to read them afterwards
 has to say what to run: "Access is denied" alone leaves the user guessing at a
 rule they never saw.
 
+### A test double answers the question you built it to answer
+
+avar offered `wsl --install --no-distribution` to every machine whose `wsl.exe`
+could not report a version, and the unit tests agreed it should: the fake
+`wsl.exe` recorded the argv and returned success, so "did avar run the
+platform-only install" was asked, and answered, in every WSL state worth testing.
+What no test asked was whether the tool *has* that option. A winget moderator ran
+avar during manual validation on a Windows image whose `wsl.exe` predates it, and
+the answer was `--install: unrecognized option: no-distribution`, sixty lines of
+usage text, `exit status 0xffffffff` — and then avar's own advice to run the same
+command again (REQ-18.18).
+
+**A fake accepts what the real tool would reject, and that tolerance is part of
+the fixture.** A double that takes any argv encodes the assumption that every
+version of the tool takes it; every test built on that double then confirms the
+assumption instead of testing it. The fakes here now carry the tool's usage text,
+and the flag avar runs is chosen from it — so a test can express "this build does
+not have that option", which was previously not a state the suite could describe.
+
+**A remedy is only as available as the version that carries it.** The flag that
+installs WSL without a distribution ships *in* the WSL that is missing. Any
+"avar can fix this for you" path can have this shape — the fix living inside the
+thing whose absence triggered it — and each one is worth asking about: which
+build of the tool will actually run this, the one on the machine now, or the one
+that only exists afterwards?
+
 ## Verification
 
 ### A cancelled job is not a job that passed
