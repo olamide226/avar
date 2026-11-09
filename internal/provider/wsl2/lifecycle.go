@@ -366,10 +366,42 @@ func (p *Provider) Delete(ctx context.Context, machine string) error {
 //
 // It filters rather than annotates. A distribution the user installed
 // themselves — one whose name is not avar's, or which is absent from avar's own
-// records — does not appear at all, because `avr status` and `avr stop --all`
-// are built directly on this and must never reach a distribution avar did not
-// create (REQ-5.1, REQ-5.4, REQ-18.7, PROP-6).
+// records — does not appear at all, because `avr status`, `avr stop --all` and
+// `avr destroy` are built directly on this and must never reach a distribution
+// avar did not create (REQ-5.1, REQ-5.4, REQ-18.7, PROP-6). Delete checks the
+// prefix alone, so this filter is what keeps `avr destroy` off a distribution
+// avar has no record of.
+//
+// Reconciliation is the one caller that needs the unrecorded ones, and it is
+// given Discover instead (provider.ReconciliationView).
 func (p *Provider) Status(ctx context.Context) ([]types.MachineStatus, error) {
+	return p.list(ctx, false)
+}
+
+// Discover reports every distribution carrying avar's prefix, including those
+// absent from avar's records, so that reconciliation can tell the user about
+// them. It is the same per-invocation view Status reads, so it costs no
+// wsl.exe call Status would not have made.
+//
+// An unrecorded distribution carries only what WSL reports: its name, whether
+// it is running, and its WSL version. Nothing is read from its name or its
+// guest, because nothing is done with it: avar cannot prove it imported a
+// distribution it has no record of, so reconciliation reports it and never
+// adopts or removes it (design §3.3), whatever state it is in — a WSL 1
+// registration included.
+func (p *Provider) Discover(ctx context.Context) ([]types.MachineStatus, error) {
+	return p.list(ctx, true)
+}
+
+// ManualInspection is what the user can do about a distribution avar left
+// alone. The commands are WSL's own; avar runs neither.
+func (p *Provider) ManualInspection(machine string) string {
+	return fmt.Sprintf("To look inside it: wsl.exe --distribution %s\n"+
+		"If you do not want it: wsl.exe --unregister %s (this deletes everything inside it)", machine, machine)
+}
+
+// list is Status, and with unrecorded set, Discover.
+func (p *Provider) list(ctx context.Context, unrecorded bool) ([]types.MachineStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("listing avar's environments: %w", err)
 	}
@@ -389,8 +421,8 @@ func (p *Provider) Status(ctx context.Context) ([]types.MachineStatus, error) {
 		if types.ValidateMachineName(d.Name) != nil {
 			continue
 		}
-		record, ok := owned[d.Name]
-		if !ok {
+		record, recorded := owned[d.Name]
+		if !recorded && !unrecorded {
 			continue
 		}
 		out = append(out, types.MachineStatus{
@@ -409,9 +441,8 @@ func (p *Provider) Status(ctx context.Context) ([]types.MachineStatus, error) {
 
 // ownedRecords indexes avar's records by machine name.
 //
-// A nil Records means the caller is the reconciler, which is still deciding what
-// avar owns and must see prefix-matching distributions that have no record yet.
-// It is the one caller allowed that view, and it does not go through Status.
+// A nil Records is a registry with nothing in it: Status then lists nothing,
+// and only Discover reports the prefixed distributions WSL has.
 func (p *Provider) ownedRecords() (map[string]types.MachineRecord, error) {
 	if p.records == nil {
 		return nil, nil

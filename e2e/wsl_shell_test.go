@@ -39,8 +39,41 @@ func suiteEnv(t *testing.T) []string {
 			panic("locate the home directory: " + err.Error())
 		}
 		stateDir = filepath.Join(home, "avr-e2e-state")
+		strangers = distributionsFromElsewhere(t, stateDir)
 	})
+	if len(strangers) > 0 {
+		t.Fatalf("this computer has avar environments the suite did not create (%s). "+
+			"A separate AVR_HOME does not keep the suite off them: a shared environment's name (avr-ubuntu-24.04-<arch>) "+
+			"does not depend on AVR_HOME, and avar uses an existing registration of the name it resolves, so the suite "+
+			"would run in yours, record it, and remove it with `avr destroy --all --yes`. WSL has no equivalent of "+
+			"LIMA_HOME to move the suite into a world of its own, so run it on a computer, or a Windows account, "+
+			"with no other avar environments",
+			strings.Join(strangers, ", "))
+	}
 	return []string{"AVR_HOME=" + stateDir}
+}
+
+// strangers are the avr- distributions registered when the suite started that
+// it did not import itself.
+var strangers []string
+
+// distributionsFromElsewhere lists the avr- distributions whose disk is not in
+// the suite's own state directory: ones a developer's own avar, or another
+// state directory, imported. avar imports each distribution into
+// <AVR_HOME>\distros\<name>, so a leftover from an earlier run of the suite is
+// recognised and is not a stranger.
+func distributionsFromElsewhere(t *testing.T, stateDir string) []string {
+	t.Helper()
+	var out []string
+	for _, name := range registeredDistributions(t) {
+		if !strings.HasPrefix(name, types.MachineNamePrefix) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(stateDir, "distros", name)); err != nil {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // requireWSL skips the suite on a host that has no usable WSL, saying so rather
@@ -600,7 +633,8 @@ func keepLogs(logs string) {
 // The tests destroy their environment themselves, so the unregister is the
 // backstop for a run that was interrupted — a registered distribution nobody
 // knows about is several gigabytes that no later run will reclaim. It only ever
-// touches names carrying avar's own prefix.
+// touches avr- distributions whose disk is in one of the suite's own state
+// directories (importedBySuite), never a developer's own.
 //
 // The scheduled task needs removing too, and that is easy to miss: avar
 // registers it the first time it creates an environment, pointing at the binary
@@ -611,7 +645,7 @@ func cleanupBackend() {
 	if out, err := exec.Command("wsl.exe", "--list", "--quiet").Output(); err == nil {
 		for _, line := range strings.Split(decodeUTF16(out), "\n") {
 			name := strings.TrimSpace(line)
-			if strings.HasPrefix(name, "avr-") {
+			if strings.HasPrefix(name, "avr-") && importedBySuite(name) {
 				_ = exec.Command("wsl.exe", "--unregister", name).Run()
 			}
 		}
@@ -630,6 +664,26 @@ func cleanupBackend() {
 		// they shared.
 		_ = os.Remove(filepath.Join(home, "avr-e2e"))
 	}
+}
+
+// importedBySuite reports whether a distribution's disk is in one of the
+// suite's own state directories: ~/avr-e2e-state, or a per-test
+// ~/avr-e2e-state-<name>. avar imports each distribution into
+// <AVR_HOME>\distros\<name>, so that is where the suite's own live, and where
+// an earlier interrupted run's leftovers live too.
+//
+// The prefix alone is not enough to unregister on. A developer who uses avar
+// has avr- distributions of their own, and the suiteEnv guard refusing to run
+// beside them protected nothing while this cleanup then unregistered every
+// avr- name on the account anyway — it did exactly that the first time the
+// guard was tried on a real host.
+func importedBySuite(name string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	dirs, _ := filepath.Glob(filepath.Join(home, "avr-e2e-state*", "distros", name))
+	return len(dirs) > 0
 }
 
 // decodeUTF16 reads what wsl.exe writes to a redirected stream.

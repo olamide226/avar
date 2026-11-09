@@ -265,13 +265,16 @@ type Provider interface {
 	// Status reports one entry per machine avar owns, ordered by name so that
 	// output and tests are deterministic.
 	//
-	// Implementations must filter, not merely annotate. A machine the user
-	// created outside avar — one whose name fails types.ValidateMachineName,
-	// or which is absent from avar's own records — must not appear in the
-	// result at all, because `avr status` and `avr stop --all` are built
-	// directly on it and must never reach a machine avar did not create
-	// (REQ-5.1, REQ-5.4, PROP-6). An empty slice and a nil error is the
-	// correct answer when avar owns nothing yet (REQ-5.3).
+	// Implementations must filter, not merely annotate. A machine whose name
+	// fails types.ValidateMachineName must not appear in the result at all,
+	// because `avr status` and `avr stop --all` are built directly on it and
+	// must never reach a machine avar did not create (REQ-5.1, REQ-5.4,
+	// PROP-6). An empty slice and a nil error is the correct answer when avar
+	// owns nothing yet (REQ-5.3).
+	//
+	// An implementation may additionally hide machines absent from avar's
+	// own records, and one that does must implement Discoverer, so that
+	// reconciliation can still see them and report them (design §3.3).
 	//
 	// types.MachineStatus.Sessions counts live avar sessions, which is avar's
 	// own bookkeeping rather than backend truth; providers may leave it zero
@@ -526,6 +529,72 @@ type SSHAgentForwarder interface {
 	// It does nothing; implementing it is the claim, and the claim is what a
 	// caller asserts on.
 	ForwardsSSHAgent()
+}
+
+// Discoverer is implemented by backends whose Status hides the machines avar
+// has no record of, and which cannot prove that avar created one.
+//
+// Such a Status is the right listing for every command, and the wrong one for
+// crash recovery, which must at least see an unrecorded machine to tell the
+// user about it. Design §3.3 lets reconciliation adopt or remove one only when
+// an operation journal and an on-guest marker prove ownership; without that
+// proof it is reported for manual inspection and never mutated. A Discoverer
+// is how a backend asks for exactly that: ReconciliationView hands Discover to
+// the reconciler, and to nothing else, as a backend whose unrecorded machines
+// are reported and left alone.
+type Discoverer interface {
+	// Discover reports one entry per machine carrying avar's prefix, recorded
+	// or not, ordered by name. Names that fail types.ValidateMachineName are
+	// filtered out, exactly as in Status. A recorded machine is described as
+	// Status would describe it; an unrecorded one carries only what the
+	// backend's own listing says.
+	Discover(ctx context.Context) ([]types.MachineStatus, error)
+
+	// ManualInspection tells the user how to look at an unrecorded machine
+	// and, if they do not want it, remove it by hand, in the backend's own
+	// commands. It runs nothing.
+	ManualInspection(machine string) string
+}
+
+// Inventory is the part of a backend that reconciliation is given: what
+// exists, and a way to remove an unusable machine nothing has recorded.
+// state.Backend is the same shape, declared by its consumer.
+type Inventory interface {
+	Status(ctx context.Context) ([]types.MachineStatus, error)
+	Delete(ctx context.Context, machine string) error
+}
+
+// ReconciliationView returns p as reconciliation must see it: a Status that
+// includes the machines avar has no record of. For a Discoverer the view also
+// has ManualInspection, which is what state.UnprovenBackend asks for, so the
+// reconciler reports those machines and neither adopts nor deletes them.
+//
+// It is for reconciliation only. Every other caller lists through
+// Provider.Status, which on a Discoverer is filtered by avar's records, so no
+// command can reach a machine avar has no record of.
+func ReconciliationView(p Provider) Inventory {
+	if d, ok := p.(Discoverer); ok {
+		return discovered{provider: p, discoverer: d}
+	}
+	return p
+}
+
+// discovered is a Discoverer's reconciliation view: its Status is Discover.
+type discovered struct {
+	provider   Provider
+	discoverer Discoverer
+}
+
+func (d discovered) Status(ctx context.Context) ([]types.MachineStatus, error) {
+	return d.discoverer.Discover(ctx)
+}
+
+func (d discovered) Delete(ctx context.Context, machine string) error {
+	return d.provider.Delete(ctx, machine)
+}
+
+func (d discovered) ManualInspection(machine string) string {
+	return d.discoverer.ManualInspection(machine)
 }
 
 // MachineSpec fully describes the machine a caller wants to exist. It is the

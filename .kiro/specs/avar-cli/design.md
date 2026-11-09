@@ -206,7 +206,7 @@ Layout:
 
 Windows uses `ReplaceFile`/`MoveFileEx` semantics for atomic replacement rather than assuming POSIX `rename`; directory creation grants only the current Windows user and administrators access. The user is named by SID, not by an OWNER RIGHTS entry: the owner of a file is not always the person running avar, because one `avr` in an elevated shell creates files owned by `BUILTIN\Administrators`, after which an ordinary shell matches no entry and avar's own records become unreadable (observed 2026-09-22). avar re-stamps a list that does not name the account it is running as, which repairs such a directory; it cannot change a file whose owner is someone else, so the error for an unreadable state file says what to run (§6). State schema v2 migrates existing `Mounts []string` entries into `MountSpec{HostPath: p, GuestPath: p}` and `VMType` into `Runtime`, assigning `Provider: "lima"` to pre-Windows records.
 
-`operations.json` records intent before an external create, restore, or destructive unregister. A reconciler may adopt or remove an unrecorded backend environment only when a matching pending operation and on-guest avar marker prove ownership. A name prefix alone never authorizes mutation.
+`operations.json` records intent before an external create, restore, or destructive unregister. A reconciler may adopt or remove an unrecorded backend environment only when a matching pending operation and on-guest avar marker prove ownership. A name prefix alone never authorizes mutation. *Status:* neither the journal nor a reconciler marker check exists yet, so no unrecorded environment can be proven avar's. WSL 2 takes the fallback: every unrecorded `avr-` distribution is reported for manual inspection and never adopted or removed (`state.UnprovenBackend`, #122). Lima still adopts or deletes on the prefix alone (#123).
 
 #### `config.toml`: the user's own settings, read exactly (Req 17.7)
 
@@ -266,7 +266,19 @@ type Provider interface {
 
     Stop(ctx context.Context, machine string, progress types.ProgressSink) error // stopped → no-op; unknown → ErrMachineNotFound
     Delete(ctx context.Context, machine string) error                            // fully idempotent (cleanup path, Property 7)
-    Status(ctx context.Context) ([]types.MachineStatus, error)                   // avar-owned machines only, sorted (Req 5.4, Property 6)
+    Status(ctx context.Context) ([]types.MachineStatus, error)                   // avar-prefixed machines, sorted (Req 5.4, Property 6); may also hide unrecorded ones, see Discoverer
+}
+
+// Discoverer is implemented by a backend whose Status hides machines absent
+// from avar's records and which cannot prove avar created one (WSL 2).
+// Discover lists every avar-prefixed machine, recorded or not;
+// ManualInspection says how the user can inspect or remove one by hand.
+// provider.ReconciliationView hands both to the reconciler (§3.3), and to
+// nothing else, which then reports each unrecorded machine and never adopts or
+// deletes it. Every command keeps the filtered Status (#122).
+type Discoverer interface {
+    Discover(ctx context.Context) ([]types.MachineStatus, error)
+    ManualInspection(machine string) string
 }
 
 // Phase 2 capabilities, implemented only by backends that actually have them.
@@ -442,7 +454,7 @@ Using imported distributions avoids first-launch username prompts and prevents a
 
 | Provider operation | WSL 2 mechanism |
 |---|---|
-| List and version check | `wsl.exe --list --quiet`, `--list --running --quiet`, and `--list --verbose`. The parser decodes UTF-16 when present and extracts avar's no-whitespace names plus the numeric WSL version from the right, avoiding localized header/state matching. |
+| List and version check | `wsl.exe --list --quiet`, `--list --running --quiet`, and `--list --verbose`. The parser decodes UTF-16 when present and extracts avar's no-whitespace names plus the numeric WSL version from the right, avoiding localized header/state matching. `Status` lists only distributions with an avar record. `Discover` (reconciliation only, §3.4) also lists unrecorded `avr-` distributions, carrying only what the listing says, so that reconciliation can report them with `wsl.exe --distribution`/`--unregister` instructions. It reads the same per-invocation view, so it adds no `wsl.exe` call (Req 17.1). |
 | Start / ensure | A no-output probe through `wsl.exe --distribution <name> --user root --exec /bin/true`; WSL starts a stopped distribution on demand. Marker and WSL-2 checks run on cold start and reconciliation, not every warm attach. |
 | Path mapping | `MapProjectPath` maps a registered host root to `/mnt/avr/projects/<name>-<Project_Identity prefix>` and preserves the cwd’s relative suffix. The directory is named for the project before it is identified by its hash: this path is the user’s working directory, and it appears in their shell prompt, their editor’s title bar and every error any tool prints, so sixty-four hexadecimal characters there is a real cost for no correctness gained. The truncation is the same length the resolver already uses to name a per-project machine, and the hash half is never omitted — it is what keeps two projects called `api` distinct (Prop 14). |
 | Mounts | Reconcile selective DrvFS mounts as root with argv-safe execution (no interpolated shell string). `/proc/mounts` is the applied source of truth: it is kernel-defined, identical across the supported distributions, and never localized, and it carries the DrvFS options avar plans against. (Amended from `/proc/self/mountinfo`, which the implementation does not read.) **A DrvFS mount is not identified by its filesystem type.** WSL 2 serves DrvFS over 9P, so `/proc/mounts` reports the type as `9p` and names DrvFS only inside the options, as `aname=drvfs` — e.g. `C:\134Users\134ola\134app /mnt/avr/projects/app-a7c3d378e1 9p rw,...,aname=drvfs;path=C:\Users\ola\app;metadata;...`. A predicate must therefore accept either spelling (`$3 == "drvfs"` or `aname=drvfs` among the options), and it must be defined once and shared by every script that asks the question: reading applied mounts and checking confinement are the same question, and a predicate that matches nothing fails silently in both — reporting no mounts applied, and passing a guest with an entire drive mounted. Automatic drive mounting remains disabled, so avar does not expose an entire drive merely to share one project. |
@@ -826,7 +838,7 @@ type PendingOperation struct {
 
 - `ProjectRecord` is created the first time `avr` runs in a directory; never deleted automatically.
 - `MachineRecord` is written only after the selected provider verifies a usable environment and is removed only after provider deletion succeeds. External destructive work is preceded by a `PendingOperation`.
-- Reconciliation may adopt an interrupted create only when prefix, operation journal, and on-guest marker agree. A prefix-only Lima VM or WSL distribution is reported for manual inspection and never mutated.
+- Reconciliation may adopt an interrupted create only when prefix, operation journal, and on-guest marker agree. A prefix-only Lima VM or WSL distribution is reported for manual inspection and never mutated. (WSL 2 meets this; Lima does not yet, #123.)
 - Mount mappings grow through project registration; `avr status` renders host and guest paths when they differ. Pruning remains a post-MVP concern.
 - Windows restore is retryable rather than rolled back. It does not require the distribution to exist, so a restore interrupted after the unregister leaves a state the same command recovers from, and the snapshot it restores from is copied rather than consumed. The restored environment is still verified — marker, account, passwordless sudo and an empty Windows-drive mount set — before it is handed to a user; its release is deliberately not checked, because a snapshot holds the release it held.
 
@@ -978,7 +990,7 @@ _For any_ release response and _for any_ archive bytes, `avr update` SHALL write
 | `sessions.json` stale pids (crash) | pid liveness probe on read | Prune silently. |
 | Snapshot/restore name errors | provider `ListSnapshots` | Unknown name → list available (Req 10.2). |
 | WSL restore fails after unregister | the snapshot itself, which `--import` copies rather than consumes | Report the failure naming the snapshot's path and say that running the same command again retries the restore. There is no rollback artifact to reimport and none is created: restore is idempotent instead, so it does not require the distribution to exist and re-running it is the recovery. Clear the install directory before importing, since `--unregister` leaves it behind and an import into a non-empty one fails. If the import keeps failing the pre-restore environment is gone — the stated residual risk, and what the user asked for when they asked to restore (Req 18.12). |
-| Existing WSL registration collides with generated avar name | quiet distro list + missing ownership record/marker | Return `ErrNotOwned`; never unregister, reuse, or rename the existing registration (Req 18.7). |
+| Existing WSL registration collides with generated avar name | quiet distro list + missing ownership record/marker | Return `ErrNotOwned`; never unregister, reuse, or rename the existing registration (Req 18.7). *Status:* reconciliation meets this (it reports and never mutates, #122), but `EnsureMachine` does not yet: it gates on the prefix and uses an existing registration of the name it resolves without reading the marker, after which the command records it. |
 | WSL output encoding/localization differs | UTF-8/UTF-16 decoder + right-anchored numeric parsing | If required fields cannot be established without localized text matching, fail read-only with the raw output stored in a diagnostic log; perform no lifecycle mutation. |
 | Native workspace: both copies changed one file | three-way manifest comparison against the recorded baseline | Report every conflicting file and what each side did; apply nothing in either direction; leave both copies byte-identical. `avr sync` exits non-zero, `avr --native-fs` still opens the shell because resolving it needs one (Req 14.3, Property 22). |
 | Native workspace: a synchronization is interrupted | next scan compares against the unchanged baseline | Each file was moved into place whole and the baseline was written last, so the destination holds a prefix of the change and nothing truncated; repeating the command finishes it. avar never reports a conflict caused by its own interruption (Req 17.5, Property 22). |
@@ -1056,7 +1068,7 @@ _For any_ release response and _for any_ archive bytes, `avr update` SHALL write
 - `avr init` without a terminal shows the proposal, writes nothing and says why, and never replaces an existing `.avr.toml` (Req 15.2).
 - Idle auto-stop against a real machine: an idle environment is stopped, one with a live `avr` session is not, and one with a process shaped like a connected VS Code window — a real program inside `~/.vscode-server` carrying `--type=extensionHost` — is kept and then stopped once that process ends (Req 5.5, Req 5.10, Req 5.11, Property 11).
 
-These last five run against a state directory *and* a Lima home of their own (`AVR_HOME` and `LIMA_HOME`). `AVR_HOME` alone does not isolate a test from this computer's environments: reconciliation adopts machines by avar's `avr-` prefix rather than by the records it holds, so a fresh state directory takes in every `avr-` machine the host has — which a test that runs the idle check would then stop.
+These last five run against a state directory *and* a Lima home of their own (`AVR_HOME` and `LIMA_HOME`). `AVR_HOME` alone does not isolate a test from this computer's environments: reconciliation adopts machines by avar's `avr-` prefix rather than by the records it holds, so a fresh state directory takes in every `avr-` machine the host has — which a test that runs the idle check would then stop. On WSL 2 reconciliation adopts nothing unrecorded. A shared environment's name still does not depend on `AVR_HOME`, though, and `EnsureMachine` reuses an existing registration of it. With nothing like `LIMA_HOME` available, the WSL half refuses to run while an `avr-` distribution exists whose disk is not under its own state directory, because the suite would otherwise run in it, record it, and remove it with `avr destroy --all --yes`.
 
 **End-to-end tests — real WSL 2** (the same `make e2e`, which selects this half by build tag; runs locally on Windows with WSL 2, and in CI on a GitHub-hosted Windows runner nightly and on demand, not on ordinary pull requests):
 

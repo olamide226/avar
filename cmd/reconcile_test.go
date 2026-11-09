@@ -193,6 +193,78 @@ func TestReconcile_ConsistentStoreWritesNothing_REQ_17_1(t *testing.T) {
 	})
 }
 
+// recordFilteringBackend is a backend shaped like the WSL one: its Status lists
+// only the machines avar has a record of, it offers the unfiltered listing as
+// provider.Discoverer, and it says how to inspect a machine by hand. The Fake
+// underneath stands for what the backend has.
+type recordFilteringBackend struct {
+	*fake.Fake
+	store *state.Store
+}
+
+func (b recordFilteringBackend) Status(ctx context.Context) ([]types.MachineStatus, error) {
+	all, err := b.Fake.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []types.MachineStatus
+	for _, m := range all {
+		if _, found, err := b.store.Machine(m.Name); err != nil {
+			return nil, err
+		} else if found {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+func (b recordFilteringBackend) Discover(ctx context.Context) ([]types.MachineStatus, error) {
+	return b.Fake.Status(ctx)
+}
+
+const manualSteps = "to remove it: backend-remove " + orphanMachine
+
+func (b recordFilteringBackend) ManualInspection(machine string) string {
+	return "to remove it: backend-remove " + machine
+}
+
+// REQ-17.5, PROP-6: on a backend that cannot prove avar created a machine it has
+// no record of, crash recovery neither adopts nor deletes it — even when the
+// backend reports it broken — and tells the user, once, which machine it is and
+// what they can do about it by hand (design §3.3, §6; #122).
+func TestReconcile_ReportsAnOrphanItCannotProveAndTouchesNothing_REQ_17_5(t *testing.T) {
+	for _, st := range []types.MachineState{types.StateStopped, types.StateBroken} {
+		t.Run(string(st), func(t *testing.T) {
+			f := fake.New()
+			seedMachine(t, f, orphanMachine, ubuntu(), types.KindShared)
+			f.SetMachineState(orphanMachine, st)
+			app := newReconcileTestApp(t, f)
+			app.buildBackend = func(context.Context) (provider.Provider, error) {
+				return recordFilteringBackend{Fake: f, store: app.store}, nil
+			}
+
+			mustGetProvider(t, app)
+			mustGetProvider(t, app)
+
+			if _, found := recordOf(t, app.store, orphanMachine); found {
+				t.Error("a machine avar cannot prove it created was adopted")
+			}
+			// Only the listing: nothing deleted.
+			f.AssertOps(t, fake.OpStatus)
+			stderr := app.err.String()
+			if !strings.Contains(stderr, orphanMachine) || !strings.Contains(stderr, manualSteps) {
+				t.Errorf("stderr does not name the machine and what to do about it:\n%s", stderr)
+			}
+			if n := strings.Count(stderr, "avr: "+orphanMachine); n != 1 {
+				t.Errorf("the machine was reported %d times in one invocation, want once:\n%s", n, stderr)
+			}
+			if app.out.Len() != 0 {
+				t.Errorf("reconciliation wrote to stdout, which belongs to the user's command: %q", app.out.String())
+			}
+		})
+	}
+}
+
 // Machines without avar's prefix are the user's own: recovery must not touch
 // them or even mention them (PROP-6).
 func TestReconcile_NeverTouchesAnUnownedMachine_PROP_6(t *testing.T) {
