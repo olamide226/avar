@@ -564,6 +564,37 @@ func scheduledTaskExists() bool {
 	return cmd.Run() == nil
 }
 
+// keepLogs moves a failed run's logs out of the state directory before it is
+// deleted, and says where they went.
+//
+// avar's own errors point into that directory — "the full output is in
+// ...\avr-e2e-state\logs\<machine>-create.log" — so deleting it unconditionally
+// left a failing test naming a file that no longer existed. That is what
+// happened on the first real-host run for #112: three intermittent
+// `wsl --install` failures, and no way left to tell why.
+//
+// Only the logs are kept. The rest of the state describes distributions the
+// cleanup has just unregistered, and leaving it would make the next run start
+// from records of machines that are gone.
+func keepLogs(logs string) {
+	if entries, err := os.ReadDir(logs); err != nil || len(entries) == 0 {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	dst := filepath.Join(home, "avr-e2e-logs", time.Now().Format("20060102-150405"))
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return
+	}
+	if err := os.Rename(logs, dst); err != nil {
+		os.Stderr.WriteString("e2e: could not keep the failed run's logs: " + err.Error() + "\n")
+		return
+	}
+	os.Stderr.WriteString("e2e: the suite failed; avar's logs from it are in " + dst + "\n")
+}
+
 // cleanupBackend removes what the suite left behind.
 //
 // The tests destroy their environment themselves, so the unregister is the
@@ -589,6 +620,9 @@ func cleanupBackend() {
 		_ = exec.Command("schtasks", "/Delete", "/TN", "avar-idle-check", "/F").Run()
 	}
 	if stateDir != "" {
+		if suiteFailed {
+			keepLogs(filepath.Join(stateDir, "logs"))
+		}
 		_ = os.RemoveAll(stateDir)
 	}
 	if home, err := os.UserHomeDir(); err == nil {
