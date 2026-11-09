@@ -527,6 +527,48 @@ func TestEnsureWSL_ReadsTheHelpTextInEitherEncoding_REQ_18_18(t *testing.T) {
 	}
 }
 
+// REQ-18.18, against what a real wsl.exe writes rather than what the fixtures
+// above assume it writes.
+//
+// testdata/wsl-help-2.7.12.utf16le is the byte-exact stdout of `wsl --help` on
+// Windows 11 25H2 (build 26200.9457, wsl.exe file version 10.0.26100.8737,
+// WSL 2.7.12.0), captured on 2026-11-09 for #119. That run settled two
+// things the stubs had only assumed: the usage goes to stdout, not stderr, as
+// UTF-16LE with no byte-order mark; and wsl.exe exits 0xffffffff after
+// printing it. So the success path here goes through the branch that ignores a
+// non-zero exit when help text was written — with a zero exit this test would
+// pass even if that branch were deleted.
+func TestEnsureWSL_ReadsARealCapturedHelpText_REQ_18_18(t *testing.T) {
+	t.Parallel()
+
+	help, err := os.ReadFile(filepath.Join("testdata", "wsl-help-2.7.12.utf16le"))
+	if err != nil {
+		t.Fatalf("reading the captured help text: %v", err)
+	}
+	if !looksLikeUTF16LE(help) {
+		t.Fatalf("the capture is no longer UTF-16LE; was it normalised by git? first bytes % x", help[:16])
+	}
+
+	f := &fakeWSL{
+		versionErr:    errors.New("exit status 1"),
+		helpOut:       help,
+		helpErr:       errors.New("exit status 0xffffffff"),
+		afterSetup:    versionOutput(supportedWSL),
+		interactive:   true,
+		confirmAnswer: true,
+	}
+
+	if _, err := f.manager(t).EnsureWSL(context.Background()); err != nil {
+		t.Fatalf("EnsureWSL: %v", err)
+	}
+	if !f.ran("--install", noDistributionFlag) {
+		t.Errorf("a real help text that offers %s was not given the platform-only install: %v", noDistributionFlag, f.argvs())
+	}
+	if f.ran("--update") {
+		t.Errorf("a wsl.exe that has %s was sent to --update instead: %v", noDistributionFlag, f.argvs())
+	}
+}
+
 // REQ-18.18: a help text avar cannot read is not a licence to guess. The
 // unsupported route is the safe one, because it is the only one whose failure
 // mode is "nothing happened" rather than "a distribution was created".
