@@ -602,7 +602,8 @@ func scheduledTaskExists() bool {
 // The tests destroy their environment themselves, so the unregister is the
 // backstop for a run that was interrupted — a registered distribution nobody
 // knows about is several gigabytes that no later run will reclaim. It only ever
-// touches names carrying avar's own prefix.
+// touches avr- distributions whose disk is in one of the suite's own state
+// directories (importedBySuite), never a developer's own.
 //
 // The scheduled task needs removing too, and that is easy to miss: avar
 // registers it the first time it creates an environment, pointing at the binary
@@ -613,7 +614,7 @@ func cleanupBackend() {
 	if out, err := exec.Command("wsl.exe", "--list", "--quiet").Output(); err == nil {
 		for _, line := range strings.Split(decodeUTF16(out), "\n") {
 			name := strings.TrimSpace(line)
-			if strings.HasPrefix(name, "avr-") {
+			if strings.HasPrefix(name, "avr-") && importedBySuite(name) {
 				_ = exec.Command("wsl.exe", "--unregister", name).Run()
 			}
 		}
@@ -629,6 +630,26 @@ func cleanupBackend() {
 		// they shared.
 		_ = os.Remove(filepath.Join(home, "avr-e2e"))
 	}
+}
+
+// importedBySuite reports whether a distribution's disk is in one of the
+// suite's own state directories: ~/avr-e2e-state, or a per-test
+// ~/avr-e2e-state-<name>. avar imports each distribution into
+// <AVR_HOME>\distros\<name>, so that is where the suite's own live, and where
+// an earlier interrupted run's leftovers live too.
+//
+// The prefix alone is not enough to unregister on. A developer who uses avar
+// has avr- distributions of their own, and the suiteEnv guard refusing to run
+// beside them protected nothing while this cleanup then unregistered every
+// avr- name on the account anyway — it did exactly that the first time the
+// guard was tried on a real host.
+func importedBySuite(name string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	dirs, _ := filepath.Glob(filepath.Join(home, "avr-e2e-state*", "distros", name))
+	return len(dirs) > 0
 }
 
 // decodeUTF16 reads what wsl.exe writes to a redirected stream.
