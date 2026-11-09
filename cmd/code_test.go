@@ -94,8 +94,15 @@ func installFakeLauncher(t *testing.T, dir, name string) {
 		name += ".exe"
 	}
 	dst := filepath.Join(dir, name)
-	if err := os.Link(self, dst); err == nil {
-		return
+	// Windows cannot delete any name of a file that is mapped as a running
+	// image, and a hard link to this test binary is exactly that, so the
+	// TempDir cleanup would fail. Copy there instead. CI's Windows runner
+	// never showed it because its temp and build directories sit on different
+	// volumes, where os.Link fails and the copy below was already taken.
+	if runtime.GOOS != "windows" {
+		if err := os.Link(self, dst); err == nil {
+			return
+		}
 	}
 	src, err := os.Open(self)
 	if err != nil {

@@ -39,73 +39,6 @@ import (
 	"time"
 )
 
-// idleTimeout is what these tests set in config.toml. It is seconds rather than
-// the default two hours because the alternative is a test that sleeps for two
-// hours; nothing in the mechanism is sensitive to the number.
-const idleTimeout = "1s"
-
-// idleSettle is how long to wait before a check that should find the
-// environment idle. It is comfortably longer than idleTimeout: the clock starts
-// when the last session detaches, which is when the previous avr command
-// returned.
-const idleSettle = 3 * time.Second
-
-// noProcps is what the plant script exits with when the guest image has no
-// pkill, so the test says why it cannot run rather than failing as though avar
-// were at fault.
-const noProcps = 3
-
-// plantScript starts a process with the shape of a connected VS Code window and
-// waits until the guest's own /proc shows it, so the test never races the probe.
-//
-// It is written to a file in the project rather than passed to `sh -c`, and
-// that is not a style choice: a script passed inline becomes the guest shell's
-// own command line, which would then contain --type=extensionHost and make
-// every "is it still there?" check answer yes forever.
-const plantScript = `#!/bin/sh
-command -v pkill >/dev/null 2>&1 || exit 3
-
-dir="$HOME/.vscode-server/bin/e2e"
-mkdir -p "$dir"
-cp /bin/sh "$dir/node"
-
-# sh accepts a name after -c and otherwise ignores it, so the extension host's
-# argument rides along without the program having to understand it. The loop
-# keeps this shell alive: a simple command would be exec'd over, and the
-# process avar looks for would be the sleep.
-setsid "$dir/node" -c 'while :; do sleep 60; done' --type=extensionHost </dev/null >/dev/null 2>&1 &
-
-i=0
-while [ "$i" -lt 40 ]; do
-	if pgrep -f 'type=extensionHost' >/dev/null 2>&1; then
-		echo planted
-		exit 0
-	fi
-	sleep 0.25
-	i=$((i + 1))
-done
-echo 'the planted process never appeared' >&2
-exit 1
-`
-
-// closeScript ends the window, and waits until it is really gone: a process
-// that is still dying would keep the machine for another timeout.
-const closeScript = `#!/bin/sh
-pkill -f 'type=extensionHost' 2>/dev/null
-
-i=0
-while [ "$i" -lt 40 ]; do
-	if ! pgrep -f 'type=extensionHost' >/dev/null 2>&1; then
-		echo closed
-		exit 0
-	fi
-	sleep 0.25
-	i=$((i + 1))
-done
-echo 'the planted process is still running' >&2
-exit 1
-`
-
 // REQ-5.10, REQ-5.11: an editor window connected to an environment keeps it
 // running, and the environment stops once the window is gone.
 //
@@ -234,40 +167,6 @@ func TestIdle_NeverStopsAnEnvironmentWithALiveSession_PROP_11(t *testing.T) {
 	}
 }
 
-// writeIdleTimeout sets idle_timeout in the config.toml of the state directory
-// the environment names.
-func writeIdleTimeout(t *testing.T, env []string, timeout string) {
-	t.Helper()
-
-	path := filepath.Join(stateDirOf(t, env), "config.toml")
-	if err := os.WriteFile(path, []byte("idle_timeout = \""+timeout+"\"\n"), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-// writeScript puts an executable script in the project, where the guest sees it.
-func writeScript(t *testing.T, dir, name, body string) {
-	t.Helper()
-
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
-}
-
-// waitForFile waits for a file the guest is expected to create.
-func waitForFile(t *testing.T, path string) {
-	t.Helper()
-
-	deadline := time.Now().Add(5 * time.Minute)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("%s never appeared, so the session that was to hold the environment never started", path)
-}
-
 // limaState reads the state of the one machine in this test's own Lima home.
 //
 // It asks Lima rather than avar: a test that read avar's own report of whether
@@ -298,15 +197,4 @@ func limaState(t *testing.T, env []string) string {
 	}
 	t.Fatalf("Lima reports a state this test has no word for:\n%s", lines[0])
 	return ""
-}
-
-// nonEmptyLines splits output into its meaningful lines.
-func nonEmptyLines(out string) []string {
-	var lines []string
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) != "" {
-			lines = append(lines, line)
-		}
-	}
-	return lines
 }

@@ -11,7 +11,6 @@ package e2e
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -109,32 +108,4 @@ func ownProject(t *testing.T, name string) (dir string, env []string) {
 	// shared.
 	dir = project(t, name)
 	return dir, isolatedBackend(t, name)
-}
-
-// stateDirOf reads AVR_HOME out of the environment isolatedBackend returned.
-func stateDirOf(t *testing.T, env []string) string {
-	t.Helper()
-
-	const prefix = "AVR_HOME="
-	for _, entry := range env {
-		if strings.HasPrefix(entry, prefix) {
-			return strings.TrimPrefix(entry, prefix)
-		}
-	}
-	t.Fatalf("no %s in %v", prefix, env)
-	return ""
-}
-
-// assertNoEnvironments fails unless avar is managing nothing, which is what
-// "nothing was started" means when the backend is this test's own.
-func assertNoEnvironments(t *testing.T, dir string, env []string) {
-	t.Helper()
-
-	stdout, stderr, code := avr(t, dir, env, "status")
-	if code != 0 {
-		t.Fatalf("avr status exited %d\nstderr:\n%s", code, stderr)
-	}
-	if !strings.Contains(stdout, "not managing any Linux environments") {
-		t.Errorf("an environment exists that no command was supposed to create:\n%s", stdout)
-	}
 }
