@@ -40,6 +40,10 @@ import (
 // avrBinary is built once for the whole suite.
 var avrBinary string
 
+// suiteFailed is set once the tests have run, so cleanup can keep what a
+// failure left behind instead of deleting the only evidence of it.
+var suiteFailed bool
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "avr-e2e-*")
 	if err != nil {
@@ -62,6 +66,7 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
+	suiteFailed = code != 0
 	cleanupBackend()
 	os.Exit(code)
 }
