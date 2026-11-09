@@ -99,9 +99,17 @@ func TestWSL_IdleCheckStopsOnlyWhatNobodyIsUsing_REQ_5_5(t *testing.T) {
 		attached := filepath.Join(dir, "attached")
 		_ = os.Remove(attached)
 
+		// The session's output goes to a file, not a pipe: wsl.exe beneath it
+		// inherits a pipe and can hold it open after avr is gone, and what
+		// the session said is the only evidence when it fails to start.
+		output, err := os.Create(filepath.Join(t.TempDir(), "session.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		session := exec.Command(avrBinary, "sh", "-c", "touch attached; sleep 30")
 		session.Dir = dir
 		session.Env = append(os.Environ(), env...)
+		session.Stdout, session.Stderr = output, output
 		if err := session.Start(); err != nil {
 			t.Fatalf("starting the session that holds the environment: %v", err)
 		}
@@ -113,7 +121,16 @@ func TestWSL_IdleCheckStopsOnlyWhatNobodyIsUsing_REQ_5_5(t *testing.T) {
 		}()
 		t.Cleanup(func() {
 			_ = session.Process.Kill()
-			<-ended
+			select {
+			case <-ended:
+			case <-time.After(stopGrace):
+				t.Errorf("the session did not exit after being killed")
+			}
+			_ = output.Close()
+			if t.Failed() {
+				said, _ := os.ReadFile(output.Name())
+				t.Logf("what the session printed:\n%s", said)
+			}
 		})
 		waitForFile(t, attached)
 

@@ -164,6 +164,13 @@ func createIsolated(t *testing.T, dir string, env []string) string {
 
 	before := registeredDistributions(t)
 	if _, stderr, code := avr(t, dir, env, "--isolate", "true"); code != 0 {
+		// The full output is in a log beneath the state directory, which
+		// cleanup removes; it is the only evidence of why WSL refused.
+		logs, _ := filepath.Glob(filepath.Join(stateDirOf(t, env), "logs", "*.log"))
+		for _, log := range logs {
+			body, _ := os.ReadFile(log)
+			t.Logf("%s:\n%s", log, body)
+		}
 		t.Fatalf("creating this test's own environment: exit %d\nstderr:\n%s", code, stderr)
 	}
 	if stdout, stderr, code := avr(t, dir, env, "isolate", "on"); code != 0 {
