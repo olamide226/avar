@@ -642,3 +642,23 @@ terminated it unconditionally — including one the developer already had open
 with work in it. In the test for "never stop a distribution you do not own".
 Clean up what you started, and record which that was at the moment you know it,
 because starting a process inside a distribution changes the answer.
+
+## A pinned runner can fail twice, in two different ways
+
+`macos-14` retired and the `test` job was handed no runner at all; the fix was a
+newer pin. The newer pin then hit the *other* failure: `macos-15` is the Arm64
+image, GitHub rations it, and on 2026-11-09 the job waited fifteen minutes and
+was dropped — "The job was not acquired by Runner of type hosted even after
+multiple attempts". `main` went red and the release that should have followed
+was skipped.
+
+Both arrive as a job with **zero steps** and the word *cancelled*, and in both
+cases the reason is only in the check annotation, never in a log, because no log
+exists. So "cancelled with no steps" is one symptom with two causes: the label
+no longer exists, or it exists and could not be supplied. Read the annotation
+before changing the pin, or the second one looks like the first.
+
+The lesson for the choice itself: pick the runner by what the job actually
+needs. This suite is pure logic plus the race detector, so it has no claim on
+Apple Silicon, and asking for the rationed pool bought nothing and cost a
+release.

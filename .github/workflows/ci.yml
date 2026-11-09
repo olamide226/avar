@@ -30,8 +30,18 @@ jobs:
   # annotation "The configuration 'macos-14-arm64-us-default' is not
   # supported", which reads like somebody pressed cancel rather than like a
   # broken workflow. When this pin retires, that is the symptom.
+  #
+  # `-intel` rather than plain `macos-15`, which is the Arm64 image and is
+  # rationed. On 2026-11-09 this job waited fifteen minutes, was never given a
+  # runner, and ended as "cancelled" with the annotation "The job was not
+  # acquired by Runner of type hosted even after multiple attempts" beside
+  # three notices that macOS Arm64 runners have capacity constraints. That took
+  # `main` red and skipped the release it should have cut. Nothing this job
+  # does is architecture-specific — it is the pure-logic suite, the race
+  # detector, gofmt, vet and a build — so the x64 image runs exactly the same
+  # checks without competing for the scarce pool.
   test:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
