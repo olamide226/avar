@@ -164,6 +164,28 @@ rule they never saw.
 
 ## Verification
 
+### A cancelled job is not a job that passed
+
+From 2026-11-06 the `test` job did not run. `macos-14` had been retired, so
+GitHub handed the job no runner and reported it **cancelled**: zero steps, no
+runner name, `started_at` equal to `completed_at`, and the explanation only in a
+check annotation ("The configuration 'macos-14-arm64-us-default' is not
+supported"). Two nightly runs on `main` went that way before anybody looked,
+because a cancelled run does not read as a failure — it reads as something
+somebody chose. The pull request that noticed showed `mergeStateStatus:
+UNSTABLE`, not blocked, and the rest of its checks were green.
+
+**Cancelled, skipped and neutral are all "did not fail", and none of them is
+"passed".** Any gate read as "no failures" accepts all three. The same shape
+appears in a skipped job whose `if:` quietly stopped matching, and in a matrix
+leg that was never generated.
+
+**When a job has zero steps, stop reading the logs.** There are none, and that
+is the finding: the work never started, so the cause is in scheduling — a label,
+a permission, a quota — and the check annotation holds the message the logs do
+not. Re-running does not help, which is its own evidence: three attempts
+cancelled identically is a configuration fact, not flake.
+
 ### Only tick a check you actually ran
 
 `make tidy-check` was ticked in PR #20's verification table from memory of an earlier
