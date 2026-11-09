@@ -11,18 +11,9 @@
 package e2e
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// brokenSetting is one key away from idle_timeout. The misspelling is the whole
-// point: the lenient reader this replaced ignored it, so a user who had turned
-// idle auto-stop down to half an hour kept the two-hour default and had nothing
-// to tell them (docs/lessons.md, "A lenient reader turns every mistake into a
-// setting that silently does not apply").
-const brokenSetting = "idle_timeot = \"30m\"\n"
 
 // REQ-17.7: an ordinary command refuses before any machine work when
 // config.toml cannot be read, and the refusal names the file, the line and the
@@ -101,16 +92,4 @@ func TestUserConfig_HelpAndVersionStillWork_REQ_17_7(t *testing.T) {
 	if !strings.Contains(stdout, "avr") {
 		t.Errorf("`avr version` printed no version:\n%s", stdout)
 	}
-}
-
-// writeBrokenConfig puts a config.toml with one misspelt key in the state
-// directory the environment names, and returns its path.
-func writeBrokenConfig(t *testing.T, env []string) string {
-	t.Helper()
-
-	path := filepath.Join(stateDirOf(t, env), "config.toml")
-	if err := os.WriteFile(path, []byte(brokenSetting), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-	return path
 }

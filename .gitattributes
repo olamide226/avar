@@ -9,3 +9,7 @@
 # Every tracked file in this repository is text, so normalising all of them is
 # the whole rule rather than a list that has to be maintained.
 * text=auto eol=lf
+
+# A byte-exact capture of what a real wsl.exe wrote. Its CRLFs and UTF-16
+# encoding are the point of it, so git must never normalise it.
+internal/deps/testdata/*.utf16le binary
