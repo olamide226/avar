@@ -32,6 +32,11 @@ package state
 //     the two sides agreeing: write the missing record (adopt), or delete a
 //     machine the backend says cannot work. Nothing outside avar's namespace is
 //     reachable either way.
+//   - On an UnprovenBackend the prefix permits neither. Design §3.3 asks for
+//     an operation journal and an on-guest marker before an unrecorded
+//     machine is adopted or removed; avar has neither yet, so such a machine
+//     is reported for the user to inspect and is never mutated. The rule
+//     above is what other backends still do (issue #123).
 //   - Prefix *with* a record is the ordinary, consistent case and grants
 //     nothing new. In particular a recorded machine is never deleted here, however
 //     unhealthy the backend says it is: that machine may hold weeks of the
@@ -87,13 +92,32 @@ import (
 //     exists to adopt; a listing filtered by avar's own records would make them
 //     invisible and adoption unreachable. Filtering by record membership is
 //     meaningful for `avr status` — after reconciliation has run, prefix and
-//     record agree — but it cannot be applied on this path.
+//     record agree — but it cannot be applied on this path. A backend whose
+//     Status does filter that way (WSL 2) is passed in through
+//     provider.ReconciliationView, which substitutes its unfiltered listing
+//     and presents it as an UnprovenBackend.
 //   - Delete must be idempotent, since reconciliation deletes machines whose
 //     state it read a moment ago and which another invocation may have removed
 //     in between.
 type Backend interface {
 	Status(ctx context.Context) ([]types.MachineStatus, error)
 	Delete(ctx context.Context, machine string) error
+}
+
+// UnprovenBackend is a Backend that cannot prove avar created a machine it has
+// no record of. Design §3.3 allows adopting or removing an unrecorded machine
+// only when an operation journal and an on-guest marker prove ownership, and
+// avar has neither, so for such a backend the prefix authorises nothing:
+// every unrecorded machine is reported (ActionLeft, with Manual set) and none
+// is adopted or deleted, whatever state it is in. Records are reconciled as on
+// any other backend.
+//
+// A backend that is not one keeps the older prefix-based rule (issue #123).
+type UnprovenBackend interface {
+	Backend
+	// ManualInspection tells the user how to inspect the machine and, if
+	// they do not want it, remove it by hand. It must not run anything.
+	ManualInspection(machine string) string
 }
 
 // Action is what reconciliation did about one machine. The store never prints
@@ -139,6 +163,11 @@ type Change struct {
 	// to render. It never contains a backend command or a machine name the user
 	// is expected to type: repairing this is avar's job, not theirs.
 	Reason string
+	// Manual is set only where repairing this is the user's job: an
+	// ActionLeft from an UnprovenBackend. It is the backend's instructions
+	// for inspecting the machine and removing it by hand, and does name
+	// backend commands, because nothing above the backend knows them.
+	Manual string
 }
 
 // Result is what one reconciliation did. It is meaningful even when Reconcile
@@ -243,6 +272,17 @@ func (s *Store) Reconcile(ctx context.Context, backend Backend) (Result, error) 
 			if _, recorded, err := tx.Machine(m.Name); err != nil {
 				return err
 			} else if recorded {
+				continue
+			}
+
+			if unproven, ok := backend.(UnprovenBackend); ok {
+				changes = append(changes, Change{
+					Machine:  m.Name,
+					Action:   ActionLeft,
+					Selector: m.Selector,
+					Reason:   "avar has no record of this environment and cannot prove it created it, so it was left untouched",
+					Manual:   unproven.ManualInspection(m.Name),
+				})
 				continue
 			}
 

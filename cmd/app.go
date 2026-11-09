@@ -222,7 +222,7 @@ func (a *App) Provider(ctx context.Context) (provider.Provider, error) {
 			return
 		}
 
-		reconcile(ctx, a, store, p)
+		reconcile(ctx, a, store, provider.ReconciliationView(p))
 		a.prov = p
 	})
 	return a.prov, a.provErr

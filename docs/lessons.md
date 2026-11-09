@@ -65,6 +65,20 @@ unchanged from the first line of such a test to the last. It costs a cold
 provision, measured at about thirteen seconds, because the image cache lives
 outside it.
 
+WSL is the other way round on the first half and the same on the second. Its
+reconciliation adopts nothing it has no record of: avar cannot prove it
+imported an unrecorded `avr-` distribution, so it reports it and leaves it
+alone (#122). There an empty state directory really does start from no
+records. It still does not start from nothing, because a shared environment's
+name, `avr-ubuntu-24.04-<arch>`, does not depend on `AVR_HOME`, and
+`EnsureMachine` uses an existing registration of the name it resolves. A suite
+with its own `AVR_HOME` would start the developer's shared distribution, run
+its tests in it, record it, and finish by removing it with
+`avr destroy --all --yes`. WSL registrations belong to the Windows account and
+nothing like `LIMA_HOME` moves them, so the WSL suite checks instead:
+`suiteEnv` (`e2e/wsl_shell_test.go`) refuses to run while any `avr-`
+distribution exists whose disk is not under the suite's own state directory.
+
 The general form is that a state directory isolates what a tool *remembers*,
 never what it can *find*. Any tool that can rediscover its own resources —
 by a name prefix, a label, a port range, a tag — will rediscover the ones

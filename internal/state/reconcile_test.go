@@ -470,6 +470,53 @@ func TestReconcile_LeavesAnOrphanItCannotDescribe_PROP_7(t *testing.T) {
 	}
 }
 
+// reportOnlyBackend is a backend that cannot prove avar created a machine it has
+// no record of, and says how the user can inspect one by hand.
+type reportOnlyBackend struct{ *fakeBackend }
+
+func (reportOnlyBackend) ManualInspection(machine string) string { return "inspect " + machine }
+
+// PROP-6, design §3.3: where ownership cannot be proven, a prefix alone never
+// authorises mutation. Every unrecorded machine is reported for manual
+// inspection — healthy, broken or unknown — and none is adopted or deleted.
+// Records are reconciled exactly as on any other backend.
+func TestReconcile_UnprovableOrphansAreReportedNeverMutated_PROP_6(t *testing.T) {
+	t.Parallel()
+
+	healthy := backendMachine("avr-ubuntu-24.04-arm64", types.StateRunning)
+	broken := backendMachine("avr-debian-13-arm64", types.StateBroken)
+	unknown := backendMachine("avr-fedora-43-arm64", types.StateUnknown)
+
+	st := newTestStore(t)
+	if err := st.PutMachine(types.MachineRecord{
+		Name: "avr-gone-1-arm64", Provider: types.ProviderLima, Selector: ubuntuSelector(), Kind: types.KindShared,
+		CreatedAt: time.Now().Add(-time.Hour).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	backend := reportOnlyBackend{newBackend(healthy, broken, unknown)}
+
+	result, err := st.Reconcile(context.Background(), backend)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	want := []string{"avr-debian-13-arm64:left", "avr-fedora-43-arm64:left", "avr-gone-1-arm64:forgotten", "avr-ubuntu-24.04-arm64:left"}
+	if got := changeSummary(result); !equalStrings(got, want) {
+		t.Fatalf("reported %v, want %v", got, want)
+	}
+	for _, c := range result.WithAction(ActionLeft) {
+		if c.Manual != "inspect "+c.Machine {
+			t.Errorf("%s: Manual = %q, want the backend's instructions for it", c.Machine, c.Manual)
+		}
+	}
+	if got := recordNames(t, st); len(got) != 0 {
+		t.Errorf("machines.json holds %v, want nothing adopted", got)
+	}
+	if got := backend.deletions(); len(got) != 0 {
+		t.Errorf("deleted %v, want nothing: a prefix alone never authorises deletion", got)
+	}
+}
+
 // --- ownership ------------------------------------------------------------
 
 // A machine outside avar's namespace is invisible to reconciliation in every

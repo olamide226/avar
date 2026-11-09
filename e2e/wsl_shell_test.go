@@ -39,8 +39,41 @@ func suiteEnv(t *testing.T) []string {
 			panic("locate the home directory: " + err.Error())
 		}
 		stateDir = filepath.Join(home, "avr-e2e-state")
+		strangers = distributionsFromElsewhere(t, stateDir)
 	})
+	if len(strangers) > 0 {
+		t.Fatalf("this computer has avar environments the suite did not create (%s). "+
+			"A separate AVR_HOME does not keep the suite off them: a shared environment's name (avr-ubuntu-24.04-<arch>) "+
+			"does not depend on AVR_HOME, and avar uses an existing registration of the name it resolves, so the suite "+
+			"would run in yours, record it, and remove it with `avr destroy --all --yes`. WSL has no equivalent of "+
+			"LIMA_HOME to move the suite into a world of its own, so run it on a computer, or a Windows account, "+
+			"with no other avar environments",
+			strings.Join(strangers, ", "))
+	}
 	return []string{"AVR_HOME=" + stateDir}
+}
+
+// strangers are the avr- distributions registered when the suite started that
+// it did not import itself.
+var strangers []string
+
+// distributionsFromElsewhere lists the avr- distributions whose disk is not in
+// the suite's own state directory: ones a developer's own avar, or another
+// state directory, imported. avar imports each distribution into
+// <AVR_HOME>\distros\<name>, so a leftover from an earlier run of the suite is
+// recognised and is not a stranger.
+func distributionsFromElsewhere(t *testing.T, stateDir string) []string {
+	t.Helper()
+	var out []string
+	for _, name := range registeredDistributions(t) {
+		if !strings.HasPrefix(name, types.MachineNamePrefix) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(stateDir, "distros", name)); err != nil {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // requireWSL skips the suite on a host that has no usable WSL, saying so rather

@@ -15,7 +15,10 @@
 // checked before anything is done, and Status filters rather than annotates, so
 // a user's Ubuntu is invisible to avar rather than listed and skipped (REQ-18.7,
 // PROP-6). This is a stronger promise here than on macOS, because a Windows
-// developer's WSL is far more likely to be somewhere they already live.
+// developer's WSL is far more likely to be somewhere they already live. The one
+// exception is crash recovery, which sees an unrecorded avr- distribution
+// through Discover (provider.ReconciliationView) only to tell the user about
+// it: avar cannot prove it imported one, so it never adopts or removes it.
 //
 // No shell is ever involved on the host side. Every invocation is an argv passed
 // to deps.Runner, so a path containing a space or a quote is an argument and can
@@ -89,9 +92,10 @@ type Options struct {
 	Runner deps.Runner
 
 	// Records is avar's machine registry, used for the second half of the
-	// ownership check. A nil Records reduces ownership to the name prefix
-	// alone, which is what the reconciler needs while it is still deciding
-	// which distributions to adopt; production wiring passes the state store.
+	// ownership check and the filter on Status; production wiring passes the
+	// state store. A nil Records reduces the operations' ownership check to
+	// the name prefix alone and leaves Status nothing to list. It is not how
+	// the reconciler sees unrecorded distributions: that is Discover.
 	Records Records
 
 	// DistrosDir is where imported distributions are stored, normally
@@ -302,16 +306,22 @@ func (p *Provider) installDir(machine string) string {
 // (REQ-17.3, REQ-18.14). If it stops compiling, that claim has stopped being
 // true.
 //
-// The four optional ones are claims about what WSL can do, and they are all
+// The four capability ones are claims about what WSL can do, and they are all
 // yes: it can export and import a distribution's disk, VS Code can attach to a
 // distribution, a guest port's reachability can be probed, and a project can be
 // held on the distribution's own filesystem instead of reached across DrvFS. A
 // backend that could not do one of these would say so by leaving the assertion
 // out rather than by stubbing the methods (design §3.0).
+//
+// Discoverer is a different kind of claim: Status here hides unrecorded
+// distributions, and avar cannot prove it created one, so reconciliation gets
+// the unfiltered listing to report them and leave them alone. Without it an
+// orphan would be invisible (#122).
 var (
 	_ provider.Provider             = (*Provider)(nil)
 	_ provider.Snapshotter          = (*Provider)(nil)
 	_ provider.EditorTargetProvider = (*Provider)(nil)
 	_ provider.NativeWorkspacer     = (*Provider)(nil)
 	_ provider.PortDiagnoser        = (*Provider)(nil)
+	_ provider.Discoverer           = (*Provider)(nil)
 )
