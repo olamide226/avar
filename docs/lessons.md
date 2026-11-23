@@ -662,3 +662,22 @@ The lesson for the choice itself: pick the runner by what the job actually
 needs. This suite is pure logic plus the race detector, so it has no claim on
 Apple Silicon, and asking for the rationed pool bought nothing and cost a
 release.
+
+## Changing the runner's architecture is a change to the tests
+
+Moving the macOS job from Arm64 to x64 was meant to be a scheduling decision. It
+failed the suite instead: `TestCreateFromBase_ClonesAndStarts_REQ_11_1` built
+its spec from `nativeSelector()`, which reads `types.HostArch()`, while naming
+the base machine it expected — and the listing fixture describing it — as
+`arm64` outright. On x64 the provider went looking for an `amd64` base, the
+fixture named no such machine, and the provider correctly created one instead of
+cloning. The test then failed on the clone assertion, so a test about cloning
+had been silently exercising the create path.
+
+Two things worth keeping from it. A fixture that pins a value the code derives
+from the host is not a fixture, it is a second source of truth, and the two
+agree only on the machine the author happened to use — every contributor on an
+Intel Mac had been seeing this. And the failure was not "x64 is unsupported":
+`GOARCH=amd64 go test ./internal/provider/lima/` reproduces it on an Apple
+Silicon machine in seconds through Rosetta, which is worth reaching for before
+concluding that a runner is at fault.

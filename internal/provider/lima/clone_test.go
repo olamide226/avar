@@ -7,6 +7,7 @@ package lima
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,13 +17,40 @@ import (
 	"github.com/olamide226/avar/internal/types"
 )
 
-// isolatedMachine is a project-specific machine name, derived by the resolver
-// from the project identity and the environment.
-const testIsolatedMachine = "avr-prj-3fa9c2b1d0-ubuntu-24.04-arm64"
+// testIsolatedMachine is a project-specific machine name, derived by the
+// resolver from the project identity and the environment.
+//
+// The architecture follows the host rather than being written out. These tests
+// build their specs from nativeSelector(), which reads types.HostArch(), so a
+// name ending in a fixed architecture describes the machine only on a host of
+// that architecture. On any other one the provider looks for a base this file
+// never names, finds none, and takes the create path instead of the clone path
+// the test is named for — which is how an Intel Mac, or GitHub's x64 macOS
+// runner, sees a failure that Apple Silicon never shows.
+var testIsolatedMachine = "avr-prj-3fa9c2b1d0-ubuntu-24.04-" + string(types.HostArch())
 
-// testBaseMachine is the base machine name for the default Ubuntu 24.04 arm64
-// environment.
-const testBaseMachine = "avr-base-ubuntu-24.04-arm64"
+// testBaseMachine is the base machine name for the default Ubuntu 24.04
+// environment on this host's architecture.
+var testBaseMachine = baseMachineName(nativeSelector())
+
+// limaHostArch is the architecture Lima reports in `limactl list --json`, which
+// is the kernel's spelling rather than Go's: a listing says aarch64 or x86_64
+// where a machine name says arm64 or amd64.
+func limaHostArch() string {
+	if types.HostArch() == types.ArchARM64 {
+		return "aarch64"
+	}
+	return "x86_64"
+}
+
+// baseListing returns a one-entry `limactl list --json` body describing this
+// host's base machine in the given state, so a fixture cannot disagree with the
+// machine the provider will go looking for.
+func baseListing(status string, cpus int, memory int64) []byte {
+	return []byte(fmt.Sprintf(
+		`{"name":%q,"status":%q,"dir":"/tmp/base","vmType":"vz","arch":%q,"cpus":%d,"memory":%d,"disk":107374182400,"config":{}}`,
+		testBaseMachine, status, limaHostArch(), cpus, memory))
+}
 
 // emptyListing returns a listing with no instances.
 func emptyListing(t *testing.T) []byte {
@@ -99,7 +127,7 @@ func TestEnsureBase_CreatesWhenAbsent_REQ_11_1(t *testing.T) {
 // to clone.
 func TestEnsureBase_StopsARunningBase(t *testing.T) {
 	// Build a fixture listing with the base machine in Running state.
-	runningBase := []byte(`{"name":"avr-base-ubuntu-24.04-arm64","status":"Running","dir":"/tmp/base","vmType":"vz","arch":"aarch64","cpus":2,"memory":4294967296,"disk":107374182400,"config":{}}`)
+	runningBase := baseListing("Running", 2, 4294967296)
 	runner := newFakeRunner().listing(runningBase)
 	p := newTestProvider(t, runner, newFakeRecords())
 	sink := &recordingSink{}
@@ -133,7 +161,7 @@ func TestEnsureBase_StopsARunningBase(t *testing.T) {
 // TestEnsureBase_NoOpWhenStopped proves that a base already in the correct
 // state costs nothing.
 func TestEnsureBase_NoOpWhenStopped(t *testing.T) {
-	stoppedBase := []byte(`{"name":"avr-base-ubuntu-24.04-arm64","status":"Stopped","dir":"/tmp/base","vmType":"vz","arch":"aarch64","cpus":2,"memory":4294967296,"disk":107374182400,"config":{}}`)
+	stoppedBase := baseListing("Stopped", 2, 4294967296)
 	runner := newFakeRunner().listing(stoppedBase)
 	p := newTestProvider(t, runner, newFakeRecords())
 	sink := &recordingSink{}
@@ -161,7 +189,7 @@ func TestEnsureBase_NoOpWhenStopped(t *testing.T) {
 // produced by cloning the base, starting the clone, and verifying the mounts.
 func TestCreateFromBase_ClonesAndStarts_REQ_11_1(t *testing.T) {
 	// The base exists and is stopped — the warm isolation path.
-	stoppedBase := []byte(`{"name":"avr-base-ubuntu-24.04-arm64","status":"Stopped","dir":"/tmp/base","vmType":"vz","arch":"aarch64","cpus":2,"memory":4294967296,"disk":107374182400,"config":{}}`)
+	stoppedBase := baseListing("Stopped", 2, 4294967296)
 	runner := newFakeRunner().listing(stoppedBase)
 	runner.streamOutput = "INFO[0000] Starting via clone\n"
 	p := newTestProvider(t, runner, newFakeRecords())
@@ -289,7 +317,7 @@ func TestEnsureMachine_IsolatedFallsBackOnCloneFailure_REQ_11_1(t *testing.T) {
 	project := t.TempDir()
 
 	// The base exists and is stopped, so the listing shows it ready.
-	stoppedBase := []byte(`{"name":"avr-base-ubuntu-24.04-arm64","status":"Stopped","dir":"/tmp/base","vmType":"vz","arch":"aarch64","cpus":2,"memory":4294967296,"disk":107374182400,"config":{}}`)
+	stoppedBase := baseListing("Stopped", 2, 4294967296)
 	// First listing (ensureMachine): target doesn't exist (empty).
 	// Second listing (ensureBase): base exists (stopped).
 	runner := newFakeRunner().listing(emptyListing(t), stoppedBase)
@@ -334,7 +362,7 @@ func TestEnsureMachine_IsolatedFallsBackOnCloneFailure_REQ_11_1(t *testing.T) {
 // spec asked for — the defect that stays invisible until a caller passes a size
 // (design §3.11).
 func TestCreateFromBase_AppliesTheSpecSize_REQ_15_1(t *testing.T) {
-	stoppedBase := []byte(`{"name":"avr-base-ubuntu-24.04-arm64","status":"Stopped","dir":"/tmp/base","vmType":"vz","arch":"aarch64","cpus":4,"memory":8589934592,"disk":107374182400,"config":{}}`)
+	stoppedBase := baseListing("Stopped", 4, 8589934592)
 
 	for _, tc := range []struct {
 		name     string
@@ -394,7 +422,7 @@ func TestCreateFromBase_AppliesTheSpecSize_REQ_15_1(t *testing.T) {
 
 // A spec with no size changes nothing about the clone beyond its mounts.
 func TestCreateFromBase_NoSizeNoMountsNoEdit(t *testing.T) {
-	stoppedBase := []byte(`{"name":"avr-base-ubuntu-24.04-arm64","status":"Stopped","dir":"/tmp/base","vmType":"vz","arch":"aarch64","cpus":4,"memory":8589934592,"disk":107374182400,"config":{}}`)
+	stoppedBase := baseListing("Stopped", 4, 8589934592)
 	runner := newFakeRunner().listing(stoppedBase)
 	p := newTestProvider(t, runner, newFakeRecords())
 	logPath := filepath.Join(t.TempDir(), "create.log")
