@@ -22,7 +22,12 @@ jobs:
     # Pinned, and see the note on CI's test job: a retired pin is handed no
     # runner and the job is reported cancelled. This one would have taken the
     # next release with it.
-    runs-on: macos-15
+    #
+    # `-intel` for the same reason as that job: the Arm64 image is rationed and
+    # drops jobs it cannot place. lipo, and cross-compiling the Windows
+    # archives, work the same on either architecture, and a release that is
+    # silently never built is the worst version of this failure.
+    runs-on: macos-15-intel
     concurrency:
       group: release-main
       cancel-in-progress: false
