@@ -77,6 +77,24 @@ them — unless submissions are paused and an already-open pull request needs a
 fix, which is the one case where the hand edit is not overwritten. Say in a
 comment what changed, so a reviewer does not have to diff it.
 
+### The privacy policy is required, and the manifest is generated
+
+winget repository policy 1.5.1 requires a privacy policy, and a `PrivacyUrl` in
+the default locale manifest, for a product that accesses personal information.
+avar qualifies: it reaches a project's files, records which directories it has
+been used in, and can forward environment variables the user names, credentials
+among them. A moderator asked for this on the 0.14.2 submission on 2026-11-23.
+
+The policy is `site/privacy.md`, published at
+<https://olamide226.github.io/avar/privacy>, and `privacy_url` in the winget
+block puts it into every generated manifest. Both halves matter: the manifest
+on the open submission was edited by hand to carry the URL, and without the
+configuration the next generated manifest would drop it and the package would
+fall out of policy with nothing to show that it had.
+
+If the policy page moves, change `privacy_url` in the same commit. A `PrivacyUrl`
+that 404s is worse than none, because validation checks that it resolves.
+
 ### The manifest version is GoReleaser's, not ours
 
 `ManifestVersion` in the generated files is hardcoded in GoReleaser's winget
@@ -92,10 +110,19 @@ three `$schema` comment lines, change nothing else — and confirm each file
 still validates against its 1.28.0 schema.
 
 Before restoring submissions, check which manifest version the GoReleaser in
-use emits and whether `microsoft/winget-pkgs` still accepts it. At the time of
-writing, 1.28.0 appears only in a GoReleaser v2.20.0 nightly, so an automated
-submission would be generated at a deprecated version and need the same hand
-edit.
+use emits and whether `microsoft/winget-pkgs` still accepts it. The constant
+lives at `internal/pipe/winget/template.go` in GoReleaser, so reading it at a
+tag answers the question without installing anything.
+
+**This no longer blocks anything.** GoReleaser v2.20.3, released 2026-11-20,
+emits 1.28.0; v2.18.0 and earlier emit 1.12.0. The release workflow asks for
+`~> v2`, which resolves to the newest v2, so an automated submission would now
+be generated at 1.28.0 and need no hand edit. Note that a locally installed
+GoReleaser may be older — 2.17.1 here still writes 1.12.0 into `dist/winget/`,
+which is a stale snapshot rather than what a release would publish.
+
+What still keeps submissions paused is the queue, not the schema: see the
+comment on `skip_upload` in `.goreleaser.yaml`.
 
 Patch releases are not submitted. Each submission is reviewed by people at
 Microsoft, and releasing on every `fix:` merge once opened five pull requests
