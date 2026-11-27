@@ -304,6 +304,14 @@ winget:
     publisher: olamide226
     publisher_url: https://github.com/olamide226
     publisher_support_url: https://github.com/olamide226/avar/issues
+    # Required by winget repository policy 1.5.1, because avar reaches a
+    # project's files, keeps a record of the directories it has been used in,
+    # and can forward environment variables the user names — credentials among
+    # them. A moderator asked for it on the submission (winget-pkgs#438967) and
+    # the manifest there was edited by hand to carry it; this line is what keeps
+    # it true of every manifest generated afterwards. Removing it would drop the
+    # package out of policy on the next release, silently.
+    privacy_url: https://olamide226.github.io/avar/privacy
     author: Ola Adebayo
     ids:
       - avr-windows
