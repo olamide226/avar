@@ -51,15 +51,11 @@ that already exists is fine as it is.
 
 ## winget
 
-**Submissions are paused** (2026-09-22): `skip_upload` in `.goreleaser.yaml`
-is `true`, so no release opens a pull request on `microsoft/winget-pkgs`. The
-package's first submission is still queued for a moderator, and every minor
-release opened another beside it. Restore the commented line in that file when
-the package is accepted, and the paragraph below describes what happens again.
-
-Until then, each release still generates the manifests into `dist/winget/`,
-so a mistake in the packaging shows up in the release run rather than in front
-of Microsoft.
+**olamide226.avar is accepted** (microsoft/winget-pkgs#438967, 0.14.2, merged
+2026-11-25), and automated submissions resumed after it. They were paused from
+2026-09-22: while the first submission waited for a moderator, every minor
+release opened another pull request beside it, and keeping one in the queue
+meant closing the previous one.
 
 Every stable minor or major release (x.y.0) pushes manifests for
 `olamide226.avar` to a branch
@@ -73,9 +69,9 @@ passes and the pull request merges. The first submission of the package also
 gets a human review. If validation fails, the pull request says why: fix the
 cause in `.goreleaser.yaml`, and the next release submits a corrected manifest.
 Do not edit manifests by hand in the fork, because the next release overwrites
-them — unless submissions are paused and an already-open pull request needs a
-fix, which is the one case where the hand edit is not overwritten. Say in a
-comment what changed, so a reviewer does not have to diff it.
+them. The exception is a fix to a pull request that is already open and that no
+release will regenerate — how the first submission was kept current while it
+waited. Say in a comment what changed, so a reviewer does not have to diff it.
 
 ### The privacy policy is required, and the manifest is generated
 
@@ -121,8 +117,8 @@ be generated at 1.28.0 and need no hand edit. Note that a locally installed
 GoReleaser may be older — 2.17.1 here still writes 1.12.0 into `dist/winget/`,
 which is a stale snapshot rather than what a release would publish.
 
-What still keeps submissions paused is the queue, not the schema: see the
-comment on `skip_upload` in `.goreleaser.yaml`.
+So the schema no longer forces a hand edit, and nothing kept submissions paused
+once the package was accepted.
 
 Patch releases are not submitted. Each submission is reviewed by people at
 Microsoft, and releasing on every `fix:` merge once opened five pull requests
